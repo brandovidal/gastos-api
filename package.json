@@ -8,6 +8,7 @@
     "node": ">=22.12.0",
     "pnpm": ">=10.0.0"
   },
+  "packageManager": "pnpm@12.4.2",
   "scripts": {
     "build": "nest build",
     "dev": "dotenv -e .env.dev -- nest start --watch",
@@ -24,7 +25,7 @@
     "test:unit": "dotenv -e .env.test -- vitest --project unit",
     "test:integration": "dotenv -e .env.test -- vitest --project integration",
     "db:generate": "prisma generate",
-    "db:migrate:dev": "dotenv -e .env.dev -- prisma migrate dev",
+    "db:migrate:dev": "dotenv -e .env.dev -- prisma migrate dev && prisma generate",
     "db:migrate:diff": "prisma migrate diff --from-migrations prisma/migrations --to-schema prisma/schema.prisma --script",
     "db:studio": "dotenv -e .env.dev -- prisma studio",
     "postinstall": "prisma generate",
@@ -60,6 +61,7 @@
     "@types/node": "^22.20.4",
     "@types/supertest": "^7.2.1",
     "@vitest/coverage-v8": "^4.1.11",
+    "@vitest/ui": "4.1.11",
     "dotenv-cli": "^11.0.0",
     "eslint": "^9.39.5",
     "eslint-config-prettier": "^10.1.8",
@@ -74,6 +76,5 @@
     "typescript-eslint": "^8.70.1",
     "unplugin-swc": "^2.0.0",
     "vitest": "^4.1.11"
-  },
-  "packageManager": "pnpm@12.4.2"
+  }
 }

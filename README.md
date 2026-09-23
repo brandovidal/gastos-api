@@ -10,7 +10,7 @@ Stack: NestJS 11 · TypeScript · pnpm · Prisma 7 · Turso (libSQL) · Zod 4 ·
 fnm use            # Node 22 (.node-version)
 pnpm install       # also runs prisma generate
 cp .env.example .env.dev
-pnpm dev           # http://localhost:5560/health · Swagger at /docs
+pnpm dev           # http://localhost:5560/v1/health · Swagger at /docs
 ```
 
 ## Scripts

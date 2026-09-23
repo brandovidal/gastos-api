@@ -1,4 +1,7 @@
-// Models are pending: see P1 (data model) in personal/docs/plans/2026-09-22-gastos-bot-ai-design.md
+// Data model: P1 in personal/docs/plans/2026-09-22-gastos-bot-ai-design.md
+// SQLite/libSQL has no native enums: string columns are validated with the enums in
+// src/commons/constants/expense.constant.ts and catalog.constant.ts.
+// IntakeItem and ChatSession are pending (P1 block 2).
 
 generator client {
   provider     = "prisma-client"
@@ -8,4 +11,270 @@ generator client {
 
 datasource db {
   provider = "sqlite"
+}
+
+// ==================== CATALOGS ====================
+
+model Person {
+  id        String   @id @default(cuid())
+  name      String   @unique
+  aliases   String   @default("[]") // JSON array of lowercase aliases used by the AI
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  fixedCosts         FixedCost[]
+  subscriptions      Subscription[]
+  creditCardExpenses CreditCardExpense[]
+  accountsReceivable AccountReceivable[]
+  recurringExpenses  RecurringExpense[]
+
+  @@map("people")
+}
+
+model PaymentMethod {
+  id           String      @id @default(cuid())
+  name         String      @unique
+  type         String // PaymentMethodType
+  aliases      String      @default("[]") // JSON array of lowercase aliases used by the AI
+  isActive     Boolean     @default(true)
+  creditCardId String?     @unique
+  creditCard   CreditCard? @relation(fields: [creditCardId], references: [id])
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime    @updatedAt
+
+  fixedCosts        FixedCost[]
+  subscriptions     Subscription[]
+  recurringExpenses RecurringExpense[]
+
+  @@map("payment_methods")
+}
+
+model CreditCard {
+  id              String   @id @default(cuid())
+  code            String   @unique
+  name            String
+  billingCloseDay Int
+  paymentDueDay   Int
+  color           String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  paymentMethod     PaymentMethod?
+  expenses          CreditCardExpense[]
+  recurringExpenses RecurringExpense[]
+
+  @@map("credit_cards")
+}
+
+// ==================== BUDGET ====================
+
+model BudgetGroup {
+  id         String   @id @default(cuid())
+  name       String   @unique
+  emoji      String   @default("📦")
+  percentage Float    @default(0)
+  order      Int      @default(0)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  categories Category[]
+
+  @@map("budget_groups")
+}
+
+model Category {
+  id            String       @id @default(cuid())
+  name          String       @unique
+  color         String       @default("#6B7280")
+  icon          String?
+  isDefault     Boolean      @default(false)
+  budgetGroupId String?
+  budgetGroup   BudgetGroup? @relation(fields: [budgetGroupId], references: [id])
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+
+  budgets            CategoryBudget[]
+  fixedCosts         FixedCost[]
+  subscriptions      Subscription[]
+  creditCardExpenses CreditCardExpense[]
+  recurringExpenses  RecurringExpense[]
+
+  @@index([budgetGroupId])
+  @@map("categories")
+}
+
+model CategoryBudget {
+  id             String   @id @default(cuid())
+  categoryId     String
+  category       Category @relation(fields: [categoryId], references: [id])
+  monthlyLimit   Float
+  alertThreshold Float    @default(80)
+  month          Int?
+  year           Int?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@unique([categoryId, month, year])
+  @@map("category_budgets")
+}
+
+model MonthlyBudget {
+  id           String   @id @default(cuid())
+  month        Int
+  year         Int
+  salary       Float
+  limitPercent Float    @default(100)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@unique([month, year])
+  @@map("monthly_budgets")
+}
+
+// ==================== EXPENSES ====================
+// Shared fields: description (concept), amount, currency, exchangeRate, amountInPen,
+// expenseType, paymentStatus, personId, categoryId, installment ("n/m"),
+// paymentMonth, paymentYear, notes, intakeItemId (relation added with IntakeItem).
+
+model FixedCost {
+  id              String         @id @default(cuid())
+  description     String
+  amount          Float
+  currency        String         @default("PEN")
+  exchangeRate    Float?
+  amountInPen     Float?
+  expenseType     String         @default("essential")
+  paymentStatus   String         @default("not_started")
+  personId        String
+  person          Person         @relation(fields: [personId], references: [id])
+  categoryId      String
+  category        Category       @relation(fields: [categoryId], references: [id])
+  paymentMethodId String?
+  paymentMethod   PaymentMethod? @relation(fields: [paymentMethodId], references: [id])
+  installment     String?
+  paymentMonth    Int
+  paymentYear     Int
+  paymentDate     DateTime?
+  dueDate         DateTime?
+  attentionDate   DateTime?
+  notes           String?
+  intakeItemId    String?
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+
+  @@index([paymentMonth, paymentYear])
+  @@index([categoryId])
+  @@index([personId])
+  @@index([paymentStatus])
+  @@map("fixed_costs")
+}
+
+model Subscription {
+  id              String         @id @default(cuid())
+  description     String
+  amount          Float
+  currency        String         @default("PEN")
+  exchangeRate    Float?
+  amountInPen     Float?
+  expenseType     String         @default("essential")
+  paymentStatus   String         @default("not_started")
+  period          String // SubscriptionPeriod
+  personId        String
+  person          Person         @relation(fields: [personId], references: [id])
+  categoryId      String?
+  category        Category?      @relation(fields: [categoryId], references: [id])
+  paymentMethodId String?
+  paymentMethod   PaymentMethod? @relation(fields: [paymentMethodId], references: [id])
+  installment     String?
+  paymentMonth    Int
+  paymentYear     Int
+  paymentDate     DateTime?
+  dueDate         DateTime?
+  notes           String?
+  intakeItemId    String?
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+
+  @@index([paymentMonth, paymentYear])
+  @@index([personId])
+  @@map("subscriptions")
+}
+
+model CreditCardExpense {
+  id            String     @id @default(cuid())
+  description   String
+  amount        Float
+  currency      String     @default("PEN")
+  exchangeRate  Float?
+  amountInPen   Float?
+  expenseType   String     @default("essential")
+  paymentStatus String     @default("pending")
+  personId      String
+  person        Person     @relation(fields: [personId], references: [id])
+  categoryId    String?
+  category      Category?  @relation(fields: [categoryId], references: [id])
+  creditCardId  String
+  creditCard    CreditCard @relation(fields: [creditCardId], references: [id])
+  installment   String?
+  paymentMonth  Int
+  paymentYear   Int
+  processDate   DateTime?
+  notes         String?
+  intakeItemId  String?
+  createdAt     DateTime   @default(now())
+  updatedAt     DateTime   @updatedAt
+
+  @@index([creditCardId, paymentMonth, paymentYear])
+  @@index([personId])
+  @@index([paymentStatus])
+  @@map("credit_card_expenses")
+}
+
+// Money someone owes you: no expenseType, category or payment period
+model AccountReceivable {
+  id           String    @id @default(cuid())
+  description  String
+  amount       Float
+  currency     String    @default("PEN")
+  exchangeRate Float?
+  amountInPen  Float?
+  status       String    @default("pending") // ReceivableStatus
+  personId     String // debtor
+  person       Person    @relation(fields: [personId], references: [id])
+  dueDate      DateTime?
+  paidDate     DateTime?
+  paidAmount   Float?
+  notes        String?
+  intakeItemId String?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  @@index([status])
+  @@index([personId])
+  @@map("accounts_receivable")
+}
+
+model RecurringExpense {
+  id              String         @id @default(cuid())
+  description     String
+  amount          Float
+  currency        String         @default("PEN")
+  targetType      String // RecurringTargetType
+  expenseType     String         @default("essential")
+  personId        String
+  person          Person         @relation(fields: [personId], references: [id])
+  categoryId      String?
+  category        Category?      @relation(fields: [categoryId], references: [id])
+  paymentMethodId String?
+  paymentMethod   PaymentMethod? @relation(fields: [paymentMethodId], references: [id])
+  creditCardId    String?
+  creditCard      CreditCard?    @relation(fields: [creditCardId], references: [id])
+  dayOfMonth      Int
+  isActive        Boolean        @default(true)
+  lastGeneratedAt DateTime?
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+
+  @@map("recurring_expenses")
 }

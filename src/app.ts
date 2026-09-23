@@ -9,11 +9,14 @@ import { AppModule } from './app.module'
 import { ResponseInterceptor } from './commons/serializers/response.serializer'
 import { DOCUMENT_TITLE, DOCUMENT_DESCRIPTION, DOCUMENT_VERSION } from './commons/constants/documentation.constant'
 import { API_KEY_HEADER } from './commons/constants/auth.constant'
+import { VERSIONING_OPTIONS } from './commons/constants/versioning.constant'
 
 export async function App() {
   const app = await NestFactory.create(AppModule, { bufferLogs: true })
 
   app.useLogger(app.get(Logger))
+
+  app.enableVersioning(VERSIONING_OPTIONS)
 
   app.useGlobalInterceptors(new ResponseInterceptor(app.get(Reflector)))
 

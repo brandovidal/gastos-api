@@ -49,17 +49,24 @@ modules/<feature>/
 - Exceptions extend `AppException` with their own code: `commons/exceptions/<domain>/<name>.exception.ts` (e.g. `API_KEY_REQUIRED`).
 - Successful responses are wrapped by `ResponseInterceptor`; set the code and message with `@ResponseMessage('CODE', 'Message')`.
 - REST endpoints for gastos-app use `@UseGuards(ApiKeyGuard)` (header `x-api-key`).
+- Routes are versioned by URI with default version `1` (`VERSIONING_OPTIONS`): `@Controller('health')` is served at `/v1/health`. Use `@Version('2')` only for breaking changes. Swagger stays at `/docs`.
 
 ## Tests
 
 - Vitest projects in `vitest.config.mts`: `unit` (`src/**/*.test.ts`) and `integration` (`src/**/*integration-test.ts`).
 - Tests live next to the code. Use `@nestjs/testing` and mock dependencies with `vi.fn()` via `{ provide, useValue }`.
-- Integration tests run against a local SQLite file (`file:./test.db`), same engine as Turso.
+- Integration tests run against a local SQLite file (`file:./test.db`), same engine as Turso. `test/integration.setup.ts` recreates it and applies all migrations before each run.
+
+## Data model
+
+- Enum-like columns are strings (SQLite has no enums); validate them with `commons/constants/expense.constant.ts` and `catalog.constant.ts`.
+- `aliases` in `Person` and `PaymentMethod` is a JSON array stored as a string.
+- Installments use the `n/m` format (`INSTALLMENT_REGEX`).
 
 ## Database (Turso)
 
 Prisma Migrate cannot run against remote Turso. Flow:
 
-1. `pnpm db:migrate:dev` creates the migration against local `dev.db`.
+1. `pnpm db:migrate:dev --name <name>` creates the migration against local `dev.db` and regenerates the client (Prisma 7 `migrate dev` no longer runs `generate`).
 2. `pnpm db:migrate:diff > migration.sql` (or use the generated `prisma/migrations/*/migration.sql`).
 3. `turso db shell <db> < migration.sql`.
