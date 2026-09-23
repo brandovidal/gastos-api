@@ -10,3 +10,5 @@ allowBuilds:
   esbuild: true
   prisma: true
   protobufjs: true
+  # only an OpenCollective donation message; OCR works without it
+  tesseract.js: false

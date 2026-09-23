@@ -37,7 +37,7 @@ const mockExpenseDraftDB = {
   update: vi.fn(),
   findById: vi.fn(),
   findOpenByChat: vi.fn(),
-  discardOpenUpdatedBefore: vi.fn(),
+  moveStaleOpenToReview: vi.fn(),
   failInterruptedUpdatedBefore: vi.fn(),
   discardOpenByChat: vi.fn(),
   findRecentSaved: vi.fn(),
@@ -93,7 +93,7 @@ describe('ConversationService', () => {
 
     mockExtraction.loadCatalog.mockResolvedValue(mockCatalog)
     mockExpenseDraftDB.findOpenByChat.mockResolvedValue(null)
-    mockExpenseDraftDB.discardOpenUpdatedBefore.mockResolvedValue(0)
+    mockExpenseDraftDB.moveStaleOpenToReview.mockResolvedValue(0)
     mockExpenseDraftDB.failInterruptedUpdatedBefore.mockResolvedValue([])
     mockExpenseDraftDB.findByMediaUniqueId.mockResolvedValue(null)
     mockExpenseDraftDB.existsSavedWithOperationNumber.mockResolvedValue(false)
@@ -171,7 +171,7 @@ describe('ConversationService', () => {
       const { replies } = await service.handle(textMessage('almuerzo 25'))
 
       expect(mockExpenseDraftDB.update).toHaveBeenCalledWith('file-0', { status: ExpenseDraftStatus.FAILED })
-      expect(replies[0].text).toContain('bandeja')
+      expect(replies[0].text).toContain('borrador')
     })
 
     it('should discard messages without expenses', async () => {
@@ -235,13 +235,13 @@ describe('ConversationService', () => {
       expect(mockMediaDownloader.download).not.toHaveBeenCalled()
     })
 
-    it('should leave the image in /bandeja as failed when it cannot be downloaded', async () => {
+    it('should leave the image in /borrador as failed when it cannot be downloaded', async () => {
       mockMediaDownloader.download.mockRejectedValue(new Error('telegram down'))
 
       const { replies } = await service.handle(imageMessage())
 
       expect(mockExpenseDraftDB.update).toHaveBeenCalledWith('file-0', { status: ExpenseDraftStatus.FAILED })
-      expect(replies[0].text).toContain('/bandeja')
+      expect(replies[0].text).toContain('/borrador')
       expect(mockExtraction.extract).not.toHaveBeenCalled()
     })
 
@@ -306,13 +306,13 @@ describe('ConversationService', () => {
       expect(mockExtraction.extract).not.toHaveBeenCalled()
     })
 
-    it('should leave it in /bandeja as failed when Whisper fails', async () => {
+    it('should leave it in /borrador as failed when Whisper fails', async () => {
       mockExtraction.transcribe.mockRejectedValue(new Error('429'))
 
       const { replies } = await service.handle(voiceMessage())
 
       expect(mockExpenseDraftDB.update).toHaveBeenCalledWith('file-0', { status: ExpenseDraftStatus.FAILED })
-      expect(replies[0].text).toContain('/bandeja')
+      expect(replies[0].text).toContain('/borrador')
     })
 
     it('should not transcribe again when a failed voice note already has its text', async () => {
@@ -333,29 +333,29 @@ describe('ConversationService', () => {
   })
 
   describe('open draft', () => {
-    it('should discard stale drafts before looking for the active one', async () => {
+    it('should move stale drafts to Borrador before looking for the active one', async () => {
       mockExtraction.extract.mockResolvedValue({ expenses: [buildResolvedExpense()] })
 
       await service.handle(textMessage('almuerzo 25'))
 
-      const cutoff = mockExpenseDraftDB.discardOpenUpdatedBefore.mock.calls[0][2] as Date
+      const cutoff = mockExpenseDraftDB.moveStaleOpenToReview.mock.calls[0][2] as Date
       expect(Date.now() - cutoff.getTime()).toBeGreaterThanOrEqual(30 * 60_000 - 1000)
       expect(mockExpenseDraftDB.findOpenByChat).toHaveBeenCalledWith(ExpenseDraftChannel.TELEGRAM, CHAT_ID, cutoff)
     })
 
-    it('should send stale drafts the AI never finished to /bandeja as failed before discarding the rest', async () => {
+    it('should send stale drafts the AI never finished to /borrador as failed before moving the rest to Borrador', async () => {
       mockExtraction.extract.mockResolvedValue({ expenses: [buildResolvedExpense()] })
 
       await service.handle(textMessage('almuerzo 25'))
 
-      const cutoff = mockExpenseDraftDB.discardOpenUpdatedBefore.mock.calls[0][2] as Date
+      const cutoff = mockExpenseDraftDB.moveStaleOpenToReview.mock.calls[0][2] as Date
       expect(mockExpenseDraftDB.failInterruptedUpdatedBefore).toHaveBeenCalledWith(
         ExpenseDraftChannel.TELEGRAM,
         cutoff,
         CHAT_ID,
       )
       expect(mockExpenseDraftDB.failInterruptedUpdatedBefore.mock.invocationCallOrder[0]).toBeLessThan(
-        mockExpenseDraftDB.discardOpenUpdatedBefore.mock.invocationCallOrder[0],
+        mockExpenseDraftDB.moveStaleOpenToReview.mock.invocationCallOrder[0],
       )
     })
 
@@ -479,7 +479,7 @@ describe('ConversationService', () => {
     })
 
     it.each([
-      [BotAction.INBOX, ExpenseDraftStatus.INBOX, 'En la bandeja'],
+      [BotAction.LATER, ExpenseDraftStatus.PENDING_REVIEW, 'En borrador'],
       [BotAction.DISCARD, ExpenseDraftStatus.DISCARDED, 'Descartado'],
     ])('%s should close the expense as %s', async (name, status, text) => {
       const result = await service.handle(action(name))
@@ -584,27 +584,32 @@ describe('ConversationService', () => {
     })
   })
 
-  describe('inbox (/bandeja)', () => {
-    it('should list inbox and failed expenses', async () => {
+  describe('Borrador (/borrador)', () => {
+    it('should list every expense pending review', async () => {
       mockExpenseDraftDB.findByStatuses.mockResolvedValue({
-        items: [buildExpenseDraft({ status: ExpenseDraftStatus.INBOX })],
+        items: [buildExpenseDraft({ status: ExpenseDraftStatus.PENDING_REVIEW })],
         total: 1,
       })
 
-      const { replies } = await service.handle(command(BotCommand.INBOX))
+      const { replies } = await service.handle(command(BotCommand.DRAFTS))
 
       expect(mockExpenseDraftDB.findByStatuses).toHaveBeenCalledWith(
         ExpenseDraftChannel.TELEGRAM,
         CHAT_ID,
-        [ExpenseDraftStatus.INBOX, ExpenseDraftStatus.FAILED],
+        [
+          ExpenseDraftStatus.DRAFT,
+          ExpenseDraftStatus.AWAITING_CONFIRMATION,
+          ExpenseDraftStatus.PENDING_REVIEW,
+          ExpenseDraftStatus.FAILED,
+        ],
         5,
       )
-      expect(replies[0].text).toContain('Bandeja')
+      expect(replies[0].text).toContain('Borrador')
       expect(replies[1].buttons?.[0][0].label).toBe('↩️ Retomar')
     })
 
-    it('should reopen an inbox expense with its confirmation buttons', async () => {
-      mockExpenseDraftDB.findById.mockResolvedValue(buildExpenseDraft({ status: ExpenseDraftStatus.INBOX }))
+    it('should reopen a pending expense with its confirmation buttons', async () => {
+      mockExpenseDraftDB.findById.mockResolvedValue(buildExpenseDraft({ status: ExpenseDraftStatus.PENDING_REVIEW }))
 
       const result = await service.handle(action(BotAction.RESUME))
 
@@ -629,8 +634,8 @@ describe('ConversationService', () => {
       expect(result.replies[0].text).toContain('Almuerzo')
     })
 
-    it('should only accept Retomar and Descartar on inbox expenses', async () => {
-      mockExpenseDraftDB.findById.mockResolvedValue(buildExpenseDraft({ status: ExpenseDraftStatus.INBOX }))
+    it('should only accept Retomar and Descartar on pending expenses', async () => {
+      mockExpenseDraftDB.findById.mockResolvedValue(buildExpenseDraft({ status: ExpenseDraftStatus.PENDING_REVIEW }))
 
       const saved = await service.handle(action(BotAction.SAVE))
       const discarded = await service.handle(action(BotAction.DISCARD))

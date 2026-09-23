@@ -58,6 +58,6 @@ Write expenses as you would say them; the bot reads them with AI, asks for what 
 | 📸 A Yape/Plin screenshot or a voucher photo (caption optional, e.g. `persona dany`) | Reads amount, date, receiver and operation number; warns if the same image or operation was already saved |
 | 🎙️ A voice note (up to 60 s) | Transcribes it ("🎙️ Entendí: «…»") and reads it like text |
 
-Buttons: ✅ Guardar · ✏️ Corregir · 📥 Bandeja · ❌ Descartar. Commands: `/bandeja` (saved for later and failed, with ↩️ Retomar), `/ultimos`, `/resumen` (month totals), `/uso` (AI quota used today), `/cancelar`, `/ayuda`.
+Buttons: ✅ Guardar · ✏️ Corregir · 📝 Borrador · ❌ Descartar. Commands: `/borrador` (everything pending review: open, kept for later, expired and failed, with ↩️ Retomar), `/ultimos`, `/resumen` (month totals), `/uso` (AI quota used today), `/cancelar`, `/ayuda`.
 
 See [CLAUDE.md](CLAUDE.md) for conventions and the Turso migration flow.

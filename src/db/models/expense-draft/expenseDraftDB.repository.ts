@@ -68,16 +68,17 @@ export class ExpenseDraftDBRepository {
     }
   }
 
-  async discardOpenUpdatedBefore(channel: ExpenseDraftChannel, chatId: string, before: Date): Promise<number> {
+  // Open drafts nobody confirmed in time go to Borrador (D50) instead of being lost
+  async moveStaleOpenToReview(channel: ExpenseDraftChannel, chatId: string, before: Date): Promise<number> {
     const { count } = await this.prisma.expenseDraft.updateMany({
       where: { channel, chatId, status: { in: OPEN_EXPENSE_DRAFT_STATUSES }, updatedAt: { lt: before } },
-      data: { status: ExpenseDraftStatus.DISCARDED },
+      data: { status: ExpenseDraftStatus.PENDING_REVIEW, pendingField: null },
     })
     return count
   }
 
   // Drafts whose AI extraction never finished (process restarted mid-request): still `draft`, with no question
-  // asked and no extracted data. They become `failed` so /bandeja can retry them. Returns the affected chats.
+  // asked and no extracted data. They become `failed` so /borrador can retry them. Returns the affected chats.
   async failInterruptedUpdatedBefore(
     channel: ExpenseDraftChannel,
     before: Date,
@@ -146,7 +147,7 @@ export class ExpenseDraftDBRepository {
     return expenseDrafts.map((expenseDraft) => this.serializer.toDto(expenseDraft))
   }
 
-  // /bandeja: inbox and failed expenses of the chat, newest first
+  // /borrador: expenses pending review of the chat, newest first
   async findByStatuses(
     channel: ExpenseDraftChannel,
     chatId: string,

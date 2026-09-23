@@ -10,10 +10,10 @@ export enum ChannelMessageType {
 export enum BotAction {
   SAVE = 'ok',
   EDIT = 'edit',
-  INBOX = 'inbox',
+  LATER = 'later', // 📝 Borrador: keep it to review later
   DISCARD = 'no',
   SET_FIELD = 'set',
-  RESUME = 're', // /bandeja: reopen an inbox or failed expense
+  RESUME = 're', // /borrador: reopen a pending or failed expense
   NEW_PAYMENT_METHOD = 'new', // create the payment method the user typed
 }
 
@@ -23,7 +23,7 @@ export enum BotCommand {
   CANCEL = 'cancelar',
   RECENT = 'ultimos',
   SUMMARY = 'resumen',
-  INBOX = 'bandeja',
+  DRAFTS = 'borrador',
   USAGE = 'uso',
 }
 
@@ -34,7 +34,7 @@ export const BOT_COMMAND_DESCRIPTIONS: Record<BotCommand, string> = {
   [BotCommand.CANCEL]: 'Descartar el borrador abierto',
   [BotCommand.RECENT]: 'Últimos gastos guardados',
   [BotCommand.SUMMARY]: 'Total del mes',
-  [BotCommand.INBOX]: 'Gastos en bandeja y los que fallaron',
+  [BotCommand.DRAFTS]: 'Gastos pendientes de revisar',
   [BotCommand.USAGE]: 'Uso de la AI hoy',
 }
 
@@ -61,7 +61,7 @@ export const FIELD_CODES = {
 export const MAX_QUICK_REPLIES = 10
 export const QUICK_REPLIES_PER_ROW = 2
 export const RECENT_EXPENSES_LIMIT = 5
-export const INBOX_LIMIT = 5
+export const DRAFTS_LIMIT = 5
 
 // Images sent as files (documents) above this size are rejected before downloading (photos are already compressed)
 export const MAX_IMAGE_BYTES = 10 * 1024 * 1024

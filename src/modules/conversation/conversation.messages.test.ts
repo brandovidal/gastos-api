@@ -5,7 +5,7 @@ import { ExpenseField } from '@/commons/constants/expense-extraction.constant'
 import { decodeBotAction } from './bot-action.codec'
 import {
   buildExpenseReply,
-  buildInboxReplies,
+  buildDraftReplies,
   buildNewPaymentMethodReply,
   toNewPaymentMethodName,
   formatAmount,
@@ -44,7 +44,7 @@ describe('conversation messages', () => {
     expect(reply.buttons?.flat().map((button) => button.label)).toEqual([
       '✅ Guardar',
       '✏️ Corregir',
-      '📥 Bandeja',
+      '📝 Borrador',
       '❌ Descartar',
     ])
   })
@@ -122,22 +122,22 @@ describe('conversation messages', () => {
     expect(text).not.toContain('• Danery')
   })
 
-  it('should list the inbox with Retomar and Descartar, showing the raw text of failed ones', () => {
-    const replies = buildInboxReplies(
+  it('should list Borrador with Retomar and Descartar, showing the raw text of failed ones', () => {
+    const replies = buildDraftReplies(
       [
-        buildExpenseDraft({ status: ExpenseDraftStatus.INBOX }),
+        buildExpenseDraft({ status: ExpenseDraftStatus.PENDING_REVIEW }),
         buildExpenseDraft({ id: 'failed-1', status: ExpenseDraftStatus.FAILED, rawText: 'algo raro <b>' }),
       ],
       7,
       mockCatalog,
     )
 
-    expect(replies[0].text).toContain('Bandeja</b> (7) · mostrando los 2 más recientes')
+    expect(replies[0].text).toContain('Borrador</b> (7) · mostrando los 2 más recientes')
     expect(replies[1].text).toContain('Almuerzo')
     expect(replies[1].buttons?.[0].map((button) => button.label)).toEqual(['↩️ Retomar', '❌ Descartar'])
     expect(decodeBotAction(replies[1].buttons?.[0][0].data ?? '')).toEqual({ name: 're', draftId: FILE_ID })
     expect(replies[2].text).toContain('algo raro &lt;b&gt;')
-    expect(buildInboxReplies([], 0, mockCatalog)).toEqual([{ text: '📥 La bandeja está vacía.' }])
+    expect(buildDraftReplies([], 0, mockCatalog)).toEqual([{ text: '📝 No hay nada pendiente en Borrador.' }])
   })
 
   it('should offer to create an unknown payment method, one button per type, under 64 bytes', () => {

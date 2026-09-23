@@ -22,13 +22,20 @@ export enum ExpenseDraftStatus {
   DRAFT = 'draft',
   AWAITING_CONFIRMATION = 'awaiting_confirmation',
   SAVED = 'saved',
-  INBOX = 'inbox',
+  PENDING_REVIEW = 'pending_review', // Borrador (D50): kept for later from the chat, or expired without confirming
   DISCARDED = 'discarded',
   FAILED = 'failed',
 }
 
 // Statuses of the expense draft the bot is still talking about with the user
 export const OPEN_EXPENSE_DRAFT_STATUSES = [ExpenseDraftStatus.DRAFT, ExpenseDraftStatus.AWAITING_CONFIRMATION]
+
+// Borrador (D50): everything still pending review, listed by /borrador and GET /v1/drafts
+export const REVIEW_EXPENSE_DRAFT_STATUSES = [
+  ...OPEN_EXPENSE_DRAFT_STATUSES,
+  ExpenseDraftStatus.PENDING_REVIEW,
+  ExpenseDraftStatus.FAILED,
+]
 
 // An open expense draft without updates after this time is discarded (final value in P3)
 export const EXPENSE_DRAFT_EXPIRATION_MINUTES = 30

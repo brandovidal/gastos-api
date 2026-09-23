@@ -114,12 +114,12 @@ describe('ExpenseDraftDBRepository', () => {
     })
   })
 
-  describe('discardOpenUpdatedBefore', () => {
-    it('should discard open expense drafts older than the given date', async () => {
+  describe('moveStaleOpenToReview', () => {
+    it('should move open expense drafts older than the given date to Borrador', async () => {
       const before = new Date('2026-09-22T11:30:00.000Z')
       mockPrismaService.expenseDraft.updateMany.mockResolvedValue({ count: 2 })
 
-      const count = await repository.discardOpenUpdatedBefore(ExpenseDraftChannel.TELEGRAM, '123456', before)
+      const count = await repository.moveStaleOpenToReview(ExpenseDraftChannel.TELEGRAM, '123456', before)
 
       expect(count).toBe(2)
       expect(mockPrismaService.expenseDraft.updateMany).toHaveBeenCalledWith({
@@ -129,7 +129,7 @@ describe('ExpenseDraftDBRepository', () => {
           status: { in: [ExpenseDraftStatus.DRAFT, ExpenseDraftStatus.AWAITING_CONFIRMATION] },
           updatedAt: { lt: before },
         },
-        data: { status: ExpenseDraftStatus.DISCARDED },
+        data: { status: ExpenseDraftStatus.PENDING_REVIEW, pendingField: null },
       })
     })
   })

@@ -7,7 +7,7 @@ import {
   CARD_DAYS_FIELD_PREFIX,
   ChannelMessageType,
   FREE_CORRECTION_FIELD,
-  INBOX_LIMIT,
+  DRAFTS_LIMIT,
   MAX_AUDIO_SECONDS,
   MAX_IMAGE_BYTES,
   RECENT_EXPENSES_LIMIT,
@@ -20,6 +20,7 @@ import {
   ExpenseDraftInputType,
   ExpenseDraftStatus,
   OPEN_EXPENSE_DRAFT_STATUSES,
+  REVIEW_EXPENSE_DRAFT_STATUSES,
 } from '@/commons/constants/expense-draft.constant'
 import { ExpenseField } from '@/commons/constants/expense-extraction.constant'
 import { DateHelper } from '@/commons/helpers/date.helper'
@@ -46,7 +47,7 @@ import {
   TEXTS,
   buildClosedReply,
   buildExpenseReply,
-  buildInboxReplies,
+  buildDraftReplies,
   buildNewPaymentMethodReply,
   formatMonthlyTotals,
   formatAiUsage,
@@ -70,8 +71,8 @@ const MONTH_NAMES = [
   'diciembre',
 ]
 
-// Expenses that /bandeja lists and that can be resumed
-const INBOX_STATUSES = [ExpenseDraftStatus.INBOX, ExpenseDraftStatus.FAILED]
+// Closed-for-now expenses of Borrador that accept only Retomar and Descartar
+const PARKED_STATUSES = [ExpenseDraftStatus.PENDING_REVIEW, ExpenseDraftStatus.FAILED]
 
 // "cierre 15, pago 5" or "15 5"
 const CARD_DAYS_REGEX = /(\d{1,2})\D+(\d{1,2})/
@@ -197,7 +198,7 @@ export class ConversationService {
     return this.extractInto(expenseDraft)
   }
 
-  // Runs the AI on a row (new message or a failed one resumed from /bandeja) and shows one summary per expense.
+  // Runs the AI on a row (new message or a failed one resumed from /borrador) and shows one summary per expense.
   // The input comes from the row itself: its text or caption, its image downloaded again from the channel, or its
   // voice note transcribed once (the transcription is kept in rawText, so a retry only repeats the extraction).
   private async extractInto(expenseDraft: ExpenseDraftDbDto, edit = false): Promise<BotReply[]> {
@@ -313,12 +314,12 @@ export class ConversationService {
     const expenseDraft = await this.expenseDraftDBRepository.findById(action.draftId)
     const status = expenseDraft?.status as ExpenseDraftStatus | undefined
 
-    // Open expenses accept every button; inbox and failed ones only Retomar and Descartar (from /bandeja)
+    // Open expenses accept every button; pending and failed ones only Retomar and Descartar (from /borrador)
     const isOwn = expenseDraft?.chatId === message.chatId
     const isOpen = status !== undefined && OPEN_EXPENSE_DRAFT_STATUSES.includes(status)
-    const isInInbox = status !== undefined && INBOX_STATUSES.includes(status)
+    const isParked = status !== undefined && PARKED_STATUSES.includes(status)
     const allowed =
-      isOwn && (isOpen || (isInInbox && (action.name === BotAction.RESUME || action.name === BotAction.DISCARD)))
+      isOwn && (isOpen || (isParked && (action.name === BotAction.RESUME || action.name === BotAction.DISCARD)))
 
     if (!expenseDraft || !allowed) {
       return { replies: [], notice: TEXTS.alreadyProcessed }
@@ -339,12 +340,12 @@ export class ConversationService {
       case BotAction.EDIT:
         await this.expenseDraftDBRepository.update(expenseDraft.id, { pendingField: FREE_CORRECTION_FIELD })
         return { replies: [{ text: TEXTS.askCorrection }] }
-      case BotAction.INBOX: {
+      case BotAction.LATER: {
         const updated = await this.expenseDraftDBRepository.update(expenseDraft.id, {
-          status: ExpenseDraftStatus.INBOX,
+          status: ExpenseDraftStatus.PENDING_REVIEW,
           pendingField: null,
         })
-        return { replies: [buildClosedReply('📥 <b>En la bandeja</b>', updated, catalog)] }
+        return { replies: [buildClosedReply('📝 <b>En borrador</b>', updated, catalog)] }
       }
       case BotAction.DISCARD: {
         const updated = await this.expenseDraftDBRepository.update(expenseDraft.id, {
@@ -367,7 +368,7 @@ export class ConversationService {
     }
   }
 
-  // Reopens an inbox expense (or retries the AI on a failed one) and shows it with its buttons again
+  // Reopens a pending expense (or retries the AI on a failed one) and shows it with its buttons again
   private async resume(expenseDraft: ExpenseDraftDbDto, catalog: ExtractionCatalog): Promise<BotReply[]> {
     if (expenseDraft.status === ExpenseDraftStatus.FAILED) {
       return this.extractInto(expenseDraft, true)
@@ -455,12 +456,17 @@ export class ConversationService {
         )
         return [{ text: formatRecent(recent) }]
       }
-      case BotCommand.INBOX: {
+      case BotCommand.DRAFTS: {
         const [{ items, total }, catalog] = await Promise.all([
-          this.expenseDraftDBRepository.findByStatuses(message.channel, message.chatId, INBOX_STATUSES, INBOX_LIMIT),
+          this.expenseDraftDBRepository.findByStatuses(
+            message.channel,
+            message.chatId,
+            REVIEW_EXPENSE_DRAFT_STATUSES,
+            DRAFTS_LIMIT,
+          ),
           this.expenseExtractionService.loadCatalog(),
         ])
-        return buildInboxReplies(items, total, catalog)
+        return buildDraftReplies(items, total, catalog)
       }
       case BotCommand.SUMMARY: {
         const today = DateHelper.todayIn(APP_TIME_ZONE)
@@ -494,17 +500,17 @@ export class ConversationService {
     return !/\d/.test(text) && text.split(/\s+/).length <= 3
   }
 
-  // Called when the app starts: drafts left without extraction by a restart become failed (retry from /bandeja)
+  // Called when the app starts: drafts left without extraction by a restart become failed (retry from /borrador)
   recoverInterrupted(channel: ExpenseDraftChannel, before: Date): Promise<{ chatId: string; count: number }[]> {
     return this.expenseDraftDBRepository.failInterruptedUpdatedBefore(channel, before)
   }
 
-  // The latest open expense draft is the one text corrections apply to; stale ones are discarded first
-  // (except the ones the AI never finished, which go to /bandeja as failed)
+  // The latest open expense draft is the one text corrections apply to; stale ones go to Borrador first
+  // (pending_review, or failed when the AI never finished)
   private async findActive(message: ChannelMessage): Promise<ExpenseDraftDbDto | null> {
     const cutoff = new Date(Date.now() - EXPENSE_DRAFT_EXPIRATION_MINUTES * 60_000)
     await this.expenseDraftDBRepository.failInterruptedUpdatedBefore(message.channel, cutoff, message.chatId)
-    await this.expenseDraftDBRepository.discardOpenUpdatedBefore(message.channel, message.chatId, cutoff)
+    await this.expenseDraftDBRepository.moveStaleOpenToReview(message.channel, message.chatId, cutoff)
     return this.expenseDraftDBRepository.findOpenByChat(message.channel, message.chatId, cutoff)
   }
 

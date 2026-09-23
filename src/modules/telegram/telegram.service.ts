@@ -42,7 +42,7 @@ export class TelegramService implements OnModuleInit, OnApplicationBootstrap, Be
     private readonly mediaDownloaderRegistry: MediaDownloaderRegistry,
   ) {}
 
-  // The conversation downloads images through this (also again when a failed one is resumed from /bandeja)
+  // The conversation downloads images through this (also again when a failed one is resumed from /borrador)
   onModuleInit() {
     this.mediaDownloaderRegistry.register(ExpenseDraftChannel.TELEGRAM, async (fileId) => {
       const { data, filePath } = await this.telegramClient.downloadFile(fileId)
@@ -51,7 +51,7 @@ export class TelegramService implements OnModuleInit, OnApplicationBootstrap, Be
     })
   }
 
-  // Messages already answered with 200 whose processing a restart cut: move them to /bandeja and tell the chat.
+  // Messages already answered with 200 whose processing a restart cut: move them to /borrador and tell the chat.
   // Not awaited, so a slow database or Telegram never delays startup
   onApplicationBootstrap() {
     void this.recoverInterrupted()

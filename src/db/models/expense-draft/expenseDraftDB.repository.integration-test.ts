@@ -71,8 +71,8 @@ describe('ExpenseDraftDBRepository (integration)', () => {
     expect(linked.accountReceivable?.amount).toBe(20)
   })
 
-  it('should discard open expense drafts not updated since the given date', async () => {
-    const count = await repository.discardOpenUpdatedBefore(
+  it('should move open expense drafts not updated since the given date to Borrador', async () => {
+    const count = await repository.moveStaleOpenToReview(
       ExpenseDraftChannel.TELEGRAM,
       chatId,
       new Date(Date.now() + 60_000),

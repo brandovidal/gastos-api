@@ -242,12 +242,12 @@ describe('Conversation flows (integration)', () => {
     expect((await lastDraft()).dailyExpense?.paymentMethodId).toBe(await paymentMethodId('bbva'))
   })
 
-  it('should send an expense to /bandeja and save it after Retomar', async () => {
+  it('should send an expense to /borrador and save it after Retomar', async () => {
     const [summary] = await text('cafe 8 con plin')
-    await press(summary, 'Bandeja')
+    await press(summary, 'Borrador')
 
-    const inbox = await command(BotCommand.INBOX)
-    const [resumed] = await press(inbox[1], 'Retomar')
+    const drafts = await command(BotCommand.DRAFTS)
+    const [resumed] = await press(drafts[1], 'Retomar')
     await press(resumed, 'Guardar')
 
     expect((await lastDraft()).dailyExpense).not.toBeNull()
@@ -267,13 +267,13 @@ describe('Conversation flows (integration)', () => {
     expect((await lastDraft()).status).toBe(ExpenseDraftStatus.DISCARDED)
   })
 
-  it('should leave the message in /bandeja as failed when the AI is down', async () => {
+  it('should leave the message in /borrador as failed when the AI is down', async () => {
     const [reply] = await text('mensaje que la AI no puede leer 99')
 
-    expect(reply.text).toContain('/bandeja')
+    expect(reply.text).toContain('/borrador')
     expect((await lastDraft()).status).toBe(ExpenseDraftStatus.FAILED)
-    const inbox = await command(BotCommand.INBOX)
-    expect(inbox.some((item) => item.buttons?.flat().some((button) => button.label.includes('Retomar')))).toBe(true)
+    const drafts = await command(BotCommand.DRAFTS)
+    expect(drafts.some((item) => item.buttons?.flat().some((button) => button.label.includes('Retomar')))).toBe(true)
   })
 
   it('should answer /resumen, /ultimos and /uso', async () => {

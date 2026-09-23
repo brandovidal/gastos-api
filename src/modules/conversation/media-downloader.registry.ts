@@ -7,7 +7,7 @@ import { MediaFile } from '@/modules/expense-extraction/dto/expense-extraction.t
 export type MediaDownloader = (fileId: string) => Promise<MediaFile>
 
 // Each channel registers how to download its files, so the conversation stays channel-agnostic
-// and a failed image can be downloaded again from /bandeja
+// and a failed image can be downloaded again from /borrador
 @Injectable()
 export class MediaDownloaderRegistry {
   private readonly downloaders = new Map<ExpenseDraftChannel, MediaDownloader>()

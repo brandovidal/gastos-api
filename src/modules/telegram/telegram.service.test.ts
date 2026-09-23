@@ -96,7 +96,7 @@ describe('TelegramService', () => {
   })
 
   describe('lifecycle', () => {
-    it('should move interrupted drafts to /bandeja on startup and tell only allowed chats', async () => {
+    it('should move interrupted drafts to /borrador on startup and tell only allowed chats', async () => {
       mockConversation.recoverInterrupted.mockResolvedValue([
         { chatId: '555', count: 2 },
         { chatId: '999', count: 1 },

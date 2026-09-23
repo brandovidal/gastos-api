@@ -11,3 +11,5 @@ coverage
 test/golden/images
 test/eval/last-report.txt
 .docker-data
+.cache
+test/eval/ocr-report

@@ -63,18 +63,18 @@ export const TEXTS = {
     '',
     '<b>Para corregir</b> un gasto que acabo de leer, empieza con la palabra: <i>monto 30</i>, <i>persona dany</i>, <i>cuota 2/6</i>, <i>tarjeta oh</i>, <i>categoría comida</i>, <i>con culpa</i>, <i>ayer</i>. Si no, toca ✏️ Corregir y escríbelo como quieras.',
     '',
-    '/bandeja · /ultimos · /resumen · /uso · /cancelar',
+    '/borrador · /ultimos · /resumen · /uso · /cancelar',
   ].join('\n'),
-  failed: '⚠️ No pude procesar el mensaje ahora. Lo dejé en /bandeja para reintentarlo.',
+  failed: '⚠️ No pude procesar el mensaje ahora. Lo dejé en /borrador para reintentarlo.',
   interrupted: (count: number) =>
     count === 1
-      ? '⚠️ Me reinicié mientras procesaba un mensaje. Lo dejé en /bandeja para retomarlo.'
-      : `⚠️ Me reinicié mientras procesaba ${count} mensajes. Los dejé en /bandeja para retomarlos.`,
+      ? '⚠️ Me reinicié mientras procesaba un mensaje. Lo dejé en /borrador para retomarlo.'
+      : `⚠️ Me reinicié mientras procesaba ${count} mensajes. Los dejé en /borrador para retomarlos.`,
   audioTooLong: (maxSeconds: number) => `🎙️ El audio es muy largo. Mándame uno de hasta ${maxSeconds} segundos.`,
   emptyAudio: '🎙️ No entendí el audio. Prueba de nuevo o escríbelo.',
   heard: (transcript: string) => `🎙️ Entendí: <i>«${escapeHtml(transcript)}»</i>`,
-  duplicateAudio: '🎙️ Ya recibí este audio antes. Búscalo en /ultimos o /bandeja.',
-  duplicateImage: '🖼️ Ya recibí esta imagen antes. Búscala en /ultimos o /bandeja.',
+  duplicateAudio: '🎙️ Ya recibí este audio antes. Búscalo en /ultimos o /borrador.',
+  duplicateImage: '🖼️ Ya recibí esta imagen antes. Búscala en /ultimos o /borrador.',
   imageTooLarge: '🖼️ La imagen pesa demasiado. Envíala como foto (no como archivo) o una captura más liviana.',
   possibleDuplicate: (operationNumber: string) =>
     `⚠️ Parece que ya registraste este gasto (operación <b>${escapeHtml(operationNumber)}</b>).`,
@@ -86,9 +86,9 @@ export const TEXTS = {
   cancelled: (count: number) => (count ? '🗑️ Descarté el borrador abierto.' : 'No hay ningún borrador abierto.'),
   noRecent: 'Todavía no guardaste gastos desde aquí.',
   noTotals: 'No hay gastos registrados este mes.',
-  emptyInbox: '📥 La bandeja está vacía.',
-  inboxHeader: (shown: number, total: number) =>
-    `📥 <b>Bandeja</b> (${total})${total > shown ? ` · mostrando los ${shown} más recientes` : ''}`,
+  emptyDrafts: '📝 No hay nada pendiente en Borrador.',
+  draftsHeader: (shown: number, total: number) =>
+    `📝 <b>Borrador</b> (${total})${total > shown ? ` · mostrando los ${shown} más recientes` : ''}`,
   resumed: 'Retomado',
   failedExtraction: '(la AI no pudo leerlo)',
   askCardDays:
@@ -199,7 +199,7 @@ export function buildExpenseReply(expenseDraft: ExpenseDraftDbDto, catalog: Extr
     buttons: [
       [button('✅ Guardar', BotAction.SAVE, expenseDraft.id), button('✏️ Corregir', BotAction.EDIT, expenseDraft.id)],
       [
-        button('📥 Bandeja', BotAction.INBOX, expenseDraft.id),
+        button('📝 Borrador', BotAction.LATER, expenseDraft.id),
         button('❌ Descartar', BotAction.DISCARD, expenseDraft.id),
       ],
     ],
@@ -266,12 +266,12 @@ export function formatMonthlyTotals(
   ].join('\n')
 }
 
-// /bandeja: one message per expense with Retomar / Descartar
-export function buildInboxReplies(items: ExpenseDraftDbDto[], total: number, catalog: ExtractionCatalog): BotReply[] {
-  if (!items.length) return [{ text: TEXTS.emptyInbox }]
+// /borrador: one message per expense pending review, with Retomar / Descartar
+export function buildDraftReplies(items: ExpenseDraftDbDto[], total: number, catalog: ExtractionCatalog): BotReply[] {
+  if (!items.length) return [{ text: TEXTS.emptyDrafts }]
 
   return [
-    { text: TEXTS.inboxHeader(items.length, total) },
+    { text: TEXTS.draftsHeader(items.length, total) },
     ...items.map((expenseDraft) => ({
       text:
         expenseDraft.status === ExpenseDraftStatus.FAILED

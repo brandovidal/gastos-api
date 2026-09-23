@@ -84,7 +84,7 @@ modules/<feature>/
 - The AI picks catalog values by short refs (`p1`, `pm2`, `cc1`, `cat3`); `expense-extraction.resolver.ts` maps them to ids and computes `missingFields`. Never send database ids or secrets to the AI.
 - Simple corrections go through `correction-parser.ts` first; the AI is only called when it returns `null`.
 - Images (P4): a photo or `image/*` file becomes `ChannelMessageType.IMAGE`; the draft keeps `mediaFileId` + `mediaUniqueId` (same image sent again → no AI call) and the caption in `rawText`. Files are downloaded in memory through `MediaDownloaderRegistry` (each channel registers its downloader) and never stored.
-- Voice notes (P5): `ChannelMessageType.AUDIO` (≤ 60 s) → `ExpenseExtractionService.transcribe` (Whisper on Groq, logged as `transcribe`) → the transcription is stored in `rawText` and read like a typed message; the reply starts with "🎙️ Entendí: «…»". A retry from /bandeja only transcribes again if `rawText` is empty.
+- Voice notes (P5): `ChannelMessageType.AUDIO` (≤ 60 s) → `ExpenseExtractionService.transcribe` (Whisper on Groq, logged as `transcribe`) → the transcription is stored in `rawText` and read like a typed message; the reply starts with "🎙️ Entendí: «…»". A retry from /borrador only transcribes again if `rawText` is empty.
 - Tests never call real APIs: mock `@google/genai` / `openai` with `vi.mock`.
 - Golden set (P9): `test/golden/extraction.golden.json`. When the prompt or schema changes, ask the user before running `make eval-ai CONFIRM=yes RECORD=1` (real AI, burns quota) so `test/fixtures/ai-responses.json` stays current; `conversation.integration-test.ts` replays those answers with the clock frozen on `recordedAt`. A new flow test needs its message in the golden set first.
 
@@ -96,7 +96,9 @@ modules/<feature>/
 - Button data: `<action>:<draftId>[:<fieldCode>:<value>]` (`bot-action.codec.ts`), always ≤ 64 bytes (Telegram limit).
 - `ExpenseSaverService` creates the record of the destination table and marks the draft as saved in one transaction (`ExpenseDBRepository.saveFromExpenseDraft`), `daily` included. Credit cards: day ≤ closing day → that month, otherwise the next one.
 - `modules/telegram`: the webhook (`POST /v1/telegram/webhook`) checks the secret header, answers 200 at once and processes the update in a per-chat in-memory queue (`KeyedQueue`). Chats outside `TELEGRAM_ALLOWED_CHAT_IDS` get a 200 and are ignored.
-- Errors (P8): `TelegramClient` retries 429 (waits `retry_after`, up to 30 s), 5xx and network errors twice, with a 10 s timeout. A failed edit is sent as a new message (the work is already done). On shutdown the chat queues get 10 s to finish; on startup, drafts the AI never finished (still `draft`, no data, no question) become `failed` and the chat is told to use `/bandeja`. The same happens when they expire after 30 minutes.
+- Errors (P8): `TelegramClient` retries 429 (waits `retry_after`, up to 30 s), 5xx and network errors twice, with a 10 s timeout. A failed edit is sent as a new message (the work is already done). On shutdown the chat queues get 10 s to finish; on startup, drafts the AI never finished (still `draft`, no data, no question) become `failed` and the chat is told to use `/borrador`. The same happens when they expire after 30 minutes.
+- Borrador (D50, formerly Bandeja): `REVIEW_EXPENSE_DRAFT_STATUSES` = open + `pending_review` + `failed`. 📝 Borrador (`BotAction.LATER`) parks a draft as `pending_review`; open drafts older than 30 minutes move there too (`moveStaleOpenToReview`) instead of being discarded.
+- OCR probe (P21): `make ocr-probe [DIR=…]` runs tesseract.js (Spanish, `PSM.SPARSE_TEXT`: the default single-block mode skips big amounts) on screenshots, without AI; full text goes to the git-ignored `test/eval/ocr-report/`.
 - Observability: `/uso` shows today's AI calls per model against 90 % of its free quota; `GET /v1/health` includes the webhook state from `getWebhookInfo`.
 
 ## Deployment (P10)
