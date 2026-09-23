@@ -84,9 +84,15 @@ export class ExpenseRecordDBRepository {
     }
   }
 
-  async delete(resource: ExpenseResource, id: string): Promise<void> {
+  // Returns the file of the chat draft it came from (D58), so the caller can release it
+  async delete(resource: ExpenseResource, id: string): Promise<{ fileId: string | null }> {
+    // Recurring expenses are not created from drafts
+    const include = resource === ExpenseResource.RECURRING ? undefined : { draft: { select: { fileId: true } } }
     try {
-      await this.delegate(resource).delete({ where: { id } })
+      const deleted = (await this.delegate(resource).delete({ where: { id }, include })) as {
+        draft?: { fileId: string | null } | null
+      }
+      return { fileId: deleted.draft?.fileId ?? null }
     } catch (error) {
       if (isPrismaError(error, PrismaErrorCode.RECORD_NOT_FOUND)) throw new ExpenseNotFoundException({ resource, id })
       throw error

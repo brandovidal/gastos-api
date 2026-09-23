@@ -27,6 +27,8 @@ export const buildExpenseDraft = (overrides: Partial<ExpenseDraftDbDto> = {}): E
   documentType: null,
   rawText: 'almuerzo 25 soles con yape',
   mediaFileId: null,
+  mediaUniqueId: null,
+  fileId: null,
   status: ExpenseDraftStatus.AWAITING_CONFIRMATION,
   pendingField: null,
   destination: ExpenseDestination.FIXED_COST,

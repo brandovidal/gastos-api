@@ -99,6 +99,17 @@ export class StoredFilesService {
     await this.storage.delete(file.storageKey)
   }
 
+  // An expense was deleted: the file leaves the bucket only if no other draft or expense uses it
+  async release(fileId: string): Promise<boolean> {
+    const file = await this.storedFileDBRepository.findById(fileId)
+    if (!file || file.status === StoredFileStatus.DELETED) return false
+    if (await this.storedFileDBRepository.countUses(fileId)) return false
+
+    await this.storage.delete(file.storageKey)
+    await this.storedFileDBRepository.markDeleted(file.id)
+    return true
+  }
+
   // Daily (D44): temporary files past their 7 days leave the bucket; the row stays as history
   async deleteExpired(now = new Date()): Promise<number> {
     const expired = await this.storedFileDBRepository.findExpired(now, FILE_CLEANUP_BATCH)

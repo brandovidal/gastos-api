@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 
 import { Test, TestingModule } from '@nestjs/testing'
@@ -8,10 +8,12 @@ import { AiProvider } from '@/commons/constants/ai.constant'
 import { AiInputPartType } from '@/commons/constants/ai.constant'
 import { BotCommand, ChannelMessageType } from '@/commons/constants/conversation.constant'
 import { ExpenseDraftChannel, ExpenseDraftStatus } from '@/commons/constants/expense-draft.constant'
+import { StoredFileStatus } from '@/commons/constants/stored-file.constant'
 import { PrismaModule } from '@/db/prisma/prisma.module'
 import { PrismaService } from '@/db/prisma/prisma.service'
 import { seedCatalogs } from '@/db/seed/catalog.seed'
 import { ExpenseExtractionService } from '@/modules/expense-extraction/expense-extraction.service'
+import { StoredFilesService } from '@/modules/stored-files/stored-files.service'
 import { GroqTranscriberService } from '@/providers/ai/groq/groq-transcriber.service'
 import { AiExtractorProviderStrategy } from '@/providers/ai/ai-extractor-provider.strategy'
 import { AiExtractorProvider, GenerateJsonRequest } from '@/providers/ai/dto/ai-extractor.dto'
@@ -136,6 +138,12 @@ describe('Conversation flows (integration)', () => {
         accountReceivable: true,
       },
     })
+  // STORAGE_ENV=test: files go to the local folder with the same layout as R2
+  const onDisk = (key: string) => join(process.cwd(), process.env.STORAGE_LOCAL_DIR ?? '.data/storage', key)
+  const storedFileOf = async (draftId: string) => {
+    const { fileId } = await prisma.expenseDraft.findUniqueOrThrow({ where: { id: draftId } })
+    return prisma.storedFile.findUniqueOrThrow({ where: { id: fileId! } })
+  }
   const paymentMethodId = async (name: string) => (await prisma.paymentMethod.findUniqueOrThrow({ where: { name } })).id
 
   beforeAll(async () => {
@@ -154,9 +162,10 @@ describe('Conversation flows (integration)', () => {
 
     conversation = moduleRef.get(ConversationService)
     prisma = moduleRef.get(PrismaService)
-    moduleRef.get(MediaDownloaderRegistry).register(ExpenseDraftChannel.TELEGRAM, async () => ({
+    // Different bytes per Telegram file, so each screenshot is its own stored file (D58)
+    moduleRef.get(MediaDownloaderRegistry).register(ExpenseDraftChannel.TELEGRAM, async (fileId) => ({
       mimeType: 'image/jpeg',
-      data: Buffer.from('fake-jpeg').toString('base64'),
+      data: Buffer.from(`fake-jpeg-${fileId}`).toString('base64'),
     }))
     await seedCatalogs(prisma)
     yapeRef = (await moduleRef.get(ExpenseExtractionService).loadCatalog()).entries.find(
@@ -303,12 +312,53 @@ describe('Conversation flows (integration)', () => {
     expect(saved).toMatchObject({ inputType: 'image', mediaUniqueId: 'unique-yape-1', operationNumber: '04567812' })
     expect(saved.dailyExpense?.paymentMethodId).toBe(await paymentMethodId('Yape'))
 
+    // Saved: the screenshot moved from drafts/ to expenses/ and no longer expires
+    const file = await storedFileOf(saved.id)
+    expect(file).toMatchObject({ status: StoredFileStatus.KEPT, expiresAt: null, contentType: 'image/jpeg' })
+    expect(file.storageKey).toMatch(/^test\/finance\/expenses\/\d{4}\/\d{2}\/[0-9a-f-]{36}\.jpg$/)
+    expect(readFileSync(onDisk(file.storageKey)).toString()).toBe('fake-jpeg-file-unique-yape-1')
+
     tick()
     expect((await image('img-2', 'unique-yape-1')).replies[0].text).toContain('Ya recibí esta imagen')
 
     // Another screenshot of the same payment (different file, same operation number)
     tick()
     expect((await image('img-3', 'unique-yape-2')).replies[0].text).toContain('Parece que ya registraste este gasto')
+  })
+
+  it('should keep a screenshot parked in /borrador for 7 days and ask for it again once it expired', async () => {
+    tick()
+    const { replies } = await conversation.handle({
+      channel: ExpenseDraftChannel.TELEGRAM,
+      chatId,
+      messageId: 'img-parked',
+      type: ChannelMessageType.IMAGE,
+      media: { fileId: 'file-parked', uniqueId: 'unique-parked' },
+    })
+    await press(replies[0], 'Borrador')
+
+    const parked = await lastDraft()
+    const file = await storedFileOf(parked.id)
+    expect(parked.status).toBe(ExpenseDraftStatus.PENDING_REVIEW)
+    expect(file).toMatchObject({ status: StoredFileStatus.TEMPORARY })
+    expect(file.storageKey).toMatch(/^test\/finance\/drafts\//)
+    expect(existsSync(onDisk(file.storageKey))).toBe(true)
+
+    // 8 days later the daily cleanup removes it; the row stays as history
+    await moduleRef.get(StoredFilesService).deleteExpired(new Date(Date.now() + 8 * 24 * 60 * 60_000))
+    expect((await storedFileOf(parked.id)).status).toBe(StoredFileStatus.DELETED)
+    expect(existsSync(onDisk(file.storageKey))).toBe(false)
+
+    // Retry from the web Borrador: it cannot be read again, so the draft fails
+    tick()
+    await conversation.retryExtraction({ ...parked, confidence: {}, missingFields: [] })
+    expect((await lastDraft()).status).toBe(ExpenseDraftStatus.FAILED)
+
+    // Retomar from the bot says why
+    const drafts = await command(BotCommand.DRAFTS)
+    const failed = drafts.find((reply) => reply.buttons?.flat().some((button) => button.label.includes('Retomar')))!
+    const [answer] = await press(failed, 'Retomar')
+    expect(answer.text).toContain('La captura ya expiró')
   })
 
   it('should transcribe a voice note, show what it heard and save the expense', async () => {

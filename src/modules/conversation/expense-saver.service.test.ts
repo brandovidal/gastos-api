@@ -1,3 +1,4 @@
+import { Logger } from '@nestjs/common'
 import { Test, TestingModule } from '@nestjs/testing'
 import { vi } from 'vitest'
 
@@ -6,12 +7,14 @@ import { ExpenseField } from '@/commons/constants/expense-extraction.constant'
 import { ExpenseNotSaveableException } from '@/commons/exceptions/conversation/expense-not-saveable.exception'
 import { ExpenseDBRepository } from '@/db/models/expense/expenseDB.repository'
 import { PaymentMethodDBRepository } from '@/db/models/payment-method/paymentMethodDB.repository'
+import { StoredFilesService } from '@/modules/stored-files/stored-files.service'
 
 import { ExpenseSaverService } from './expense-saver.service'
 import { buildExpenseDraft, FILE_ID } from './mocks/conversation.mock'
 
 const mockExpenseDBRepository = { saveFromExpenseDraft: vi.fn() }
 const mockPaymentMethodDBRepository = { findById: vi.fn() }
+const mockStoredFilesService = { keep: vi.fn() }
 
 describe('ExpenseSaverService', () => {
   let service: ExpenseSaverService
@@ -22,6 +25,7 @@ describe('ExpenseSaverService', () => {
         ExpenseSaverService,
         { provide: ExpenseDBRepository, useValue: mockExpenseDBRepository },
         { provide: PaymentMethodDBRepository, useValue: mockPaymentMethodDBRepository },
+        { provide: StoredFilesService, useValue: mockStoredFilesService },
       ],
     }).compile()
 
@@ -151,5 +155,35 @@ describe('ExpenseSaverService', () => {
     await expect(
       service.save(buildExpenseDraft({ destination: ExpenseDestination.CREDIT_CARD, paymentMethodId: 'gone' })),
     ).rejects.toThrow(ExpenseNotSaveableException)
+  })
+
+  // D58: the screenshot of a saved expense moves from drafts/ to expenses/
+  describe('stored files', () => {
+    it('should keep the file of the saved expense', async () => {
+      await service.save(buildExpenseDraft({ fileId: 'stored-1' }))
+
+      expect(mockStoredFilesService.keep).toHaveBeenCalledWith('stored-1')
+    })
+
+    it('should keep the expense saved when the file cannot be moved', async () => {
+      mockStoredFilesService.keep.mockRejectedValue(new Error('R2 down'))
+      vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => {})
+
+      await expect(service.save(buildExpenseDraft({ fileId: 'stored-1' }))).resolves.toEqual({ id: 'expense-1' })
+    })
+
+    it('should not touch storage for an expense without a file', async () => {
+      await service.save(buildExpenseDraft())
+
+      expect(mockStoredFilesService.keep).not.toHaveBeenCalled()
+    })
+
+    it('should not keep the file when the save fails', async () => {
+      await expect(
+        service.save(buildExpenseDraft({ fileId: 'stored-1', missingFields: [ExpenseField.AMOUNT] })),
+      ).rejects.toThrow(ExpenseNotSaveableException)
+
+      expect(mockStoredFilesService.keep).not.toHaveBeenCalled()
+    })
   })
 })

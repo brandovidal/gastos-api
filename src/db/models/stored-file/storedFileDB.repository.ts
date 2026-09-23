@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common'
 
 import { StoredFile } from '@/generated/prisma/client'
 import { PrismaService } from '@/db/prisma/prisma.service'
+import { REVIEW_EXPENSE_DRAFT_STATUSES } from '@/commons/constants/expense-draft.constant'
 import { StoredFileStatus } from '@/commons/constants/stored-file.constant'
 
 export type CreateStoredFileDbDto = Pick<StoredFile, 'channel' | 'storageKey' | 'contentType'> &
@@ -25,6 +26,23 @@ export class StoredFileDBRepository {
     return this.prisma.storedFile.findFirst({
       where: { sha256, status: { not: StoredFileStatus.DELETED } },
       orderBy: { createdAt: 'desc' },
+    })
+  }
+
+  // Drafts that still need the file: still under review, or saved as an expense that still exists
+  countUses(fileId: string): Promise<number> {
+    return this.prisma.expenseDraft.count({
+      where: {
+        fileId,
+        OR: [
+          { status: { in: REVIEW_EXPENSE_DRAFT_STATUSES } },
+          { dailyExpense: { isNot: null } },
+          { fixedCost: { isNot: null } },
+          { subscription: { isNot: null } },
+          { creditCardExpense: { isNot: null } },
+          { accountReceivable: { isNot: null } },
+        ],
+      },
     })
   }
 

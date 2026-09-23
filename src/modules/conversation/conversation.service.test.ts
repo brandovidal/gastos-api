@@ -13,11 +13,13 @@ import { PaymentMethodType } from '@/commons/constants/catalog.constant'
 import { ExpenseDraftChannel, ExpenseDraftStatus } from '@/commons/constants/expense-draft.constant'
 import { ExpenseField } from '@/commons/constants/expense-extraction.constant'
 import { DuplicateExpenseDraftException } from '@/commons/exceptions/expense-draft/duplicate-expense-draft.exception'
+import { StoredFileExpiredException } from '@/commons/exceptions/stored-file/stored-file-expired.exception'
 import { ExpenseExtractionFailedException } from '@/commons/exceptions/expense-extraction/expense-extraction-failed.exception'
 import { ExpenseDraftDBRepository } from '@/db/models/expense-draft/expenseDraftDB.repository'
 import { ExpenseDBRepository } from '@/db/models/expense/expenseDB.repository'
 import { PaymentMethodDBRepository } from '@/db/models/payment-method/paymentMethodDB.repository'
 import { ExpenseExtractionService } from '@/modules/expense-extraction/expense-extraction.service'
+import { StoredFilesService } from '@/modules/stored-files/stored-files.service'
 
 import { ConversationService } from './conversation.service'
 import { MediaDownloaderRegistry } from './media-downloader.registry'
@@ -44,9 +46,11 @@ const mockExpenseDraftDB = {
   findByStatuses: vi.fn(),
   findByMediaUniqueId: vi.fn(),
   existsSavedWithOperationNumber: vi.fn(),
+  parkMessage: vi.fn(),
 }
 const mockExpenseDB = { findMonthlyTotals: vi.fn() }
 const mockMediaDownloader = { download: vi.fn() }
+const mockStoredFiles = { download: vi.fn(), storeTemporary: vi.fn() }
 const mockExtraction = {
   extract: vi.fn(),
   parseLocalCorrection: vi.fn(),
@@ -86,6 +90,7 @@ describe('ConversationService', () => {
         { provide: ExpenseExtractionService, useValue: mockExtraction },
         { provide: ExpenseSaverService, useValue: mockSaver },
         { provide: MediaDownloaderRegistry, useValue: mockMediaDownloader },
+        { provide: StoredFilesService, useValue: mockStoredFiles },
       ],
     }).compile()
 
@@ -101,6 +106,7 @@ describe('ConversationService', () => {
       buildExpenseDraft({ ...data, id: `file-${data.itemIndex ?? 0}` }),
     )
     mockExpenseDraftDB.update.mockImplementation(async (id, data) => buildExpenseDraft({ id, ...data }))
+    mockStoredFiles.storeTemporary.mockResolvedValue({ id: 'stored-1' })
     vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => {})
   })
 
@@ -254,6 +260,118 @@ describe('ConversationService', () => {
 
       expect(mockExpenseDraftDB.existsSavedWithOperationNumber).toHaveBeenCalledWith('12345678', 'file-0')
       expect(replies[0].text).toContain('Parece que ya registraste este gasto')
+    })
+  })
+
+  // D58: the bytes live in R2 (bot_files); the draft only keeps fileId
+  describe('stored files', () => {
+    const imageMessage = (overrides: Partial<ChannelMessage> = {}): ChannelMessage => ({
+      channel: ExpenseDraftChannel.TELEGRAM,
+      chatId: CHAT_ID,
+      messageId: '77',
+      type: ChannelMessageType.IMAGE,
+      media: { fileId: 'file-1', uniqueId: 'unique-1', sizeBytes: 150_000 },
+      ...overrides,
+    })
+
+    beforeEach(() => {
+      mockMediaDownloader.download.mockResolvedValue({ mimeType: 'image/jpeg', data: 'aW1hZ2U=' })
+      mockExtraction.extract.mockResolvedValue({ expenses: [buildResolvedExpense()] })
+    })
+
+    it('should keep a Telegram image as a temporary file the first time it is downloaded', async () => {
+      await service.handle(imageMessage())
+
+      expect(mockExpenseDraftDB.create).toHaveBeenCalledWith(expect.objectContaining({ fileId: null }))
+      expect(mockStoredFiles.storeTemporary).toHaveBeenCalledWith(
+        ExpenseDraftChannel.TELEGRAM,
+        Buffer.from('aW1hZ2U=', 'base64'),
+        'image/jpeg',
+      )
+      expect(mockExpenseDraftDB.update).toHaveBeenCalledWith('file-0', { fileId: 'stored-1' })
+      expect(mockExtraction.extract).toHaveBeenCalledWith(
+        expect.objectContaining({ images: [{ mimeType: 'image/jpeg', data: 'aW1hZ2U=' }] }),
+      )
+    })
+
+    it('should read a web upload from storage instead of the channel', async () => {
+      mockStoredFiles.download.mockResolvedValue({ mimeType: 'image/png', data: 'cG5n' })
+
+      await service.handle(
+        imageMessage({
+          channel: ExpenseDraftChannel.WEB,
+          media: { fileId: 'stored-9', uniqueId: 'sha-9', storedFileId: 'stored-9' },
+        }),
+      )
+
+      expect(mockExpenseDraftDB.create).toHaveBeenCalledWith(expect.objectContaining({ fileId: 'stored-9' }))
+      expect(mockStoredFiles.download).toHaveBeenCalledWith('stored-9')
+      expect(mockMediaDownloader.download).not.toHaveBeenCalled()
+      expect(mockStoredFiles.storeTemporary).not.toHaveBeenCalled()
+      expect(mockExtraction.extract).toHaveBeenCalledWith(
+        expect.objectContaining({ images: [{ mimeType: 'image/png', data: 'cG5n' }] }),
+      )
+    })
+
+    it('should go on with the extraction when the file cannot be stored', async () => {
+      mockStoredFiles.storeTemporary.mockRejectedValue(new Error('R2 down'))
+
+      const { replies } = await service.handle(imageMessage())
+
+      expect(mockExpenseDraftDB.update).not.toHaveBeenCalledWith(
+        'file-0',
+        expect.objectContaining({ fileId: expect.anything() }),
+      )
+      expect(mockExtraction.extract).toHaveBeenCalled()
+      expect(replies[0].buttons).toBeDefined()
+    })
+
+    it('should share the file with every expense read from the same screenshot', async () => {
+      mockExtraction.extract.mockResolvedValue({
+        expenses: [buildResolvedExpense(), buildResolvedExpense({ description: 'Pasaje', amount: 5 })],
+      })
+
+      const { replies } = await service.handle(imageMessage())
+
+      expect(replies).toHaveLength(2)
+      expect(mockExpenseDraftDB.create).toHaveBeenLastCalledWith(
+        expect.objectContaining({ itemIndex: 1, mediaFileId: 'file-1', fileId: 'stored-1' }),
+      )
+    })
+
+    it('should fail the draft and ask for the screenshot again when its file expired', async () => {
+      mockStoredFiles.download.mockRejectedValue(new StoredFileExpiredException({ fileId: 'stored-old' }))
+
+      const { replies } = await service.handle(
+        imageMessage({ media: { fileId: 'stored-old', uniqueId: 'sha-old', storedFileId: 'stored-old' } }),
+      )
+
+      expect(mockExpenseDraftDB.update).toHaveBeenCalledWith('file-0', { status: ExpenseDraftStatus.FAILED })
+      expect(replies[0].text).toContain('La captura ya expiró')
+      expect(mockExtraction.extract).not.toHaveBeenCalled()
+    })
+
+    it('should transcribe a voice note from its stored file on a retry', async () => {
+      mockStoredFiles.download.mockResolvedValue({ mimeType: 'audio/ogg', data: 'b2dn' })
+      mockExtraction.transcribe.mockResolvedValue('cafe 8 con plin')
+
+      await service.retryExtraction(
+        buildExpenseDraft({
+          id: 'draft-voice',
+          inputType: 'audio',
+          rawText: null,
+          mediaFileId: 'voice-1',
+          fileId: 'stored-voice',
+          status: ExpenseDraftStatus.FAILED,
+        }),
+      )
+
+      expect(mockStoredFiles.download).toHaveBeenCalledWith('stored-voice')
+      expect(mockMediaDownloader.download).not.toHaveBeenCalled()
+      expect(mockExtraction.transcribe).toHaveBeenCalledWith({
+        audio: { mimeType: 'audio/ogg', data: 'b2dn' },
+        draftId: 'draft-voice',
+      })
     })
   })
 
