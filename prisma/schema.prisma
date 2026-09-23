@@ -1,7 +1,6 @@
 // Data model: P1 in personal/docs/plans/2026-09-22-gastos-bot-ai-design.md
 // SQLite/libSQL has no native enums: string columns are validated with the enums in
 // src/commons/constants/expense.constant.ts and catalog.constant.ts.
-// IntakeItem and ChatSession are pending (P1 block 2).
 
 generator client {
   provider     = "prisma-client"
@@ -28,6 +27,7 @@ model Person {
   creditCardExpenses CreditCardExpense[]
   accountsReceivable AccountReceivable[]
   recurringExpenses  RecurringExpense[]
+  expenseFiles       ExpenseFile[]
 
   @@map("people")
 }
@@ -46,6 +46,7 @@ model PaymentMethod {
   fixedCosts        FixedCost[]
   subscriptions     Subscription[]
   recurringExpenses RecurringExpense[]
+  expenseFiles      ExpenseFile[]
 
   @@map("payment_methods")
 }
@@ -63,6 +64,7 @@ model CreditCard {
   paymentMethod     PaymentMethod?
   expenses          CreditCardExpense[]
   recurringExpenses RecurringExpense[]
+  expenseFiles      ExpenseFile[]
 
   @@map("credit_cards")
 }
@@ -99,6 +101,7 @@ model Category {
   subscriptions      Subscription[]
   creditCardExpenses CreditCardExpense[]
   recurringExpenses  RecurringExpense[]
+  expenseFiles       ExpenseFile[]
 
   @@index([budgetGroupId])
   @@map("categories")
@@ -135,7 +138,7 @@ model MonthlyBudget {
 // ==================== EXPENSES ====================
 // Shared fields: description (concept), amount, currency, exchangeRate, amountInPen,
 // expenseType, paymentStatus, personId, categoryId, installment ("n/m"),
-// paymentMonth, paymentYear, notes, intakeItemId (relation added with IntakeItem).
+// paymentMonth, paymentYear, notes, expenseFileId (the ExpenseFile that created it).
 
 model FixedCost {
   id              String         @id @default(cuid())
@@ -159,7 +162,8 @@ model FixedCost {
   dueDate         DateTime?
   attentionDate   DateTime?
   notes           String?
-  intakeItemId    String?
+  expenseFileId   String?        @unique
+  expenseFile     ExpenseFile?   @relation(fields: [expenseFileId], references: [id])
   createdAt       DateTime       @default(now())
   updatedAt       DateTime       @updatedAt
 
@@ -192,7 +196,8 @@ model Subscription {
   paymentDate     DateTime?
   dueDate         DateTime?
   notes           String?
-  intakeItemId    String?
+  expenseFileId   String?        @unique
+  expenseFile     ExpenseFile?   @relation(fields: [expenseFileId], references: [id])
   createdAt       DateTime       @default(now())
   updatedAt       DateTime       @updatedAt
 
@@ -202,28 +207,29 @@ model Subscription {
 }
 
 model CreditCardExpense {
-  id            String     @id @default(cuid())
+  id            String       @id @default(cuid())
   description   String
   amount        Float
-  currency      String     @default("PEN")
+  currency      String       @default("PEN")
   exchangeRate  Float?
   amountInPen   Float?
-  expenseType   String     @default("essential")
-  paymentStatus String     @default("pending")
+  expenseType   String       @default("essential")
+  paymentStatus String       @default("pending")
   personId      String
-  person        Person     @relation(fields: [personId], references: [id])
+  person        Person       @relation(fields: [personId], references: [id])
   categoryId    String?
-  category      Category?  @relation(fields: [categoryId], references: [id])
+  category      Category?    @relation(fields: [categoryId], references: [id])
   creditCardId  String
-  creditCard    CreditCard @relation(fields: [creditCardId], references: [id])
+  creditCard    CreditCard   @relation(fields: [creditCardId], references: [id])
   installment   String?
   paymentMonth  Int
   paymentYear   Int
   processDate   DateTime?
   notes         String?
-  intakeItemId  String?
-  createdAt     DateTime   @default(now())
-  updatedAt     DateTime   @updatedAt
+  expenseFileId String?      @unique
+  expenseFile   ExpenseFile? @relation(fields: [expenseFileId], references: [id])
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
 
   @@index([creditCardId, paymentMonth, paymentYear])
   @@index([personId])
@@ -233,22 +239,23 @@ model CreditCardExpense {
 
 // Money someone owes you: no expenseType, category or payment period
 model AccountReceivable {
-  id           String    @id @default(cuid())
-  description  String
-  amount       Float
-  currency     String    @default("PEN")
-  exchangeRate Float?
-  amountInPen  Float?
-  status       String    @default("pending") // ReceivableStatus
-  personId     String // debtor
-  person       Person    @relation(fields: [personId], references: [id])
-  dueDate      DateTime?
-  paidDate     DateTime?
-  paidAmount   Float?
-  notes        String?
-  intakeItemId String?
-  createdAt    DateTime  @default(now())
-  updatedAt    DateTime  @updatedAt
+  id            String       @id @default(cuid())
+  description   String
+  amount        Float
+  currency      String       @default("PEN")
+  exchangeRate  Float?
+  amountInPen   Float?
+  status        String       @default("pending") // ReceivableStatus
+  personId      String // debtor
+  person        Person       @relation(fields: [personId], references: [id])
+  dueDate       DateTime?
+  paidDate      DateTime?
+  paidAmount    Float?
+  notes         String?
+  expenseFileId String?      @unique
+  expenseFile   ExpenseFile? @relation(fields: [expenseFileId], references: [id])
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
 
   @@index([status])
   @@index([personId])
@@ -277,4 +284,79 @@ model RecurringExpense {
   updatedAt       DateTime       @updatedAt
 
   @@map("recurring_expenses")
+}
+
+// ==================== EXPENSE FILE ====================
+// An expense received from a chat message (text, image or audio). It holds what the AI
+// extracted until the user saves it (creating one expense), sends it to the inbox or discards it.
+// The open expense file of a chat (status draft | awaiting_confirmation) is its conversation state.
+
+model ExpenseFile {
+  id              String         @id @default(cuid())
+  channel         String // ExpenseFileChannel
+  chatId          String
+  messageId       String
+  itemIndex       Int            @default(0) // several expenses in the same message
+  inputType       String // ExpenseFileInputType
+  documentType    String? // ExpenseFileDocumentType
+  rawText         String? // message text or audio transcription
+  mediaFileId     String? // channel file id, the file itself is not stored
+  status          String         @default("draft") // ExpenseFileStatus
+  pendingField    String? // field the bot is asking for
+  destination     String? // ExpenseDestination
+  description     String?
+  amount          Float?
+  currency        String?
+  exchangeRate    Float?
+  spentAt         DateTime?
+  expenseType     String?
+  installment     String?
+  period          String?
+  merchant        String?
+  operationNumber String?
+  notes           String?
+  personId        String?
+  person          Person?        @relation(fields: [personId], references: [id])
+  paymentMethodId String?
+  paymentMethod   PaymentMethod? @relation(fields: [paymentMethodId], references: [id])
+  creditCardId    String?
+  creditCard      CreditCard?    @relation(fields: [creditCardId], references: [id])
+  categoryId      String?
+  category        Category?      @relation(fields: [categoryId], references: [id])
+  confidence      String         @default("{}") // JSON { field: 0..1 }
+  missingFields   String         @default("[]") // JSON [field]
+  confirmedAt     DateTime?
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+
+  fixedCost         FixedCost?
+  subscription      Subscription?
+  creditCardExpense CreditCardExpense?
+  accountReceivable AccountReceivable?
+  aiRequests        AiRequestLog[]
+
+  @@unique([channel, chatId, messageId, itemIndex])
+  @@index([channel, chatId, status])
+  @@map("expense_files")
+}
+
+// ==================== AI USAGE ====================
+// One row per AI call, used to stay within the free daily quota per provider and model.
+
+model AiRequestLog {
+  id            String       @id @default(cuid())
+  provider      String // AiProvider
+  model         String
+  operation     String // AiOperation
+  expenseFileId String?
+  expenseFile   ExpenseFile? @relation(fields: [expenseFileId], references: [id])
+  success       Boolean
+  errorCode     String?
+  inputTokens   Int?
+  outputTokens  Int?
+  latencyMs     Int
+  createdAt     DateTime     @default(now())
+
+  @@index([provider, model, createdAt])
+  @@map("ai_request_logs")
 }

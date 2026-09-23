@@ -29,6 +29,7 @@ src/
   main.ts · app.ts · app.module.ts
   settings/                 configuration + typed models (settings.model.ts), read with ConfigService
   db/prisma/                PrismaService (libSQL adapter: file: locally, libsql:// on Turso)
+  db/models/<entity>/       <entity>DB.repository.ts (+ test) · <entity>DB.module.ts · <entity>DB.dto.ts · <entity>DB.serializer.ts (only with JSON columns)
   providers/                external clients: logger (pino), ai/<provider>, telegram
   modules/<feature>/        controllers, services, dto, validations, mocks
   commons/                  constants · decorators · exceptions/<domain> · guards · helpers · serializers · types
@@ -62,6 +63,9 @@ modules/<feature>/
 - Enum-like columns are strings (SQLite has no enums); validate them with `commons/constants/expense.constant.ts` and `catalog.constant.ts`.
 - `aliases` in `Person` and `PaymentMethod` is a JSON array stored as a string.
 - Installments use the `n/m` format (`INSTALLMENT_REGEX`).
+- `ExpenseFile` is every expense received from a chat (text, image or audio). Its open row (`draft` or `awaiting_confirmation`) is the conversation state of that chat; there is no session table. `@@unique([channel, chatId, messageId, itemIndex])` makes webhook retries idempotent (`DuplicateExpenseFileException`).
+- `AiRequestLog` stores one row per AI call to count usage against the free daily quota.
+- Repositories never leak Prisma errors: map them with `isPrismaError` to `AppException`s.
 
 ## Database (Turso)
 
