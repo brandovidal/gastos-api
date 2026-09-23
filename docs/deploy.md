@@ -42,7 +42,7 @@ El `Makefile` define las variables comunes (`ENV`, archivo `.env.<ENV>`) e inclu
 ## 2. Railway
 
 1. Crear un proyecto y un servicio vacío llamado `kogane-api` (sin conectar el repo: el deploy lo hace el workflow con `railway up`, así las migraciones siempre corren antes).
-2. **Settings → Networking → Generate Domain**: la URL pública (`https://….up.railway.app`) es `PUBLIC_URL`.
+2. **Settings → Networking → Generate Domain**: la URL pública es `PUBLIC_URL` (hoy `https://kogane-api-main.up.railway.app`). **No** uses `kogane-api.railway.internal`: es la red privada de Railway y ni Telegram ni Cloudflare llegan a ella.
 3. **Variables** del servicio (las lee la app en runtime):
 
 | Variable | Valor |
@@ -56,8 +56,9 @@ El `Makefile` define las variables comunes (`ENV`, archivo `.env.<ENV>`) e inclu
 | `TELEGRAM_WEBHOOK_SECRET` | uno nuevo: `openssl rand -hex 32` |
 | `TELEGRAM_ALLOWED_CHAT_IDS` | tu `chat_id` |
 | `PUBLIC_URL` | la URL del paso 2 |
+| `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_BUCKET` | Cloudflare R2 (capturas y notas de voz, D54); ver la sección 4b |
 
-   `PORT` lo pone Railway. El resto de variables de `.env.example` tienen valores por defecto.
+   `PORT` lo pone Railway. El resto de variables de `.env.example` tienen valores por defecto. Pega los valores **sin comillas**.
 4. **Account → Tokens → Project token** del proyecto → `RAILWAY_TOKEN` (para el workflow).
 
 `railway.json` define el build con el `Dockerfile` y el health check `/v1/health`. Plan Hobby: 5 USD/mes con 5 USD de uso incluido.
@@ -81,6 +82,14 @@ Opcional: la **variable** `RAILWAY_SERVICE` si el servicio no se llama `kogane-a
 - El webhook y el menú de comandos los registra el job `telegram` en cada deploy. A mano: `make telegram ENV=prod URL=https://….up.railway.app`.
 - Mientras el webhook apunta a Railway, el bot **no** responde al servidor local; para probar en local, vuelve a apuntarlo al túnel con `make telegram URL=https://<túnel>` y después redepliega (o corre el job otra vez).
 
+## 4b. Cloudflare R2 (capturas)
+
+1. R2 → **Create bucket** `kogane-captures` (privado; sin acceso público).
+2. R2 → **Manage API tokens → Create API token** con permiso *Object Read & Write* solo para ese bucket → `R2_ACCESS_KEY_ID` y `R2_SECRET_ACCESS_KEY`; el **Account ID** → `R2_ACCOUNT_ID`.
+3. Cargarlas en Railway. Sin ellas la API guarda los archivos en `STORAGE_LOCAL_DIR` (sirve solo en local: en Railway el disco se pierde en cada deploy).
+
+Plan gratis: 10 GB, 1 M escrituras y 10 M lecturas al mes, sin cobro de salida.
+
 ## 5. Primer deploy
 
 1. Cargar las variables (Railway) y los secretos (GitHub).
@@ -94,6 +103,14 @@ Opcional: la **variable** `RAILWAY_SERVICE` si el servicio no se llama `kogane-a
 - Desde Telegram: un texto, una foto de Yape y una nota de voz se guardan; `/uso` muestra la cuota del día.
 - Imagen local igual a la de Railway: `make docker` (puerto 5570, copia de `dev.db`, sin tokens; `/docs` debe dar 404).
 - Antes de hacer push: `make check` (lo mismo que el job `check`).
+
+## 6b. Si Railway responde 502 "Application failed to respond"
+
+La app no arrancó. Railway → Deployments → el último → **Deploy Logs**:
+
+- `DATABASE_URL is not set` o `DATABASE_AUTH_TOKEN is not set for Turso`: falta la variable (o se pegó con comillas).
+- `URL_INVALID`: la URL de Turso tiene comillas o espacios.
+- Ningún error y el health check falla: revisar que el servicio use el `Dockerfile` (`railway.json`) y que `PORT` no esté fijado a mano.
 
 ## 7. Volver atrás
 

@@ -12,6 +12,6 @@ import { MediaDownloaderRegistry } from './media-downloader.registry'
 @Module({
   imports: [ExpenseDraftDBModule, ExpenseDBModule, PaymentMethodDBModule, ExpenseExtractionModule],
   providers: [ConversationService, ExpenseSaverService, MediaDownloaderRegistry],
-  exports: [ConversationService, MediaDownloaderRegistry],
+  exports: [ConversationService, ExpenseSaverService, MediaDownloaderRegistry],
 })
 export class ConversationModule {}

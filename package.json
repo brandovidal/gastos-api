@@ -30,6 +30,7 @@
     "@nestjs/swagger": "^11.4.7",
     "@prisma/adapter-libsql": "7.10.0",
     "@prisma/client": "7.10.0",
+    "aws4fetch": "^1.0.20",
     "express": "^5.2.1",
     "nestjs-pino": "^5.2.0",
     "nestjs-zod": "^5.5.0",

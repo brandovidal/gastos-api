@@ -1,0 +1,117 @@
+import { randomUUID } from 'node:crypto'
+
+import { Inject, Injectable } from '@nestjs/common'
+
+import {
+  ExpenseDraftChannel,
+  ExpenseDraftInputType,
+  ExpenseDraftStatus,
+  OPEN_EXPENSE_DRAFT_STATUSES,
+  WEB_CHAT_ID,
+} from '@/commons/constants/expense-draft.constant'
+import { ExpenseDraftNotFoundException } from '@/commons/exceptions/expense-draft/expense-draft-not-found.exception'
+import { ExpenseDraftDbDto } from '@/db/models/expense-draft/expenseDraftDB.dto'
+import { ExpenseDraftDBRepository } from '@/db/models/expense-draft/expenseDraftDB.repository'
+import { ConversationService } from '@/modules/conversation/conversation.service'
+import { ExpenseSaverService } from '@/modules/conversation/expense-saver.service'
+import { toExpenseDraftUpdate, toExpenseFields } from '@/modules/conversation/expense-draft.mapper'
+import { ExpenseExtractionService } from '@/modules/expense-extraction/expense-extraction.service'
+import { findDefaultPerson } from '@/modules/expense-extraction/expense-extraction.catalog'
+import { completeExpense } from '@/modules/expense-extraction/expense-extraction.resolver'
+import { ResolvedExpenseFields } from '@/modules/expense-extraction/dto/expense-extraction.types'
+import { OBJECT_STORAGE } from '@/providers/storage/storage.module'
+import { ObjectStorage } from '@/providers/storage/storage.types'
+
+import { DraftFieldsDto, DraftListQueryDto } from './dto/request/drafts.dto'
+import { DraftTab } from './validations/drafts.validation'
+
+const TAB_STATUSES: Record<DraftTab, ExpenseDraftStatus[]> = {
+  [DraftTab.REVIEW]: [...OPEN_EXPENSE_DRAFT_STATUSES, ExpenseDraftStatus.PENDING_REVIEW],
+  [DraftTab.FAILED]: [ExpenseDraftStatus.FAILED],
+  [DraftTab.DISCARDED]: [ExpenseDraftStatus.DISCARDED],
+}
+
+// Signed links to see a screenshot in the web last this long
+const MEDIA_URL_TTL_SECONDS = 10 * 60
+
+// Borrador and Nuevo gasto in kogane-app (D50, D57). Every save goes through ExpenseSaverService, like the bot.
+@Injectable()
+export class DraftsService {
+  constructor(
+    private readonly expenseDraftDBRepository: ExpenseDraftDBRepository,
+    private readonly expenseExtractionService: ExpenseExtractionService,
+    private readonly expenseSaverService: ExpenseSaverService,
+    private readonly conversationService: ConversationService,
+    @Inject(OBJECT_STORAGE) private readonly storage: ObjectStorage,
+  ) {}
+
+  list({ tab, limit, offset }: DraftListQueryDto) {
+    return this.expenseDraftDBRepository.findForReview(TAB_STATUSES[tab], limit, offset)
+  }
+
+  async get(id: string) {
+    const expenseDraft = await this.find(id)
+    const mediaUrl = expenseDraft.storageKey
+      ? await this.storage.signedUrl(expenseDraft.storageKey, MEDIA_URL_TTL_SECONDS)
+      : null
+    return { ...expenseDraft, mediaUrl }
+  }
+
+  // Nuevo gasto: the form creates a draft (channel web) and then saves it like any other
+  async create(fields: DraftFieldsDto) {
+    const expenseDraft = await this.expenseDraftDBRepository.create({
+      channel: ExpenseDraftChannel.WEB,
+      chatId: WEB_CHAT_ID,
+      messageId: randomUUID(),
+      inputType: ExpenseDraftInputType.MANUAL,
+    })
+    return this.applyFields(expenseDraft, fields)
+  }
+
+  async update(id: string, fields: DraftFieldsDto) {
+    return this.applyFields(await this.find(id), fields)
+  }
+
+  async save(id: string) {
+    const expenseDraft = await this.find(id)
+    const saved = await this.expenseSaverService.save(expenseDraft)
+    return { draftId: id, destination: expenseDraft.destination, recordId: saved.id }
+  }
+
+  discard(id: string) {
+    return this.expenseDraftDBRepository.update(id, { status: ExpenseDraftStatus.DISCARDED, pendingField: null })
+  }
+
+  // Reintentar: the AI reads the text, image or voice note again
+  async retry(id: string) {
+    await this.conversationService.retryExtraction(await this.find(id))
+    return this.get(id)
+  }
+
+  // Same rules as the bot (payment method → destination, required fields); what the user typed is certain.
+  // The draft stays in Borrador (pending_review) so it never reopens a chat conversation.
+  private async applyFields(expenseDraft: ExpenseDraftDbDto, fields: DraftFieldsDto) {
+    const catalog = await this.expenseExtractionService.loadCatalog()
+    const merged: ResolvedExpenseFields = {
+      ...toExpenseFields(expenseDraft),
+      ...(fields as Partial<ResolvedExpenseFields>),
+    }
+    merged.personId ??= findDefaultPerson(catalog)?.id ?? null
+
+    const confidence = { ...expenseDraft.confidence }
+    for (const [field, value] of Object.entries(fields)) if (value != null) confidence[field] = 1
+
+    const update = toExpenseDraftUpdate(completeExpense(merged, confidence, catalog))
+    return this.expenseDraftDBRepository.update(expenseDraft.id, {
+      ...update,
+      status: update.status === ExpenseDraftStatus.DISCARDED ? update.status : ExpenseDraftStatus.PENDING_REVIEW,
+      pendingField: null,
+    })
+  }
+
+  private async find(id: string) {
+    const expenseDraft = await this.expenseDraftDBRepository.findById(id)
+    if (!expenseDraft) throw new ExpenseDraftNotFoundException({ id })
+    return expenseDraft
+  }
+}

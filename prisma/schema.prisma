@@ -145,6 +145,7 @@ model ExpenseDraft {
   rawText         String? // message text or audio transcription
   mediaFileId     String? // channel file id, the file itself is not stored
   mediaUniqueId   String? // stable id of the file in the channel (Telegram file_unique_id): same image sent again
+  storageKey      String? // object key of the screenshot / voice note in Cloudflare R2 (D54)
   status          String         @default("draft") // ExpenseDraftStatus
   pendingField    String? // what the bot is asking for
   destination     String? // ExpenseDestination

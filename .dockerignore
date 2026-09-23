@@ -13,3 +13,4 @@ test/eval/last-report.txt
 .docker-data
 .cache
 test/eval/ocr-report
+.data

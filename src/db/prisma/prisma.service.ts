@@ -11,6 +11,10 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
   constructor(configService: ConfigService) {
     const db = configService.getOrThrow<DatabaseConfig>('db')
 
+    // Fail with a clear message (Railway logs) instead of libsql's "URL 'undefined' is not in a valid format"
+    if (!db.url) throw new Error('DATABASE_URL is not set (see docs/deploy.md)')
+    if (db.url.startsWith('libsql://') && !db.authToken) throw new Error('DATABASE_AUTH_TOKEN is not set for Turso')
+
     // Local SQLite (file:) and Turso (libsql://) share the same adapter
     super({ adapter: new PrismaLibSql({ url: db.url, authToken: db.authToken }) })
   }

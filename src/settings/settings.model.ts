@@ -9,6 +9,14 @@ export interface AuthConfig {
   apiKey?: string
 }
 
+export interface StorageConfig {
+  r2AccountId?: string
+  r2AccessKeyId?: string
+  r2SecretAccessKey?: string
+  r2Bucket: string
+  localDir: string
+}
+
 export interface DatabaseConfig {
   url: string
   authToken?: string

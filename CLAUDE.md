@@ -101,6 +101,15 @@ modules/<feature>/
 - OCR probe (P21): `make ocr-probe [DIR=…]` runs tesseract.js (Spanish, `PSM.SPARSE_TEXT`: the default single-block mode skips big amounts) on screenshots, without AI; full text goes to the git-ignored `test/eval/ocr-report/`.
 - Observability: `/uso` shows today's AI calls per model against 90 % of its free quota; `GET /v1/health` includes the webhook state from `getWebhookInfo`.
 
+## REST API for kogane-app (P7)
+
+- Every route uses `@ApiRest(tag)` (`commons/decorators/api-rest.decorator.ts`): Swagger tag, `x-api-key` and `ApiKeyGuard` (constant-time comparison).
+- `modules/catalogs`: people, payment-methods (deactivated, never deleted), categories, budget-groups (409 `CATALOG_ITEM_IN_USE` while used).
+- `modules/expenses`: `/v1/expenses/:resource` (`ExpenseResource`: daily-expenses, fixed-costs, subscriptions, credit-card-expenses, receivables, recurring-expenses) on `ExpenseRecordDBRepository`, validated per resource in `EXPENSE_SCHEMAS`; `POST /v1/expenses/extract` prefills "Nuevo gasto".
+- `modules/drafts`: Borrador (`tab=review|failed|discarded`), Nuevo gasto (`POST /v1/drafts` channel `web`, input `manual`), save through `ExpenseSaverService` like the bot, retry through `ConversationService.retryExtraction`. Web edits keep drafts in `pending_review` so they never reopen a chat.
+- `modules/messages`: web chat = channel `web` (`WEB_CHAT_ID`), multipart text/image/voice; uploads go to `providers/storage` (R2 with `aws4fetch`, or `STORAGE_LOCAL_DIR` without keys) and `storageKey`; the web downloader reads them back for retries.
+- `modules/summary`: month totals, salary/limit (`bud_monthly_budgets`), surplus and budget groups.
+
 ## Deployment (P10)
 
 - `Dockerfile` + `railway.json` (health `/v1/health`); `.github/workflows/deploy.yml` runs `unit-test.yml`, then migrations and seed (`scripts/db-deploy.ts`, `prisma/seed.ts`), `railway up` and `scripts/telegram-setup.ts`. Guide: `docs/deploy.md`.

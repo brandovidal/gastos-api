@@ -21,6 +21,14 @@ export default () => ({
   auth: {
     apiKey: process.env.API_KEY,
   },
+  // Screenshots and voice notes (D54): Cloudflare R2 when its keys are set, a local folder otherwise
+  storage: {
+    r2AccountId: process.env.R2_ACCOUNT_ID,
+    r2AccessKeyId: process.env.R2_ACCESS_KEY_ID,
+    r2SecretAccessKey: process.env.R2_SECRET_ACCESS_KEY,
+    r2Bucket: process.env.R2_BUCKET ?? 'kogane-captures',
+    localDir: process.env.STORAGE_LOCAL_DIR ?? '.data/storage',
+  },
   db: {
     url: process.env.DATABASE_URL,
     authToken: process.env.DATABASE_AUTH_TOKEN,

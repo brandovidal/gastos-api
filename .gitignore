@@ -49,3 +49,6 @@ test/golden/images/
 # P21 OCR probe: full text of real screenshots (personal data) and the Spanish model cache
 test/eval/ocr-report/
 .cache/
+
+# Local object storage when R2 is not configured (screenshots, voice notes)
+.data/

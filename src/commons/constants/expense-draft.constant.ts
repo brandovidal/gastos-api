@@ -1,5 +1,6 @@
 export enum ExpenseDraftChannel {
   TELEGRAM = 'telegram',
+  WEB = 'web', // kogane-app: Mensajes and Nuevo gasto (D57)
   WHATSAPP = 'whatsapp',
 }
 
@@ -7,6 +8,7 @@ export enum ExpenseDraftInputType {
   TEXT = 'text',
   IMAGE = 'image',
   AUDIO = 'audio',
+  MANUAL = 'manual', // filled in the web form (Nuevo gasto)
 }
 
 export enum ExpenseDraftDocumentType {
@@ -39,3 +41,6 @@ export const REVIEW_EXPENSE_DRAFT_STATUSES = [
 
 // An open expense draft without updates after this time is discarded (final value in P3)
 export const EXPENSE_DRAFT_EXPIRATION_MINUTES = 30
+
+// kogane-app is used by one person: every web message and form belongs to the same chat
+export const WEB_CHAT_ID = 'web'

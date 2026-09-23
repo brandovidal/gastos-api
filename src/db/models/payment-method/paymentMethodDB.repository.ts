@@ -1,10 +1,13 @@
 import { Injectable } from '@nestjs/common'
 
+import { Prisma } from '@/generated/prisma/client'
 import { PrismaService } from '@/db/prisma/prisma.service'
 import { PaymentMethodType } from '@/commons/constants/catalog.constant'
 import { JsonHelper } from '@/commons/helpers/json.helper'
 
-import { PaymentMethodDbDto } from './paymentMethodDB.dto'
+import { toCatalogError } from '../catalog-error.helper'
+
+import { PaymentMethodDbDto, PaymentMethodWriteDbDto } from './paymentMethodDB.dto'
 import { PaymentMethodDBSerializer } from './paymentMethodDB.serializer'
 
 @Injectable()
@@ -44,5 +47,43 @@ export class PaymentMethodDBRepository {
       data: { billingCloseDay, paymentDueDay },
     })
     return this.serializer.toDto(paymentMethod)
+  }
+
+  // kogane-app (P7): every payment method, active or not
+  async findAll(): Promise<PaymentMethodDbDto[]> {
+    const paymentMethods = await this.prisma.paymentMethod.findMany({ orderBy: [{ type: 'asc' }, { name: 'asc' }] })
+    return this.serializer.toDtoArray(paymentMethods)
+  }
+
+  async createFull(data: PaymentMethodWriteDbDto): Promise<PaymentMethodDbDto> {
+    try {
+      const paymentMethod = await this.prisma.paymentMethod.create({
+        data: this.toData(data) as Prisma.PaymentMethodCreateInput,
+      })
+      return this.serializer.toDto(paymentMethod)
+    } catch (error) {
+      throw toCatalogError(error, 'paymentMethod')
+    }
+  }
+
+  async update(id: string, data: Partial<PaymentMethodWriteDbDto>): Promise<PaymentMethodDbDto> {
+    try {
+      const paymentMethod = await this.prisma.paymentMethod.update({ where: { id }, data: this.toData(data) })
+      return this.serializer.toDto(paymentMethod)
+    } catch (error) {
+      throw toCatalogError(error, 'paymentMethod', id)
+    }
+  }
+
+  // Expenses point to payment methods: they are deactivated, never deleted
+  async deactivate(id: string): Promise<PaymentMethodDbDto> {
+    return this.update(id, { isActive: false, showInBot: false })
+  }
+
+  private toData({ aliases, ...rest }: Partial<PaymentMethodWriteDbDto>) {
+    return {
+      ...rest,
+      ...(aliases ? { aliases: JsonHelper.stringify(aliases.map((alias) => alias.toLowerCase())) } : {}),
+    }
   }
 }

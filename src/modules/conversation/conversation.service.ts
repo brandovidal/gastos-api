@@ -189,6 +189,7 @@ export class ConversationService {
         rawText: isAudio ? null : message.text?.trim() || null,
         mediaFileId: media.fileId,
         mediaUniqueId: media.uniqueId,
+        storageKey: media.storageKey ?? null,
       })
     } catch (error) {
       if (error instanceof DuplicateExpenseDraftException) return []
@@ -498,6 +499,17 @@ export class ConversationService {
   // A short text without digits ("bbva", "tarjeta ripley"); anything with an amount is a new expense
   private looksLikeName(text: string): boolean {
     return !/\d/.test(text) && text.split(/\s+/).length <= 3
+  }
+
+  // kogane-app "Reintentar" (P7): runs the AI again on a failed draft (the image or voice note is downloaded
+  // again from its channel). The result stays in Borrador, so it does not reopen the chat conversation.
+  async retryExtraction(expenseDraft: ExpenseDraftDbDto): Promise<void> {
+    await this.extractInto(expenseDraft)
+    await this.expenseDraftDBRepository.parkMessage(
+      expenseDraft.channel as ExpenseDraftChannel,
+      expenseDraft.chatId,
+      expenseDraft.messageId,
+    )
   }
 
   // Called when the app starts: drafts left without extraction by a restart become failed (retry from /borrador)

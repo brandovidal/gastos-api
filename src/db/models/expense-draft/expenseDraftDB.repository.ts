@@ -161,4 +161,27 @@ export class ExpenseDraftDBRepository {
     ])
     return { items: expenseDrafts.map((expenseDraft) => this.serializer.toDto(expenseDraft)), total }
   }
+
+  // Borrador in kogane-app (P7): every channel, newest first
+  async findForReview(
+    statuses: ExpenseDraftStatus[],
+    limit: number,
+    offset: number,
+  ): Promise<{ items: ExpenseDraftDbDto[]; total: number }> {
+    const where = { status: { in: statuses } }
+    const [expenseDrafts, total] = await Promise.all([
+      this.prisma.expenseDraft.findMany({ where, orderBy: { updatedAt: 'desc' }, take: limit, skip: offset }),
+      this.prisma.expenseDraft.count({ where }),
+    ])
+    return { items: expenseDrafts.map((expenseDraft) => this.serializer.toDto(expenseDraft)), total }
+  }
+
+  // Open drafts of one message go back to Borrador (after a retry from the web)
+  async parkMessage(channel: ExpenseDraftChannel, chatId: string, messageId: string): Promise<number> {
+    const { count } = await this.prisma.expenseDraft.updateMany({
+      where: { channel, chatId, messageId, status: { in: OPEN_EXPENSE_DRAFT_STATUSES } },
+      data: { status: ExpenseDraftStatus.PENDING_REVIEW, pendingField: null },
+    })
+    return count
+  }
 }

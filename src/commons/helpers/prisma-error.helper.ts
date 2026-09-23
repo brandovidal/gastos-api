@@ -4,12 +4,17 @@ import { PrismaErrorCode } from '../constants/database.constant'
 
 // Remote Turso (libsql:// over HTTP) does not send SQLite extended codes, so the adapter reports a unique
 // violation as the generic P2039 instead of P2002; only the driver message identifies it
-const UNIQUE_CONSTRAINT_MESSAGE = 'UNIQUE constraint failed'
+// (same for foreign keys)
+const DRIVER_MESSAGES: Partial<Record<PrismaErrorCode, string>> = {
+  [PrismaErrorCode.UNIQUE_CONSTRAINT]: 'UNIQUE constraint failed',
+  [PrismaErrorCode.FOREIGN_KEY_CONSTRAINT]: 'FOREIGN KEY constraint failed',
+}
 
 export const isPrismaError = (error: unknown, code: PrismaErrorCode): boolean => {
   if (!(error instanceof Prisma.PrismaClientKnownRequestError)) return false
   if (error.code === code) return true
-  return code === PrismaErrorCode.UNIQUE_CONSTRAINT && driverAdapterMessage(error).includes(UNIQUE_CONSTRAINT_MESSAGE)
+  const message = DRIVER_MESSAGES[code]
+  return message !== undefined && driverAdapterMessage(error).includes(message)
 }
 
 function driverAdapterMessage(error: Prisma.PrismaClientKnownRequestError): string {

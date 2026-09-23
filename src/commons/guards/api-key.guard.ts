@@ -1,3 +1,5 @@
+import { timingSafeEqual } from 'node:crypto'
+
 import { CanActivate, ExecutionContext, Injectable } from '@nestjs/common'
 import { ConfigService } from '@nestjs/config'
 
@@ -21,10 +23,17 @@ export class ApiKeyGuard implements CanActivate {
 
     const auth = this.configService.get<AuthConfig>('auth')
 
-    if (!auth?.apiKey || apiKey !== auth.apiKey) {
+    if (!auth?.apiKey || !sameKey(String(apiKey), auth.apiKey)) {
       throw new InvalidApiKeyException()
     }
 
     return true
   }
+}
+
+// Constant-time comparison: the time to reject a key does not reveal how much of it matched
+function sameKey(received: string, expected: string): boolean {
+  const a = Buffer.from(received)
+  const b = Buffer.from(expected)
+  return a.length === b.length && timingSafeEqual(a, b)
 }
