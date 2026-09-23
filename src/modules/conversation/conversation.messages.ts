@@ -58,6 +58,8 @@ export const TEXTS = {
     '• netflix 45 mensual con la oh',
     '• zapatillas 300 con io en 3 cuotas',
     '• le presté 100 a dany',
+    '• 📸 una captura de Yape o Plin, o la foto de un voucher (con texto opcional: <i>persona dany</i>)',
+    '• 🎙️ una nota de voz: <i>"almuerzo veinticinco soles con yape"</i>',
     '',
     '<b>Para corregir</b> un gasto que acabo de leer, empieza con la palabra: <i>monto 30</i>, <i>persona dany</i>, <i>cuota 2/6</i>, <i>tarjeta oh</i>, <i>categoría comida</i>, <i>con culpa</i>, <i>ayer</i>. Si no, toca ✏️ Corregir y escríbelo como quieras.',
     '',
@@ -68,6 +70,14 @@ export const TEXTS = {
     count === 1
       ? '⚠️ Me reinicié mientras procesaba un mensaje. Lo dejé en /bandeja para retomarlo.'
       : `⚠️ Me reinicié mientras procesaba ${count} mensajes. Los dejé en /bandeja para retomarlos.`,
+  audioTooLong: (maxSeconds: number) => `🎙️ El audio es muy largo. Mándame uno de hasta ${maxSeconds} segundos.`,
+  emptyAudio: '🎙️ No entendí el audio. Prueba de nuevo o escríbelo.',
+  heard: (transcript: string) => `🎙️ Entendí: <i>«${escapeHtml(transcript)}»</i>`,
+  duplicateAudio: '🎙️ Ya recibí este audio antes. Búscalo en /ultimos o /bandeja.',
+  duplicateImage: '🖼️ Ya recibí esta imagen antes. Búscala en /ultimos o /bandeja.',
+  imageTooLarge: '🖼️ La imagen pesa demasiado. Envíala como foto (no como archivo) o una captura más liviana.',
+  possibleDuplicate: (operationNumber: string) =>
+    `⚠️ Parece que ya registraste este gasto (operación <b>${escapeHtml(operationNumber)}</b>).`,
   notAnExpense: '🤔 No encontré un gasto en tu mensaje. Prueba con algo como <i>almuerzo 25 soles con yape</i>.',
   askCorrection: '✏️ Escribe la corrección como quieras (ej: <i>eran 30 soles y fue con la oh</i>).',
   correctionFailed: '⚠️ No pude aplicar la corrección. Prueba con <i>monto 30</i> o <i>persona dany</i>.',

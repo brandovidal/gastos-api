@@ -37,6 +37,20 @@ export default defineConfig({
           fileParallelism: false,
         },
       },
+      {
+        // Real AI calls (P9 golden set): only through pnpm eval:extraction, never in CI
+        extends: true,
+        test: {
+          name: 'eval',
+          include: ['test/eval/**/*.eval.ts'],
+          globals: true,
+          environment: 'node',
+          alias,
+          root: './',
+          testTimeout: 15 * 60_000,
+          hookTimeout: 60_000,
+        },
+      },
     ],
   },
 })

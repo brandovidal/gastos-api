@@ -35,3 +35,7 @@ jobs:
 
       - name: Run Unit Tests
         run: pnpm test:ci
+
+      # SQLite file recreated with every migration (test/integration.setup.ts); no secrets, no AI calls
+      - name: Run Integration Tests
+        run: pnpm exec dotenv -e .env.test -- vitest run --project integration

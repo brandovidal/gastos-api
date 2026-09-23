@@ -20,6 +20,7 @@ import { PaymentMethodDBRepository } from '@/db/models/payment-method/paymentMet
 import { ExpenseExtractionService } from '@/modules/expense-extraction/expense-extraction.service'
 
 import { ConversationService } from './conversation.service'
+import { MediaDownloaderRegistry } from './media-downloader.registry'
 import { ExpenseSaverService } from './expense-saver.service'
 import { ChannelMessage } from './dto/conversation.types'
 import {
@@ -41,9 +42,18 @@ const mockExpenseDraftDB = {
   discardOpenByChat: vi.fn(),
   findRecentSaved: vi.fn(),
   findByStatuses: vi.fn(),
+  findByMediaUniqueId: vi.fn(),
+  existsSavedWithOperationNumber: vi.fn(),
 }
 const mockExpenseDB = { findMonthlyTotals: vi.fn() }
-const mockExtraction = { extract: vi.fn(), parseLocalCorrection: vi.fn(), loadCatalog: vi.fn(), getUsage: vi.fn() }
+const mockMediaDownloader = { download: vi.fn() }
+const mockExtraction = {
+  extract: vi.fn(),
+  parseLocalCorrection: vi.fn(),
+  loadCatalog: vi.fn(),
+  getUsage: vi.fn(),
+  transcribe: vi.fn(),
+}
 const mockSaver = { save: vi.fn() }
 const mockPaymentMethodDB = { create: vi.fn(), updateBillingDays: vi.fn() }
 
@@ -75,6 +85,7 @@ describe('ConversationService', () => {
         { provide: PaymentMethodDBRepository, useValue: mockPaymentMethodDB },
         { provide: ExpenseExtractionService, useValue: mockExtraction },
         { provide: ExpenseSaverService, useValue: mockSaver },
+        { provide: MediaDownloaderRegistry, useValue: mockMediaDownloader },
       ],
     }).compile()
 
@@ -84,6 +95,8 @@ describe('ConversationService', () => {
     mockExpenseDraftDB.findOpenByChat.mockResolvedValue(null)
     mockExpenseDraftDB.discardOpenUpdatedBefore.mockResolvedValue(0)
     mockExpenseDraftDB.failInterruptedUpdatedBefore.mockResolvedValue([])
+    mockExpenseDraftDB.findByMediaUniqueId.mockResolvedValue(null)
+    mockExpenseDraftDB.existsSavedWithOperationNumber.mockResolvedValue(false)
     mockExpenseDraftDB.create.mockImplementation(async (data) =>
       buildExpenseDraft({ ...data, id: `file-${data.itemIndex ?? 0}` }),
     )
@@ -168,6 +181,154 @@ describe('ConversationService', () => {
 
       expect(mockExpenseDraftDB.update).toHaveBeenCalledWith('file-0', { status: ExpenseDraftStatus.DISCARDED })
       expect(replies[0].text).toContain('No encontré un gasto')
+    })
+  })
+
+  describe('images', () => {
+    const imageMessage = (overrides: Partial<ChannelMessage> = {}): ChannelMessage => ({
+      channel: ExpenseDraftChannel.TELEGRAM,
+      chatId: CHAT_ID,
+      messageId: '77',
+      type: ChannelMessageType.IMAGE,
+      media: { fileId: 'file-1', uniqueId: 'unique-1', sizeBytes: 150_000 },
+      text: 'persona dany',
+      ...overrides,
+    })
+
+    it('should download the image and send it to the AI with its caption', async () => {
+      mockMediaDownloader.download.mockResolvedValue({ mimeType: 'image/jpeg', data: 'base64' })
+      mockExtraction.extract.mockResolvedValue({ expenses: [buildResolvedExpense()] })
+
+      const { replies } = await service.handle(imageMessage())
+
+      expect(mockExpenseDraftDB.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          inputType: 'image',
+          mediaFileId: 'file-1',
+          mediaUniqueId: 'unique-1',
+          rawText: 'persona dany',
+        }),
+      )
+      expect(mockMediaDownloader.download).toHaveBeenCalledWith(ExpenseDraftChannel.TELEGRAM, 'file-1')
+      expect(mockExtraction.extract).toHaveBeenCalledWith(
+        expect.objectContaining({ text: 'persona dany', images: [{ mimeType: 'image/jpeg', data: 'base64' }] }),
+      )
+      expect(replies).toHaveLength(1)
+    })
+
+    it('should not read the same image twice', async () => {
+      mockExpenseDraftDB.findByMediaUniqueId.mockResolvedValue(buildExpenseDraft())
+
+      const { replies } = await service.handle(imageMessage())
+
+      expect(replies[0].text).toContain('Ya recibí esta imagen')
+      expect(mockExpenseDraftDB.create).not.toHaveBeenCalled()
+      expect(mockMediaDownloader.download).not.toHaveBeenCalled()
+    })
+
+    it('should reject an image file that is too large before downloading it', async () => {
+      const { replies } = await service.handle(
+        imageMessage({ media: { fileId: 'f', uniqueId: 'u', sizeBytes: 30_000_000 } }),
+      )
+
+      expect(replies[0].text).toContain('pesa demasiado')
+      expect(mockMediaDownloader.download).not.toHaveBeenCalled()
+    })
+
+    it('should leave the image in /bandeja as failed when it cannot be downloaded', async () => {
+      mockMediaDownloader.download.mockRejectedValue(new Error('telegram down'))
+
+      const { replies } = await service.handle(imageMessage())
+
+      expect(mockExpenseDraftDB.update).toHaveBeenCalledWith('file-0', { status: ExpenseDraftStatus.FAILED })
+      expect(replies[0].text).toContain('/bandeja')
+      expect(mockExtraction.extract).not.toHaveBeenCalled()
+    })
+
+    it('should warn when a receipt with the same operation number was already saved', async () => {
+      mockMediaDownloader.download.mockResolvedValue({ mimeType: 'image/jpeg', data: 'base64' })
+      mockExtraction.extract.mockResolvedValue({ expenses: [buildResolvedExpense({ operationNumber: '12345678' })] })
+      mockExpenseDraftDB.existsSavedWithOperationNumber.mockResolvedValue(true)
+
+      const { replies } = await service.handle(imageMessage())
+
+      expect(mockExpenseDraftDB.existsSavedWithOperationNumber).toHaveBeenCalledWith('12345678', 'file-0')
+      expect(replies[0].text).toContain('Parece que ya registraste este gasto')
+    })
+  })
+
+  describe('voice notes', () => {
+    const voiceMessage = (durationSeconds = 6): ChannelMessage => ({
+      channel: ExpenseDraftChannel.TELEGRAM,
+      chatId: CHAT_ID,
+      messageId: '88',
+      type: ChannelMessageType.AUDIO,
+      media: { fileId: 'voice-1', uniqueId: 'voice-unique-1', durationSeconds },
+    })
+
+    beforeEach(() => {
+      mockMediaDownloader.download.mockResolvedValue({ mimeType: 'audio/ogg', data: 'ogg-b64' })
+    })
+
+    it('should transcribe the voice note, keep the text and read it like a typed message', async () => {
+      mockExtraction.transcribe.mockResolvedValue('almuerzo 25 soles con yape')
+      mockExtraction.extract.mockResolvedValue({ expenses: [buildResolvedExpense()] })
+
+      const { replies } = await service.handle(voiceMessage())
+
+      expect(mockExpenseDraftDB.create).toHaveBeenCalledWith(
+        expect.objectContaining({ inputType: 'audio', rawText: null, mediaUniqueId: 'voice-unique-1' }),
+      )
+      expect(mockExtraction.transcribe).toHaveBeenCalledWith({
+        audio: { mimeType: 'audio/ogg', data: 'ogg-b64' },
+        draftId: 'file-0',
+      })
+      expect(mockExpenseDraftDB.update).toHaveBeenCalledWith('file-0', { rawText: 'almuerzo 25 soles con yape' })
+      expect(mockExtraction.extract).toHaveBeenCalledWith(
+        expect.objectContaining({ text: 'almuerzo 25 soles con yape', images: undefined }),
+      )
+      expect(replies[0].text).toContain('Entendí: <i>«almuerzo 25 soles con yape»</i>')
+    })
+
+    it('should reject a voice note longer than a minute before downloading it', async () => {
+      const { replies } = await service.handle(voiceMessage(95))
+
+      expect(replies[0].text).toContain('hasta 60 segundos')
+      expect(mockMediaDownloader.download).not.toHaveBeenCalled()
+    })
+
+    it('should discard a voice note without words', async () => {
+      mockExtraction.transcribe.mockResolvedValue('')
+
+      const { replies } = await service.handle(voiceMessage())
+
+      expect(replies[0].text).toContain('No entendí el audio')
+      expect(mockExtraction.extract).not.toHaveBeenCalled()
+    })
+
+    it('should leave it in /bandeja as failed when Whisper fails', async () => {
+      mockExtraction.transcribe.mockRejectedValue(new Error('429'))
+
+      const { replies } = await service.handle(voiceMessage())
+
+      expect(mockExpenseDraftDB.update).toHaveBeenCalledWith('file-0', { status: ExpenseDraftStatus.FAILED })
+      expect(replies[0].text).toContain('/bandeja')
+    })
+
+    it('should not transcribe again when a failed voice note already has its text', async () => {
+      const failed = buildExpenseDraft({
+        status: ExpenseDraftStatus.FAILED,
+        inputType: 'audio',
+        mediaFileId: 'voice-1',
+        rawText: 'cafe 8 con plin',
+      })
+      mockExpenseDraftDB.findById.mockResolvedValue(failed)
+      mockExtraction.extract.mockResolvedValue({ expenses: [buildResolvedExpense()] })
+
+      await service.handle(action(BotAction.RESUME))
+
+      expect(mockExtraction.transcribe).not.toHaveBeenCalled()
+      expect(mockExtraction.extract).toHaveBeenCalledWith(expect.objectContaining({ text: 'cafe 8 con plin' }))
     })
   })
 

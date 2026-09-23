@@ -7,10 +7,11 @@ import { ExpenseExtractionModule } from '@/modules/expense-extraction/expense-ex
 
 import { ConversationService } from './conversation.service'
 import { ExpenseSaverService } from './expense-saver.service'
+import { MediaDownloaderRegistry } from './media-downloader.registry'
 
 @Module({
   imports: [ExpenseDraftDBModule, ExpenseDBModule, PaymentMethodDBModule, ExpenseExtractionModule],
-  providers: [ConversationService, ExpenseSaverService],
-  exports: [ConversationService],
+  providers: [ConversationService, ExpenseSaverService, MediaDownloaderRegistry],
+  exports: [ConversationService, MediaDownloaderRegistry],
 })
 export class ConversationModule {}

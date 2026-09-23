@@ -6,6 +6,9 @@ import { TelegramClient } from '@/providers/telegram/telegram.client'
 import { ConversationService } from '@/modules/conversation/conversation.service'
 import { FILE_ID } from '@/modules/conversation/mocks/conversation.mock'
 
+import { MediaDownloaderRegistry } from '@/modules/conversation/media-downloader.registry'
+
+import { TELEGRAM_UPDATES } from './mocks/telegram-updates.mock'
 import { TelegramService } from './telegram.service'
 
 const mockClient = {
@@ -13,8 +16,10 @@ const mockClient = {
   editMessageText: vi.fn().mockResolvedValue({}),
   answerCallbackQuery: vi.fn().mockResolvedValue(true),
   sendChatAction: vi.fn().mockResolvedValue(true),
+  downloadFile: vi.fn(),
 }
 const mockConversation = { handle: vi.fn(), recoverInterrupted: vi.fn() }
+const mockRegistry = { register: vi.fn() }
 
 const chat = { id: 555, type: 'private' }
 const textUpdate = { update_id: 1, message: { message_id: 10, chat, date: 0, text: 'almuerzo 25' } }
@@ -28,6 +33,7 @@ describe('TelegramService', () => {
     new ConfigService({ telegram: { allowedChatIds: ['555'] } }),
     mockClient as unknown as TelegramClient,
     mockConversation as unknown as ConversationService,
+    mockRegistry as unknown as MediaDownloaderRegistry,
   )
 
   beforeEach(() => {
@@ -130,5 +136,33 @@ describe('TelegramService', () => {
       await shutdown
       expect(shutDown).toBe(true)
     })
+  })
+
+  it('should register a downloader that returns the image in base64 with its type', async () => {
+    service.onModuleInit()
+    const [channel, downloader] = mockRegistry.register.mock.calls[0]
+    mockClient.downloadFile.mockResolvedValue({ data: Buffer.from('png-bytes'), filePath: 'documents/file_3.PNG' })
+
+    expect(channel).toBe('telegram')
+    await expect(downloader('file-1')).resolves.toEqual({
+      mimeType: 'image/png',
+      data: Buffer.from('png-bytes').toString('base64'),
+    })
+  })
+
+  it('should download voice notes as audio/ogg', async () => {
+    service.onModuleInit()
+    const [, downloader] = mockRegistry.register.mock.calls[0]
+    mockClient.downloadFile.mockResolvedValue({ data: Buffer.from('ogg'), filePath: 'voice/file_7.oga' })
+
+    await expect(downloader('file-7')).resolves.toMatchObject({ mimeType: 'audio/ogg' })
+  })
+
+  it('should show "typing" while an image is read', async () => {
+    mockConversation.handle.mockResolvedValue({ replies: [] })
+
+    await service.enqueue(TELEGRAM_UPDATES.photo)
+
+    expect(mockClient.sendChatAction).toHaveBeenCalledWith('555', 'typing')
   })
 })

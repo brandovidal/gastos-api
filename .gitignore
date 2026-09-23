@@ -36,3 +36,9 @@ pnpm-debug.log*
 .temp
 .tmp
 tmp/
+
+# P9 golden set report
+test/eval/last-report.txt
+
+# P4 real screenshots for the eval (personal data)
+test/golden/images/

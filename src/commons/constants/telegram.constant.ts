@@ -29,3 +29,7 @@ export enum WebhookStatus {
 }
 // A delivery error older than this no longer marks the webhook as ERROR
 export const WEBHOOK_RECENT_ERROR_MS = 60 * 60_000
+
+// Files are downloaded from https://api.telegram.org/file/bot<token>/<file_path> (getFile allows up to 20 MB)
+export const TELEGRAM_FILE_URL = 'https://api.telegram.org/file'
+export const TELEGRAM_DOWNLOAD_TIMEOUT_MS = 20_000

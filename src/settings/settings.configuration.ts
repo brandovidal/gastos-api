@@ -8,6 +8,8 @@ import {
   DEFAULT_GEMINI_MODEL_LITE,
   DEFAULT_GROQ_DAILY_LIMIT,
   DEFAULT_GROQ_MODEL,
+  DEFAULT_GROQ_TRANSCRIBE_DAILY_LIMIT,
+  DEFAULT_GROQ_TRANSCRIBE_MODEL,
 } from '@/commons/constants/ai.constant'
 
 export default () => ({
@@ -44,5 +46,7 @@ export default () => ({
     apiKey: process.env.GROQ_API_KEY,
     model: process.env.GROQ_MODEL ?? DEFAULT_GROQ_MODEL,
     dailyLimit: Number(process.env.GROQ_DAILY_LIMIT ?? DEFAULT_GROQ_DAILY_LIMIT),
+    transcribeModel: process.env.GROQ_TRANSCRIBE_MODEL ?? DEFAULT_GROQ_TRANSCRIBE_MODEL,
+    transcribeDailyLimit: Number(process.env.GROQ_TRANSCRIBE_DAILY_LIMIT ?? DEFAULT_GROQ_TRANSCRIBE_DAILY_LIMIT),
   },
 })

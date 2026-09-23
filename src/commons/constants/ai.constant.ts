@@ -22,11 +22,14 @@ export enum AiErrorCode {
 export const DEFAULT_GEMINI_MODEL_LITE = 'gemini-3.5-flash-lite'
 export const DEFAULT_GEMINI_MODEL = 'gemini-3.5-flash'
 export const DEFAULT_GROQ_MODEL = 'qwen/qwen3.8-27b'
+// Voice notes (P5): transcribed with Whisper on Groq, then read like a text message
+export const DEFAULT_GROQ_TRANSCRIBE_MODEL = 'whisper-large-v3-turbo'
 
 // Free tier requests per day (September 2026)
 export const DEFAULT_GEMINI_LITE_DAILY_LIMIT = 500
 export const DEFAULT_GEMINI_DAILY_LIMIT = 20
 export const DEFAULT_GROQ_DAILY_LIMIT = 1000
+export const DEFAULT_GROQ_TRANSCRIBE_DAILY_LIMIT = 2000
 
 // Stop using a model once this share of its daily quota is spent
 export const AI_QUOTA_USAGE_THRESHOLD = 0.9
@@ -46,3 +49,6 @@ export const GROQ_BASE_URL = 'https://api.groq.com/openai/v1'
 
 // Groq free tier allows 1,000 output tokens per minute on Qwen: without a cap it reserves more and answers 429
 export const GROQ_MAX_OUTPUT_TOKENS = 900
+
+// Whisper hint: the user speaks Spanish (Peru); better accuracy and no language detection
+export const TRANSCRIPTION_LANGUAGE = 'es'

@@ -117,4 +117,41 @@ describe('TelegramClient', () => {
       pending_update_count: 0,
     })
   })
+
+  describe('downloadFile', () => {
+    it('should resolve the file path and download the bytes', async () => {
+      mockFetch
+        .mockResolvedValueOnce({
+          status: 200,
+          json: async () => ({
+            ok: true,
+            result: { file_id: 'f1', file_unique_id: 'u1', file_path: 'photos/file_1.jpg' },
+          }),
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          status: 200,
+          arrayBuffer: async () => new TextEncoder().encode('jpg').buffer,
+        })
+
+      const file = await client('123:abc').downloadFile('f1')
+
+      expect(file.filePath).toBe('photos/file_1.jpg')
+      expect(file.data.toString()).toBe('jpg')
+      expect(mockFetch.mock.calls[1][0]).toBe('https://api.telegram.org/file/bot123:abc/photos/file_1.jpg')
+    })
+
+    it('should fail without leaking the token when the download fails', async () => {
+      mockFetch
+        .mockResolvedValueOnce({ status: 200, json: async () => ({ ok: true, result: { file_path: 'photos/x.jpg' } }) })
+        .mockResolvedValueOnce({ ok: false, status: 404 })
+
+      const error = await client('123:abc')
+        .downloadFile('f1')
+        .catch((caught: TelegramRequestFailedException) => caught)
+
+      expect(error).toBeInstanceOf(TelegramRequestFailedException)
+      expect(JSON.stringify((error as TelegramRequestFailedException).getResponse())).not.toContain('123:abc')
+    })
+  })
 })

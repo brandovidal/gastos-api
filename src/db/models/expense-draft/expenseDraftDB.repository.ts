@@ -106,6 +106,27 @@ export class ExpenseDraftDBRepository {
     return [...countByChat].map(([chat, count]) => ({ chatId: chat, count }))
   }
 
+  // The same image sent again (same file unique id); discarded ones do not count
+  async findByMediaUniqueId(
+    channel: ExpenseDraftChannel,
+    chatId: string,
+    mediaUniqueId: string,
+  ): Promise<ExpenseDraftDbDto | null> {
+    const expenseDraft = await this.prisma.expenseDraft.findFirst({
+      where: { channel, chatId, mediaUniqueId, status: { not: ExpenseDraftStatus.DISCARDED } },
+      orderBy: { createdAt: 'desc' },
+    })
+    return expenseDraft ? this.serializer.toDto(expenseDraft) : null
+  }
+
+  // A saved expense with the same receipt operation number: probably registered twice (text and screenshot)
+  async existsSavedWithOperationNumber(operationNumber: string, excludeId: string): Promise<boolean> {
+    const count = await this.prisma.expenseDraft.count({
+      where: { operationNumber, status: ExpenseDraftStatus.SAVED, id: { not: excludeId } },
+    })
+    return count > 0
+  }
+
   // /cancelar: close every open expense draft of the chat
   async discardOpenByChat(channel: ExpenseDraftChannel, chatId: string): Promise<number> {
     const { count } = await this.prisma.expenseDraft.updateMany({

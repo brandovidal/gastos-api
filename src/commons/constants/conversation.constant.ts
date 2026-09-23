@@ -1,5 +1,7 @@
 export enum ChannelMessageType {
   TEXT = 'text',
+  IMAGE = 'image', // photo or image file; its caption travels as text
+  AUDIO = 'audio', // voice note or audio file: transcribed, then read as text
   COMMAND = 'command',
   ACTION = 'action',
 }
@@ -60,3 +62,9 @@ export const MAX_QUICK_REPLIES = 10
 export const QUICK_REPLIES_PER_ROW = 2
 export const RECENT_EXPENSES_LIMIT = 5
 export const INBOX_LIMIT = 5
+
+// Images sent as files (documents) above this size are rejected before downloading (photos are already compressed)
+export const MAX_IMAGE_BYTES = 10 * 1024 * 1024
+
+// Voice notes longer than this are rejected before downloading: an expense takes a few seconds to say
+export const MAX_AUDIO_SECONDS = 60

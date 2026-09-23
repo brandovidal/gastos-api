@@ -1,9 +1,9 @@
 import { ChannelMessageType } from '@/commons/constants/conversation.constant'
 import { ExpenseDraftChannel } from '@/commons/constants/expense-draft.constant'
 import { decodeBotAction } from '@/modules/conversation/bot-action.codec'
-import { BotButton, ChannelMessage } from '@/modules/conversation/dto/conversation.types'
+import { BotButton, ChannelMedia, ChannelMessage } from '@/modules/conversation/dto/conversation.types'
 
-import { TelegramReplyMarkup, TelegramUpdate } from '@/providers/telegram/telegram.types'
+import { TelegramMessage, TelegramReplyMarkup, TelegramUpdate } from '@/providers/telegram/telegram.types'
 
 export interface MappedTelegramUpdate {
   message: ChannelMessage
@@ -35,8 +35,37 @@ export function mapTelegramUpdate({
     }
   }
 
-  const text = message?.text ?? message?.caption
-  if (!message || !text) return null // photos without caption and voice notes arrive in P4 / P5
+  if (!message) return null
+
+  const media = imageOf(message)
+  if (media) {
+    return {
+      message: {
+        channel: ExpenseDraftChannel.TELEGRAM,
+        chatId: String(message.chat.id),
+        messageId: String(message.message_id),
+        type: ChannelMessageType.IMAGE,
+        media,
+        ...(message.caption?.trim() ? { text: message.caption.trim() } : {}),
+      },
+    }
+  }
+
+  const audio = audioOf(message)
+  if (audio) {
+    return {
+      message: {
+        channel: ExpenseDraftChannel.TELEGRAM,
+        chatId: String(message.chat.id),
+        messageId: String(message.message_id),
+        type: ChannelMessageType.AUDIO,
+        media: audio,
+      },
+    }
+  }
+
+  const text = message.text
+  if (!text) return null // stickers and other files are ignored
 
   const isCommand = text.startsWith('/')
 
@@ -48,6 +77,31 @@ export function mapTelegramUpdate({
       type: isCommand ? ChannelMessageType.COMMAND : ChannelMessageType.TEXT,
       ...(isCommand ? { command: parseCommand(text) } : { text }),
     },
+  }
+}
+
+// A photo (Telegram sends several sizes: the last one is the largest) or an image sent as a file
+function imageOf({ photo, document }: TelegramMessage): ChannelMedia | null {
+  const largest = photo?.at(-1)
+  if (largest) return { fileId: largest.file_id, uniqueId: largest.file_unique_id, sizeBytes: largest.file_size }
+
+  if (document?.mime_type?.startsWith('image/')) {
+    return { fileId: document.file_id, uniqueId: document.file_unique_id, sizeBytes: document.file_size }
+  }
+
+  return null
+}
+
+// A voice note, or an audio file (e.g. forwarded from another app)
+function audioOf({ voice, audio }: TelegramMessage): ChannelMedia | null {
+  const file = voice ?? audio
+  if (!file) return null
+
+  return {
+    fileId: file.file_id,
+    uniqueId: file.file_unique_id,
+    sizeBytes: file.file_size,
+    durationSeconds: file.duration,
   }
 }
 

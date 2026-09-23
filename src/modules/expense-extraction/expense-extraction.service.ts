@@ -15,6 +15,8 @@ import { APP_TIME_ZONE } from '@/commons/constants/app.constant'
 import { ExpenseField } from '@/commons/constants/expense-extraction.constant'
 import { DateHelper } from '@/commons/helpers/date.helper'
 import { ExpenseExtractionFailedException } from '@/commons/exceptions/expense-extraction/expense-extraction-failed.exception'
+import { TranscriptionFailedException } from '@/commons/exceptions/expense-extraction/transcription-failed.exception'
+import { GroqTranscriberService } from '@/providers/ai/groq/groq-transcriber.service'
 import { AiConfig, GeminiConfig, GroqConfig } from '@/settings/settings.model'
 import { AiExtractorProviderStrategy } from '@/providers/ai/ai-extractor-provider.strategy'
 import { AiInputPart, GenerateJsonResponse } from '@/providers/ai/dto/ai-extractor.dto'
@@ -34,6 +36,7 @@ import {
   ExtractionCatalog,
   ResolvedExpenseFields,
   AiModelUsage,
+  MediaFile,
 } from './dto/expense-extraction.types'
 
 interface ModelCandidate {
@@ -57,6 +60,7 @@ export class ExpenseExtractionService {
     private readonly personDBRepository: PersonDBRepository,
     private readonly paymentMethodDBRepository: PaymentMethodDBRepository,
     private readonly categoryDBRepository: CategoryDBRepository,
+    private readonly groqTranscriberService: GroqTranscriberService,
   ) {}
 
   async loadCatalog(): Promise<ExtractionCatalog> {
@@ -105,9 +109,43 @@ export class ExpenseExtractionService {
     throw new ExpenseExtractionFailedException({ draftId: input.draftId })
   }
 
+  // Voice note -> text with Whisper on Groq (P5); the text then goes through extract() like a typed message
+  async transcribe({ audio, draftId }: { audio: MediaFile; draftId?: string }): Promise<string> {
+    const candidate = this.transcribeCandidate()
+
+    if (await this.isOverQuota(candidate)) {
+      throw new TranscriptionFailedException({ draftId, reason: 'daily quota almost spent' })
+    }
+
+    const { timeoutMs } = this.configService.getOrThrow<AiConfig>('ai')
+    const startedAt = Date.now()
+
+    try {
+      const text = await this.groqTranscriberService.transcribe({
+        model: candidate.model,
+        mimeType: audio.mimeType,
+        data: audio.data,
+        timeoutMs,
+      })
+      await this.logRequest(candidate, draftId, Date.now() - startedAt, undefined, undefined, AiOperation.TRANSCRIBE)
+      return text
+    } catch (error) {
+      this.logger.warn(`[transcribe] ${candidate.provider}/${candidate.model} failed: ${(error as Error).message}`)
+      await this.logRequest(
+        candidate,
+        draftId,
+        Date.now() - startedAt,
+        AiErrorCode.PROVIDER_ERROR,
+        undefined,
+        AiOperation.TRANSCRIBE,
+      )
+      throw new TranscriptionFailedException({ draftId })
+    }
+  }
+
   // Every model of both routes, once, with today's calls (each provider resets at its own midnight)
   async getUsage(): Promise<AiModelUsage[]> {
-    const candidates = [...this.buildRoute(false), ...this.buildRoute(true)].filter(
+    const candidates = [...this.buildRoute(false), ...this.buildRoute(true), this.transcribeCandidate()].filter(
       (candidate, index, all) => all.findIndex((other) => other.model === candidate.model) === index,
     )
 
@@ -120,6 +158,11 @@ export class ExpenseExtractionService {
         usableLimit: Math.floor(dailyLimit * AI_QUOTA_USAGE_THRESHOLD),
       })),
     )
+  }
+
+  private transcribeCandidate(): ModelCandidate {
+    const groq = this.configService.getOrThrow<GroqConfig>('groq')
+    return { provider: AiProvider.GROQ, model: groq.transcribeModel, dailyLimit: groq.transcribeDailyLimit }
   }
 
   // Text: Flash-Lite, then Groq. Images: Flash-Lite, then Flash (Groq is text-only).
@@ -233,12 +276,13 @@ export class ExpenseExtractionService {
     latencyMs: number,
     errorCode?: AiErrorCode,
     response?: GenerateJsonResponse,
+    operation = AiOperation.EXTRACT,
   ) {
     try {
       await this.aiRequestLogDBRepository.create({
         provider,
         model,
-        operation: AiOperation.EXTRACT,
+        operation,
         draftId: draftId ?? null,
         success: !errorCode,
         errorCode: errorCode ?? null,

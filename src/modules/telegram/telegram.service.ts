@@ -1,4 +1,4 @@
-import { BeforeApplicationShutdown, Injectable, Logger, OnApplicationBootstrap } from '@nestjs/common'
+import { BeforeApplicationShutdown, Injectable, Logger, OnApplicationBootstrap, OnModuleInit } from '@nestjs/common'
 import { ConfigService } from '@nestjs/config'
 
 import { ChannelMessageType } from '@/commons/constants/conversation.constant'
@@ -9,14 +9,29 @@ import { TelegramConfig } from '@/settings/settings.model'
 import { TelegramClient } from '@/providers/telegram/telegram.client'
 import { ConversationService } from '@/modules/conversation/conversation.service'
 import { TEXTS } from '@/modules/conversation/conversation.messages'
+import { MediaDownloaderRegistry } from '@/modules/conversation/media-downloader.registry'
 
 import { mapTelegramUpdate, MappedTelegramUpdate, toReplyMarkup } from './telegram.mapper'
 import { TelegramReplyMarkup, TelegramUpdate } from '@/providers/telegram/telegram.types'
 
 const ERROR_TEXT = '⚠️ Algo salió mal procesando tu mensaje. Intenta de nuevo en un momento.'
 
+// Telegram photos are JPEG; voice notes are .oga; other files keep their extension in file_path
+const MIME_BY_EXTENSION: Record<string, string> = {
+  jpg: 'image/jpeg',
+  jpeg: 'image/jpeg',
+  png: 'image/png',
+  webp: 'image/webp',
+  heic: 'image/heic',
+  oga: 'audio/ogg', // voice notes (OGG/Opus)
+  ogg: 'audio/ogg',
+  mp3: 'audio/mpeg',
+  m4a: 'audio/mp4',
+  wav: 'audio/wav',
+}
+
 @Injectable()
-export class TelegramService implements OnApplicationBootstrap, BeforeApplicationShutdown {
+export class TelegramService implements OnModuleInit, OnApplicationBootstrap, BeforeApplicationShutdown {
   private readonly logger = new Logger(TelegramService.name)
   private readonly queue = new KeyedQueue()
 
@@ -24,7 +39,17 @@ export class TelegramService implements OnApplicationBootstrap, BeforeApplicatio
     private readonly configService: ConfigService,
     private readonly telegramClient: TelegramClient,
     private readonly conversationService: ConversationService,
+    private readonly mediaDownloaderRegistry: MediaDownloaderRegistry,
   ) {}
+
+  // The conversation downloads images through this (also again when a failed one is resumed from /bandeja)
+  onModuleInit() {
+    this.mediaDownloaderRegistry.register(ExpenseDraftChannel.TELEGRAM, async (fileId) => {
+      const { data, filePath } = await this.telegramClient.downloadFile(fileId)
+      const extension = filePath.split('.').pop()?.toLowerCase() ?? ''
+      return { mimeType: MIME_BY_EXTENSION[extension] ?? 'image/jpeg', data: data.toString('base64') }
+    })
+  }
 
   // Messages already answered with 200 whose processing a restart cut: move them to /bandeja and tell the chat.
   // Not awaited, so a slow database or Telegram never delays startup
@@ -55,7 +80,7 @@ export class TelegramService implements OnApplicationBootstrap, BeforeApplicatio
     const { chatId } = message
 
     try {
-      if (message.type === ChannelMessageType.TEXT) {
+      if (message.type !== ChannelMessageType.COMMAND && message.type !== ChannelMessageType.ACTION) {
         await this.telegramClient.sendChatAction(chatId, 'typing').catch(() => undefined)
       }
 

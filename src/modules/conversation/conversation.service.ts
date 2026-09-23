@@ -8,6 +8,8 @@ import {
   ChannelMessageType,
   FREE_CORRECTION_FIELD,
   INBOX_LIMIT,
+  MAX_AUDIO_SECONDS,
+  MAX_IMAGE_BYTES,
   RECENT_EXPENSES_LIMIT,
 } from '@/commons/constants/conversation.constant'
 import { PaymentMethodType } from '@/commons/constants/catalog.constant'
@@ -33,9 +35,11 @@ import {
   ExtractionCatalog,
   ResolvedExpense,
   ResolvedExpenseFields,
+  MediaFile,
 } from '@/modules/expense-extraction/dto/expense-extraction.types'
 
 import { ExpenseSaverService } from './expense-saver.service'
+import { MediaDownloaderRegistry } from './media-downloader.registry'
 import { toExpenseFields, toExpenseDraftUpdate } from './expense-draft.mapper'
 import {
   DESTINATION_LABELS,
@@ -83,6 +87,7 @@ export class ConversationService {
     private readonly paymentMethodDBRepository: PaymentMethodDBRepository,
     private readonly expenseExtractionService: ExpenseExtractionService,
     private readonly expenseSaverService: ExpenseSaverService,
+    private readonly mediaDownloaderRegistry: MediaDownloaderRegistry,
   ) {}
 
   async handle(message: ChannelMessage): Promise<ConversationResult> {
@@ -91,6 +96,9 @@ export class ConversationService {
         return { replies: await this.handleCommand(message) }
       case ChannelMessageType.ACTION:
         return this.handleAction(message)
+      case ChannelMessageType.IMAGE:
+      case ChannelMessageType.AUDIO:
+        return { replies: await this.handleMedia(message) }
       default:
         return { replies: await this.handleText(message) }
     }
@@ -147,24 +155,82 @@ export class ConversationService {
       throw error
     }
 
-    return this.extractInto(expenseDraft, text)
+    return this.extractInto(expenseDraft)
   }
 
-  // Runs the AI on a row (new message or a failed one resumed from /bandeja) and shows one summary per expense
-  private async extractInto(expenseDraft: ExpenseDraftDbDto, text: string, edit = false): Promise<BotReply[]> {
+  // An image (receipt photo, Yape/Plin screenshot) or a voice note is always a new message: an image caption adds
+  // details for every expense in it and is never read as a correction of the open draft
+  private async handleMedia(message: ChannelMessage): Promise<BotReply[]> {
+    const { media } = message
+    if (!media) return []
+
+    const isAudio = message.type === ChannelMessageType.AUDIO
+    if (!isAudio && media.sizeBytes && media.sizeBytes > MAX_IMAGE_BYTES) return [{ text: TEXTS.imageTooLarge }]
+    if (isAudio && media.durationSeconds && media.durationSeconds > MAX_AUDIO_SECONDS) {
+      return [{ text: TEXTS.audioTooLong(MAX_AUDIO_SECONDS) }]
+    }
+
+    const previous = await this.expenseDraftDBRepository.findByMediaUniqueId(
+      message.channel,
+      message.chatId,
+      media.uniqueId,
+    )
+    if (previous) return [{ text: isAudio ? TEXTS.duplicateAudio : TEXTS.duplicateImage }]
+
+    let expenseDraft: ExpenseDraftDbDto
+    try {
+      expenseDraft = await this.expenseDraftDBRepository.create({
+        channel: message.channel,
+        chatId: message.chatId,
+        messageId: message.messageId,
+        inputType: isAudio ? ExpenseDraftInputType.AUDIO : ExpenseDraftInputType.IMAGE,
+        // Audio: rawText is filled with the transcription
+        rawText: isAudio ? null : message.text?.trim() || null,
+        mediaFileId: media.fileId,
+        mediaUniqueId: media.uniqueId,
+      })
+    } catch (error) {
+      if (error instanceof DuplicateExpenseDraftException) return []
+      throw error
+    }
+
+    return this.extractInto(expenseDraft)
+  }
+
+  // Runs the AI on a row (new message or a failed one resumed from /bandeja) and shows one summary per expense.
+  // The input comes from the row itself: its text or caption, its image downloaded again from the channel, or its
+  // voice note transcribed once (the transcription is kept in rawText, so a retry only repeats the extraction).
+  private async extractInto(expenseDraft: ExpenseDraftDbDto, edit = false): Promise<BotReply[]> {
     let expenses: ResolvedExpense[]
+    let text = expenseDraft.rawText ?? undefined
+    const isAudio = expenseDraft.inputType === ExpenseDraftInputType.AUDIO
 
     try {
-      ;({ expenses } = await this.expenseExtractionService.extract({ text, draftId: expenseDraft.id }))
+      if (isAudio && !text) {
+        text = await this.transcribe(expenseDraft)
+        if (!text) {
+          await this.expenseDraftDBRepository.update(expenseDraft.id, { status: ExpenseDraftStatus.DISCARDED })
+          return [{ text: TEXTS.emptyAudio, edit }]
+        }
+      }
+
+      const images =
+        expenseDraft.inputType === ExpenseDraftInputType.IMAGE && expenseDraft.mediaFileId
+          ? [await this.download(expenseDraft)]
+          : undefined
+      ;({ expenses } = await this.expenseExtractionService.extract({ text, images, draftId: expenseDraft.id }))
     } catch (error) {
       this.logger.warn(`[extractInto] extraction failed: ${(error as Error).message}`)
       await this.expenseDraftDBRepository.update(expenseDraft.id, { status: ExpenseDraftStatus.FAILED })
       return [{ text: TEXTS.failed, edit }]
     }
 
+    // Voice notes show what was understood, so a wrong transcription is easy to spot
+    const heard = isAudio && text ? `${TEXTS.heard(text)}\n\n` : ''
+
     if (!expenses.length) {
       await this.expenseDraftDBRepository.update(expenseDraft.id, { status: ExpenseDraftStatus.DISCARDED })
-      return [{ text: TEXTS.notAnExpense, edit }]
+      return [{ text: `${heard}${TEXTS.notAnExpense}`, edit }]
     }
 
     const catalog = await this.expenseExtractionService.loadCatalog()
@@ -179,15 +245,30 @@ export class ConversationService {
               chatId: expenseDraft.chatId,
               messageId: expenseDraft.messageId,
               itemIndex: expenseDraft.itemIndex + index,
-              inputType: ExpenseDraftInputType.TEXT,
-              rawText: text,
+              inputType: expenseDraft.inputType,
+              rawText: text ?? null,
+              mediaFileId: expenseDraft.mediaFileId,
             })
 
       const updated = await this.expenseDraftDBRepository.update(target.id, toExpenseDraftUpdate(expense))
-      replies.push(this.replyFor(updated, catalog, edit && index === 0))
+      const reply = await this.withDuplicateWarning(updated, this.replyFor(updated, catalog, edit && index === 0))
+      replies.push(index === 0 && heard ? { ...reply, text: `${heard}${reply.text}` } : reply)
     }
 
     return replies
+  }
+
+  private download(expenseDraft: ExpenseDraftDbDto): Promise<MediaFile> {
+    if (!expenseDraft.mediaFileId) throw new Error('The expense draft has no media file')
+    return this.mediaDownloaderRegistry.download(expenseDraft.channel as ExpenseDraftChannel, expenseDraft.mediaFileId)
+  }
+
+  // Downloads the voice note, transcribes it and keeps the text in rawText
+  private async transcribe(expenseDraft: ExpenseDraftDbDto): Promise<string> {
+    const audio = await this.download(expenseDraft)
+    const text = await this.expenseExtractionService.transcribe({ audio, draftId: expenseDraft.id })
+    if (text) await this.expenseDraftDBRepository.update(expenseDraft.id, { rawText: text })
+    return text
   }
 
   private async applyCorrection(
@@ -289,7 +370,7 @@ export class ConversationService {
   // Reopens an inbox expense (or retries the AI on a failed one) and shows it with its buttons again
   private async resume(expenseDraft: ExpenseDraftDbDto, catalog: ExtractionCatalog): Promise<BotReply[]> {
     if (expenseDraft.status === ExpenseDraftStatus.FAILED) {
-      return this.extractInto(expenseDraft, expenseDraft.rawText ?? '', true)
+      return this.extractInto(expenseDraft, true)
     }
 
     const expense = completeExpense(toExpenseFields(expenseDraft), expenseDraft.confidence, catalog)
@@ -394,6 +475,18 @@ export class ConversationService {
       default:
         return [{ text: TEXTS.help }]
     }
+  }
+
+  // The same receipt already saved (same operation number, e.g. typed first and then sent as a screenshot)
+  private async withDuplicateWarning(expenseDraft: ExpenseDraftDbDto, reply: BotReply): Promise<BotReply> {
+    const { operationNumber } = expenseDraft
+    if (!operationNumber) return reply
+
+    const duplicated = await this.expenseDraftDBRepository.existsSavedWithOperationNumber(
+      operationNumber,
+      expenseDraft.id,
+    )
+    return duplicated ? { ...reply, text: `${TEXTS.possibleDuplicate(operationNumber)}\n\n${reply.text}` } : reply
   }
 
   // A short text without digits ("bbva", "tarjeta ripley"); anything with an amount is a new expense

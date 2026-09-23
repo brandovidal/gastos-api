@@ -40,6 +40,15 @@ ${JSON.stringify(draft)}
 - description: short concept or service name (e.g. "Netflix", "Almuerzo"), without amount, date or payment words.
 - merchant, operationNumber: only when visible (receipts). notes: other useful details.
 - confidence: a number from 0 to 1 for every non-null field, using the same keys as the output.
+
+# Images
+- Yape or Plin receipts ("¡Yapeaste!", "Plineaste", "Constancia de pago"): the paid amount, the date shown (spentAt),
+  the receiver as merchant, the "Nro. de operación" as operationNumber, and paymentMethodRef = the Yape or Plin catalog entry.
+  description: what was bought if the text next to the image says it, otherwise "Yape a <receiver>" / "Plin a <receiver>".
+- Bank app transfers or card vouchers: use the bank or card of the catalog when its name or last digits match.
+- Money received ("Te yapearon", "Recibiste") is not an expense: return {"expenses": []}.
+- Ignore balances, limits, fees and ads; one item per payment actually made.
+- The text sent with the image adds details (person, payment method, category, concept) that apply to every expense in it.
 - One item per expense, at most ${MAX_EXPENSES_PER_MESSAGE}. If the message has no expense, return {"expenses": []}.
 ${draftSection}
 # Catalogs

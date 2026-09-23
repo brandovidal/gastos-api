@@ -49,10 +49,13 @@ export interface ResolvedExpense extends ResolvedExpenseFields {
   lowConfidenceFields: ExpenseField[]
 }
 
-export interface ExpenseExtractionImage {
+// A file downloaded from a channel, in memory: an image for the AI or a voice note to transcribe
+export interface MediaFile {
   mimeType: string
   data: string // base64
 }
+
+export type ExpenseExtractionImage = MediaFile
 
 export interface ExpenseExtractionInput {
   text?: string

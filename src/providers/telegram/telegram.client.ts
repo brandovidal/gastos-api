@@ -3,6 +3,8 @@ import { ConfigService } from '@nestjs/config'
 
 import {
   TELEGRAM_API_URL,
+  TELEGRAM_DOWNLOAD_TIMEOUT_MS,
+  TELEGRAM_FILE_URL,
   TELEGRAM_MAX_RETRIES,
   TELEGRAM_MAX_RETRY_AFTER_SECONDS,
   TELEGRAM_PARSE_MODE,
@@ -11,7 +13,7 @@ import {
 } from '@/commons/constants/telegram.constant'
 import { TelegramRequestFailedException } from '@/commons/exceptions/telegram/telegram-request-failed.exception'
 import { TelegramConfig } from '@/settings/settings.model'
-import { TelegramReplyMarkup, TelegramWebhookInfo } from './telegram.types'
+import { TelegramFile, TelegramReplyMarkup, TelegramWebhookInfo } from './telegram.types'
 
 interface TelegramResponse<T> {
   ok: boolean
@@ -54,16 +56,29 @@ export class TelegramClient {
     return this.call('sendChatAction', { chat_id: chatId, action })
   }
 
+  // Downloads a file sent to the bot; kept in memory only. The URL carries the token: never log it
+  async downloadFile(fileId: string): Promise<{ data: Buffer; filePath: string }> {
+    const file = await this.call<TelegramFile>('getFile', { file_id: fileId })
+    if (!file.file_path) throw new TelegramRequestFailedException({ method: 'getFile', reason: 'file_path missing' })
+
+    const response = await fetch(`${TELEGRAM_FILE_URL}/bot${this.botToken('getFile')}/${file.file_path}`, {
+      signal: AbortSignal.timeout(TELEGRAM_DOWNLOAD_TIMEOUT_MS),
+    }).catch((error: Error) => {
+      throw new TelegramRequestFailedException({ method: 'downloadFile', reason: error.name })
+    })
+    if (!response.ok) {
+      throw new TelegramRequestFailedException({ method: 'downloadFile', status: response.status })
+    }
+
+    return { data: Buffer.from(await response.arrayBuffer()), filePath: file.file_path }
+  }
+
   getWebhookInfo() {
     return this.call<TelegramWebhookInfo>('getWebhookInfo', {})
   }
 
   async call<T = unknown>(method: string, body: Record<string, unknown>): Promise<T> {
-    const botToken = this.configService.get<TelegramConfig>('telegram')?.botToken
-
-    if (!botToken) {
-      throw new TelegramRequestFailedException({ method, reason: 'TELEGRAM_BOT_TOKEN is not set' })
-    }
+    const botToken = this.botToken(method)
 
     for (let attempt = 0; ; attempt++) {
       let response: Response
@@ -95,6 +110,12 @@ export class TelegramClient {
       // Never include the token (it is part of the URL) in errors
       throw new TelegramRequestFailedException({ method, status: response.status, reason: payload.description })
     }
+  }
+
+  private botToken(method: string): string {
+    const botToken = this.configService.get<TelegramConfig>('telegram')?.botToken
+    if (!botToken) throw new TelegramRequestFailedException({ method, reason: 'TELEGRAM_BOT_TOKEN is not set' })
+    return botToken
   }
 
   // 429 waits what Telegram asks (up to a limit) and 5xx a fixed delay; anything else is not retried

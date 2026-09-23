@@ -28,6 +28,8 @@ export interface GroqConfig {
   apiKey?: string
   model: string
   dailyLimit: number
+  transcribeModel: string
+  transcribeDailyLimit: number
 }
 
 export interface TelegramConfig {

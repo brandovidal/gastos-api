@@ -144,6 +144,7 @@ model ExpenseDraft {
   documentType    String? // ExpenseDraftDocumentType
   rawText         String? // message text or audio transcription
   mediaFileId     String? // channel file id, the file itself is not stored
+  mediaUniqueId   String? // stable id of the file in the channel (Telegram file_unique_id): same image sent again
   status          String         @default("draft") // ExpenseDraftStatus
   pendingField    String? // what the bot is asking for
   destination     String? // ExpenseDestination
@@ -179,6 +180,7 @@ model ExpenseDraft {
 
   @@unique([channel, chatId, messageId, itemIndex])
   @@index([channel, chatId, status])
+  @@index([channel, chatId, mediaUniqueId])
   @@index([destination, status, spentAt])
   @@map("bot_expense_drafts")
 }

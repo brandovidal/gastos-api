@@ -13,6 +13,7 @@ NestJS backend for expense intake from chat (Telegram first, WhatsApp later) wit
 ## Commands
 
 ```sh
+pnpm deps               # after pulling: Prisma client + pending migrations + seed + bot menu (.env.local); deps:dev on Turso
 pnpm local              # watch mode with .env.local (SQLite file:./dev.db)
 pnpm dev                # watch mode with .env.dev (Turso)
 pnpm build
@@ -20,6 +21,7 @@ pnpm lint / pnpm format
 pnpm test               # unit (watch)
 pnpm test:ci            # unit (single run)
 pnpm test:integration   # against local SQLite (.env.test)
+pnpm eval:extraction    # golden set with the REAL AI (not in CI); :record saves fixtures, :replay rescoring for free
 pnpm db:generate        # Prisma client -> src/generated/prisma (git-ignored)
 pnpm db:migrate --name <name>   # new migration on local dev.db + prisma generate
 pnpm db:deploy:dev      # apply pending migrations to Turso (dev)
@@ -85,7 +87,10 @@ modules/<feature>/
 - Route: text → Gemini Flash-Lite → Groq; image → Gemini Flash-Lite → Gemini Flash. A model is skipped at 90 % of its daily free quota (counted from `AiRequestLog`).
 - The AI picks catalog values by short refs (`p1`, `pm2`, `cc1`, `cat3`); `expense-extraction.resolver.ts` maps them to ids and computes `missingFields`. Never send database ids or secrets to the AI.
 - Simple corrections go through `correction-parser.ts` first; the AI is only called when it returns `null`.
+- Images (P4): a photo or `image/*` file becomes `ChannelMessageType.IMAGE`; the draft keeps `mediaFileId` + `mediaUniqueId` (same image sent again → no AI call) and the caption in `rawText`. Files are downloaded in memory through `MediaDownloaderRegistry` (each channel registers its downloader) and never stored.
+- Voice notes (P5): `ChannelMessageType.AUDIO` (≤ 60 s) → `ExpenseExtractionService.transcribe` (Whisper on Groq, logged as `transcribe`) → the transcription is stored in `rawText` and read like a typed message; the reply starts with "🎙️ Entendí: «…»". A retry from /bandeja only transcribes again if `rawText` is empty.
 - Tests never call real APIs: mock `@google/genai` / `openai` with `vi.mock`.
+- Golden set (P9): `test/golden/extraction.golden.json`. When the prompt or schema changes, run `pnpm eval:extraction:record` (real AI) so `test/fixtures/ai-responses.json` stays current; `conversation.integration-test.ts` replays those answers with the clock frozen on `recordedAt`. A new flow test needs its message in the golden set first.
 
 ## Conversation and Telegram
 

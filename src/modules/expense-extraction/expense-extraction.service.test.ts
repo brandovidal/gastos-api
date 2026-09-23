@@ -12,13 +12,16 @@ import { PersonDBRepository } from '@/db/models/person/personDB.repository'
 import { PaymentMethodDBRepository } from '@/db/models/payment-method/paymentMethodDB.repository'
 import { CategoryDBRepository } from '@/db/models/category/categoryDB.repository'
 
+import { GroqTranscriberService } from '@/providers/ai/groq/groq-transcriber.service'
+import { TranscriptionFailedException } from '@/commons/exceptions/expense-extraction/transcription-failed.exception'
+
 import { ExpenseExtractionService } from './expense-extraction.service'
 import { mockCategories, mockExtractedExpense, mockPaymentMethods, mockPeople } from './mocks/expense-extraction.mock'
 
 const config = {
   ai: { timeoutMs: 1000 },
   gemini: { modelLite: 'gemini-lite', model: 'gemini-flash', dailyLimitLite: 500, dailyLimit: 20 },
-  groq: { model: 'qwen', dailyLimit: 1000 },
+  groq: { model: 'qwen', dailyLimit: 1000, transcribeModel: 'whisper', transcribeDailyLimit: 2000 },
 }
 
 const validOutput = JSON.stringify({ expenses: [mockExtractedExpense] })
@@ -30,6 +33,7 @@ const mockStrategy = {
   getProvider: vi.fn((type: AiProvider) => (type === AiProvider.GEMINI ? mockGemini : mockGroq)),
 }
 const mockAiRequestLog = { create: vi.fn(), countSince: vi.fn() }
+const mockTranscriber = { transcribe: vi.fn() }
 
 describe('ExpenseExtractionService', () => {
   let service: ExpenseExtractionService
@@ -44,6 +48,7 @@ describe('ExpenseExtractionService', () => {
         { provide: PersonDBRepository, useValue: { findActive: vi.fn().mockResolvedValue(mockPeople) } },
         { provide: PaymentMethodDBRepository, useValue: { findActive: vi.fn().mockResolvedValue(mockPaymentMethods) } },
         { provide: CategoryDBRepository, useValue: { findAll: vi.fn().mockResolvedValue(mockCategories) } },
+        { provide: GroqTranscriberService, useValue: mockTranscriber },
       ],
     }).compile()
 
@@ -135,6 +140,7 @@ describe('ExpenseExtractionService', () => {
       { provider: AiProvider.GEMINI, model: 'gemini-lite', used: 120, dailyLimit: 500, usableLimit: 450 },
       { provider: AiProvider.GROQ, model: 'qwen', used: 3, dailyLimit: 1000, usableLimit: 900 },
       { provider: AiProvider.GEMINI, model: 'gemini-flash', used: 3, dailyLimit: 20, usableLimit: 18 },
+      { provider: AiProvider.GROQ, model: 'whisper', used: 3, dailyLimit: 2000, usableLimit: 1800 },
     ])
   })
 
@@ -169,6 +175,47 @@ describe('ExpenseExtractionService', () => {
   it('should parse local corrections with the current catalog', async () => {
     await expect(service.parseLocalCorrection('dany', ExpenseField.PERSON)).resolves.toEqual({
       personId: 'person-danery',
+    })
+  })
+
+  describe('transcribe', () => {
+    const audio = { mimeType: 'audio/ogg', data: 'b64' }
+
+    it('should transcribe with Whisper on Groq and log it as a transcription', async () => {
+      mockTranscriber.transcribe.mockResolvedValue('almuerzo 25 soles con yape')
+
+      await expect(service.transcribe({ audio, draftId: 'draft-1' })).resolves.toBe('almuerzo 25 soles con yape')
+
+      expect(mockTranscriber.transcribe).toHaveBeenCalledWith({
+        model: 'whisper',
+        mimeType: 'audio/ogg',
+        data: 'b64',
+        timeoutMs: 1000,
+      })
+      expect(mockAiRequestLog.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          provider: AiProvider.GROQ,
+          model: 'whisper',
+          operation: 'transcribe',
+          success: true,
+        }),
+      )
+    })
+
+    it('should fail and log the error when Whisper fails', async () => {
+      mockTranscriber.transcribe.mockRejectedValue(new Error('429'))
+
+      await expect(service.transcribe({ audio })).rejects.toThrow(TranscriptionFailedException)
+      expect(mockAiRequestLog.create).toHaveBeenCalledWith(
+        expect.objectContaining({ operation: 'transcribe', success: false, errorCode: 'PROVIDER_ERROR' }),
+      )
+    })
+
+    it('should not call Whisper when its daily quota is almost spent', async () => {
+      mockAiRequestLog.countSince.mockResolvedValue(1800)
+
+      await expect(service.transcribe({ audio })).rejects.toThrow(TranscriptionFailedException)
+      expect(mockTranscriber.transcribe).not.toHaveBeenCalled()
     })
   })
 })
