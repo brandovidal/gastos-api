@@ -22,12 +22,13 @@ import {
   ExpenseRecordResponseDto,
   ExtractedExpensesResponseDto,
 } from './dto/response/expenses-response.dto'
-import { ExpenseListQueryDto, ExtractExpenseDto } from './dto/request/expenses.dto'
+import { ExpenseBodyDto, ExpenseListQueryDto, ExpensePatchDto, ExtractExpenseDto } from './dto/request/expenses.dto'
 import { ExpensesService } from './expenses.service'
 
 const resourceParam = new ParseEnumPipe(ExpenseResource)
 const RESOURCE_DOC = { name: 'resource', enum: ExpenseResource }
-const BODY_DOC = { schema: { type: 'object' }, description: 'Columns of the table (validated per resource)' }
+const BODY_DOC = { type: ExpenseBodyDto, description: 'Columns of the table (validated per resource)' }
+const PATCH_DOC = { type: ExpensePatchDto, description: 'Columns to change (validated per resource)' }
 
 @ApiRest('expenses')
 @Controller('expenses')
@@ -72,7 +73,7 @@ export class ExpensesController {
 
   @Patch(':resource/:id')
   @ApiParam(RESOURCE_DOC)
-  @ApiBody(BODY_DOC)
+  @ApiBody(PATCH_DOC)
   @ApiOkResponse({ type: ExpenseRecordResponseDto })
   @ResponseMessage('EXPENSE_UPDATED', 'Expense updated')
   update(@Param('resource', resourceParam) resource: ExpenseResource, @Param('id') id: string, @Body() body: unknown) {

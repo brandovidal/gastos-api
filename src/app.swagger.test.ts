@@ -63,6 +63,14 @@ describe('Swagger of the REST API for kogane-app', () => {
     }
 
     expect(undocumented).toEqual([])
+
+    // nestjs-zod turns z.string().trim().nullable() without other checks into an array: text fields stay strings
+    const textFields = Object.entries(document.components?.schemas ?? {}).flatMap(([name, schema]) =>
+      Object.entries((schema as { properties?: Record<string, { type?: string }> }).properties ?? {})
+        .filter(([field]) => ['notes', 'description', 'name'].includes(field))
+        .map(([field, property]) => `${name}.${field}: ${property.type}`),
+    )
+    expect(textFields.filter((field) => !field.endsWith(': string'))).toEqual([])
     expect(Object.keys(document.paths)).toEqual(expect.arrayContaining(['/v1/debts', '/v1/drafts', '/v1/messages']))
   })
 })

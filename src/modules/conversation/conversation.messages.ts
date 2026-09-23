@@ -224,6 +224,21 @@ export function buildClosedReply(
   return { text: `${prefix}\n${formatSummary(expenseDraft, catalog)}`, edit: true }
 }
 
+// A new message after ✅ Guardar / 📝 Borrador: the summary is edited in place (no notification), this one arrives at
+// the end of the chat
+export function buildSavedNotice(expenseDraft: ExpenseDraftDbDto, destinationLabel: string): BotReply {
+  return {
+    text: `✅ Guardado: ${conceptOf(expenseDraft)} en ${destinationLabel}.\nVer: /ultimos · /resumen`,
+  }
+}
+
+export function buildParkedNotice(expenseDraft: ExpenseDraftDbDto): BotReply {
+  return { text: `📝 Quedó en /borrador: ${conceptOf(expenseDraft)}. Retómalo cuando quieras.` }
+}
+
+const conceptOf = ({ description, amount, currency }: ExpenseDraftDbDto) =>
+  `${escapeHtml(description ?? 'Gasto')} ${formatAmount(amount, currency)}`
+
 export function formatRecent(expenseDrafts: ExpenseDraftDbDto[]): string {
   if (!expenseDrafts.length) return TEXTS.noRecent
 

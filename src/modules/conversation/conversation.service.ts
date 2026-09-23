@@ -61,6 +61,8 @@ import {
   DESTINATION_LABELS,
   TEXTS,
   buildClosedReply,
+  buildParkedNotice,
+  buildSavedNotice,
   buildExpenseReply,
   buildDraftReplies,
   buildNewPaymentMethodReply,
@@ -417,7 +419,10 @@ export class ConversationService {
         await this.expenseSaverService.save(expenseDraft)
         const saved = { ...expenseDraft, status: ExpenseDraftStatus.SAVED }
         const label = DESTINATION_LABELS[expenseDraft.destination as ExpenseDestination]
-        return { replies: [buildClosedReply(`✅ <b>Guardado en ${label}</b>`, saved, catalog)], notice: TEXTS.saved }
+        return {
+          replies: [buildClosedReply(`✅ <b>Guardado en ${label}</b>`, saved, catalog), buildSavedNotice(saved, label)],
+          notice: TEXTS.saved,
+        }
       }
       case BotAction.EDIT:
         await this.expenseDraftDBRepository.update(expenseDraft.id, { pendingField: FREE_CORRECTION_FIELD })
@@ -427,7 +432,7 @@ export class ConversationService {
           status: ExpenseDraftStatus.PENDING_REVIEW,
           pendingField: null,
         })
-        return { replies: [buildClosedReply('📝 <b>En borrador</b>', updated, catalog)] }
+        return { replies: [buildClosedReply('📝 <b>En borrador</b>', updated, catalog), buildParkedNotice(updated)] }
       }
       case BotAction.DISCARD: {
         const updated = await this.expenseDraftDBRepository.update(expenseDraft.id, {

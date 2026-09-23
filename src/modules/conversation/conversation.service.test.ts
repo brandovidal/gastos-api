@@ -585,6 +585,10 @@ describe('ConversationService', () => {
       expect(result.notice).toBe('Guardado')
       expect(result.replies[0]).toMatchObject({ edit: true, text: expect.stringContaining('Guardado en Costo fijo') })
       expect(result.replies[0].buttons).toBeUndefined()
+      // and a new message at the end of the chat, which does notify
+      expect(result.replies[1]).toEqual({
+        text: '✅ Guardado: Almuerzo S/ 25.00 en Costo fijo.\nVer: /ultimos · /resumen',
+      })
     })
 
     it('should ask the missing field instead of saving an incomplete expense', async () => {
@@ -610,13 +614,22 @@ describe('ConversationService', () => {
     })
 
     it.each([
-      [BotAction.LATER, ExpenseDraftStatus.PENDING_REVIEW, 'En borrador'],
-      [BotAction.DISCARD, ExpenseDraftStatus.DISCARDED, 'Descartado'],
-    ])('%s should close the expense as %s', async (name, status, text) => {
+      [BotAction.LATER, ExpenseDraftStatus.PENDING_REVIEW, 'En borrador', 2],
+      [BotAction.DISCARD, ExpenseDraftStatus.DISCARDED, 'Descartado', 1],
+    ])('%s should close the expense as %s', async (name, status, text, replies) => {
       const result = await service.handle(action(name))
 
       expect(mockExpenseDraftDB.update).toHaveBeenCalledWith(FILE_ID, { status, pendingField: null })
       expect(result.replies[0]).toMatchObject({ edit: true, text: expect.stringContaining(text) })
+      expect(result.replies).toHaveLength(replies)
+    })
+
+    it('should send a new message when an expense goes to Borrador', async () => {
+      const { replies } = await service.handle(action(BotAction.LATER))
+
+      expect(replies[1]).toEqual({
+        text: '📝 Quedó en /borrador: Almuerzo S/ 25.00. Retómalo cuando quieras.',
+      })
     })
 
     it('should set a field from a quick reply and edit the same message', async () => {

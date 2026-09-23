@@ -23,7 +23,7 @@ const debtFields = {
   paymentMonth: z.number().int().min(1).max(12),
   paymentYear: z.number().int().min(2000).max(2100),
   dueDate: date.nullable().optional(),
-  notes: z.string().trim().nullable().optional(),
+  notes: z.string().trim().max(500).nullable().optional(),
 }
 
 // "installments: 3" creates three rows, one per month from paymentMonth (D60); amount is each installment's
@@ -48,7 +48,7 @@ export const debtPaymentSchema = z.object({
   amount,
   paidAt: date.optional(),
   paymentMethodId: z.string().min(1).nullable().optional(),
-  notes: z.string().trim().nullable().optional(),
+  notes: z.string().trim().max(500).nullable().optional(),
 })
 
 // ==================== Responses (Swagger / kogane-app types) ====================
