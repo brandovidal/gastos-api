@@ -1,8 +1,5 @@
 name: Deploy
 
-# P10 (D52): tests → migrations and seed on Turso kogane-db → Railway → Telegram webhook and command menu.
-# Migrations run before the new code, so they must work with the previous version too (add before removing).
-# Setup and secrets: docs/deploy.md
 on:
   push:
     branches:
@@ -37,31 +34,8 @@ jobs:
       - name: Seed catalogs (safe to re-run)
         run: pnpm exec tsx prisma/seed.ts
 
-  deploy:
-    needs: db
-    runs-on: ubuntu-latest
-    environment: production
-    env:
-      RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
-      PUBLIC_URL: ${{ secrets.PUBLIC_URL }}
-    steps:
-      - uses: actions/checkout@v4
-      - name: Deploy to Railway (Dockerfile + railway.json)
-        run: npx -y @railway/cli up --service "${{ vars.RAILWAY_SERVICE || 'kogane-api' }}" --ci
-      - name: Wait until /v1/health answers with the database up
-        run: |
-          for attempt in $(seq 1 30); do
-            if curl -sf "$PUBLIC_URL/v1/health" | grep -q '"database":"OK"'; then
-              echo "Healthy"
-              exit 0
-            fi
-            sleep 10
-          done
-          echo "The API did not become healthy" >&2
-          exit 1
-
   telegram:
-    needs: deploy
+    needs: db
     runs-on: ubuntu-latest
     environment: production
     env:

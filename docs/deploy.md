@@ -1,10 +1,12 @@
 # Despliegue y configuración de kogane-api
 
-kogane-api corre en **Railway**, usa **Turso** (`kogane-db`) como base y el bot de Telegram le manda los mensajes por webhook. Cada push a `main` despliega solo con GitHub Actions (`.github/workflows/deploy.yml`):
+kogane-api corre en **Railway**, usa **Turso** (`kogane-db`) como base y el bot de Telegram le manda los mensajes por webhook. Producción: **`https://kogane-api.up.railway.app`**. Railway está conectado al repo y despliega solo cada push a `main`. GitHub Actions (`.github/workflows/deploy.yml`) hace lo que Railway no hace:
 
 ```
-check (lint, build, tests) → db (migraciones + seed en kogane-db) → deploy (railway up + /v1/health) → telegram (webhook + menú)
+check (lint, build, tests) → db (migraciones + seed en kogane-db) → telegram (webhook + menú)
 ```
+
+Con **"Wait for CI"** activado en Railway (Settings → Source), Railway espera a que ese workflow pase antes de desplegar.
 
 Las migraciones corren **antes** que el código nuevo: tienen que funcionar también con la versión anterior (primero agregar, borrar en un deploy posterior).
 
@@ -12,11 +14,25 @@ Las migraciones corren **antes** que el código nuevo: tienen que funcionar tamb
 
 | Entorno | Archivo o lugar | Base | Para qué |
 |---|---|---|---|
-| local (dev) | `.env.dev` | SQLite `file:./dev.db` | `pnpm dev` (o `make dev`), `make deps`, pruebas del bot con túnel |
+| local (dev) | `.env.dev` | SQLite `file:./dev.db` | `pnpm dev` (o `make dev`), `make deps`, `make tunnel` para probar el bot |
 | producción | Railway (variables) · GitHub (secretos) · `.env.prod` en tu máquina | Turso `kogane-db` | La API real; `make <tarea> ENV=prod` para operar a mano |
 | tests | `.env.test` | SQLite `file:./test.db` | `make check` y el CI |
 
 Los `.env*` no se suben al repo (salvo `.env.example`). Nunca pegues tokens en chats ni issues.
+
+## `PUBLIC_URL` por entorno
+
+Es la URL pública (HTTPS) donde Telegram manda el webhook: `PUBLIC_URL` + `/v1/telegram/webhook`.
+
+| Entorno | Valor | Nota |
+|---|---|---|
+| **producción** (Railway, GitHub, `.env.prod`) | `https://kogane-api.up.railway.app` | El dominio que genera Railway. **No** `kogane-api.railway.internal` (red privada): Telegram no llega |
+| **local** (`.env.dev`) | `http://localhost:5560` o vacío | Telegram exige HTTPS público: la URL la pone `make tunnel` (cloudflared, cambia en cada arranque) |
+| **tests** (`.env.test`) | vacío | Los tests no registran webhooks |
+
+`make tunnel` abre el túnel, apunta el webhook del bot de `.env.dev` al túnel y, con Ctrl+C, lo **devuelve a producción** (`PUBLIC_URL` de `.env.prod`). Si local y producción usan el mismo bot, mientras el túnel está abierto el bot de producción no recibe mensajes. Para evitarlo, crea un segundo bot en @BotFather y pon su token en `.env.dev`.
+
+Secretos (`API_KEY`, `TELEGRAM_WEBHOOK_SECRET`): `make secret` (o `openssl rand -hex 32`); uno distinto por entorno.
 
 ## Tareas (`make help`)
 
@@ -26,7 +42,7 @@ El `Makefile` define las variables comunes (`ENV`, archivo `.env.<ENV>`) e inclu
 |---|---|---|
 | `makefiles/app.mk` | `dev`, `debug`, `clean` | `pnpm dev` equivale a `make dev` (local) |
 | `makefiles/db.mk` | `deps`, `generate`, `db-deploy`, `migrate`, `seed`, `studio` | `make deps ENV=prod` / `make db-deploy ENV=prod` hacen a mano lo que el job `db` |
-| `makefiles/bot.mk` | `telegram` | `make telegram ENV=prod URL=…` hace a mano lo que el job `telegram` |
+| `makefiles/bot.mk` | `telegram`, `tunnel`, `secret` | `make telegram ENV=prod` hace a mano lo que el job `telegram`; `make tunnel` para el bot en local |
 | `makefiles/quality.mk` | `lint`, `format`, `build`, `test`, `test-integration`, `check` | `make check` es lo mismo que el job `check` |
 | `makefiles/eval.mk` | `eval-replay`, `eval-ai` | no entra al despliegue; `eval-ai` gasta cuota y pide `CONFIRM=yes` |
 | `makefiles/docker.mk` | `docker` | prueba local de la imagen de Railway |
@@ -41,25 +57,24 @@ El `Makefile` define las variables comunes (`ENV`, archivo `.env.<ENV>`) e inclu
 
 ## 2. Railway
 
-1. Crear un proyecto y un servicio vacío llamado `kogane-api` (sin conectar el repo: el deploy lo hace el workflow con `railway up`, así las migraciones siempre corren antes).
-2. **Settings → Networking → Generate Domain**: la URL pública es `PUBLIC_URL` (hoy `https://kogane-api-main.up.railway.app`). **No** uses `kogane-api.railway.internal`: es la red privada de Railway y ni Telegram ni Cloudflare llegan a ella.
+1. Proyecto `kogane` con el servicio `kogane-api` conectado al repo `brandovidal/kogane-api`, rama `main`, con **Auto deploy** y **Wait for CI** activados (Settings → Source).
+2. **Settings → Networking → Generate Domain**: la URL pública es `PUBLIC_URL` (hoy `https://kogane-api.up.railway.app`). **No** uses `kogane-api.railway.internal`: es la red privada de Railway y ni Telegram ni Cloudflare llegan a ella.
 3. **Variables** del servicio (las lee la app en runtime):
 
 | Variable | Valor |
 |---|---|
 | `NODE_ENV` | `production` (apaga Swagger `/docs` y deja los logs en JSON) |
-| `API_KEY` | una nueva: `openssl rand -hex 32` (la usa kogane-app en `x-api-key`) |
+| `API_KEY` | una nueva: `make secret` (la usa kogane-app en `x-api-key`) |
 | `DATABASE_URL`, `DATABASE_AUTH_TOKEN` | de Turso |
 | `GROQ_API_KEY`, `GEMINI_API_KEY` | claves de AI (capas gratuitas) |
 | `AI_TEXT_PRIMARY` | `groq` (por defecto) o `gemini` |
 | `TELEGRAM_BOT_TOKEN` | de @BotFather |
-| `TELEGRAM_WEBHOOK_SECRET` | uno nuevo: `openssl rand -hex 32` |
+| `TELEGRAM_WEBHOOK_SECRET` | uno nuevo: `make secret` |
 | `TELEGRAM_ALLOWED_CHAT_IDS` | tu `chat_id` |
 | `PUBLIC_URL` | la URL del paso 2 |
 | `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_BUCKET` | Cloudflare R2 (capturas y notas de voz, D54); ver la sección 4b |
 
    `PORT` lo pone Railway. El resto de variables de `.env.example` tienen valores por defecto. Pega los valores **sin comillas**.
-4. **Account → Tokens → Project token** del proyecto → `RAILWAY_TOKEN` (para el workflow).
 
 `railway.json` define el build con el `Dockerfile` y el health check `/v1/health`. Plan Hobby: 5 USD/mes con 5 USD de uso incluido.
 
@@ -70,17 +85,15 @@ El `Makefile` define las variables comunes (`ENV`, archivo `.env.<ENV>`) e inclu
 | Secreto | Lo usa el job |
 |---|---|
 | `DATABASE_URL`, `DATABASE_AUTH_TOKEN` | `db` (migraciones y seed) |
-| `RAILWAY_TOKEN` | `deploy` |
-| `PUBLIC_URL` | `deploy` (health) y `telegram` |
+| `PUBLIC_URL` | `telegram` (`https://kogane-api.up.railway.app`) |
 | `TELEGRAM_BOT_TOKEN`, `TELEGRAM_WEBHOOK_SECRET` | `telegram` (webhook y menú) |
 
-Opcional: la **variable** `RAILWAY_SERVICE` si el servicio no se llama `kogane-api`.
 
 ## 4. Telegram
 
 - **Rotar el token** (el anterior se pegó en un chat): en @BotFather, `/revoke` → elegir el bot → token nuevo en Railway, GitHub y tus `.env`.
 - El webhook y el menú de comandos los registra el job `telegram` en cada deploy. A mano: `make telegram ENV=prod URL=https://….up.railway.app`.
-- Mientras el webhook apunta a Railway, el bot **no** responde al servidor local; para probar en local, vuelve a apuntarlo al túnel con `make telegram URL=https://<túnel>` y después redepliega (o corre el job otra vez).
+- Para probar el bot en local: `pnpm dev` en una terminal y `make tunnel` en otra; al cortar el túnel con Ctrl+C, el webhook vuelve a producción.
 
 ## 4b. Cloudflare R2 (capturas)
 
@@ -94,7 +107,7 @@ Plan gratis: 10 GB, 1 M escrituras y 10 M lecturas al mes, sin cobro de salida.
 
 1. Cargar las variables (Railway) y los secretos (GitHub).
 2. GitHub → **Actions → Deploy → Run workflow** (o push a `main`).
-3. Revisar que pasen los 4 jobs.
+3. Revisar que pasen los 3 jobs; Railway despliega cuando terminan (Wait for CI).
 
 ## 6. Verificación
 

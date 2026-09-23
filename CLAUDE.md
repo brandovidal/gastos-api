@@ -112,7 +112,7 @@ modules/<feature>/
 
 ## Deployment (P10)
 
-- `Dockerfile` + `railway.json` (health `/v1/health`); `.github/workflows/deploy.yml` runs `unit-test.yml`, then migrations and seed (`scripts/db-deploy.ts`, `prisma/seed.ts`), `railway up` and `scripts/telegram-setup.ts`. Guide: `docs/deploy.md`.
+- `Dockerfile` + `railway.json` (health `/v1/health`); `.github/workflows/deploy.yml` runs `unit-test.yml`, then migrations and seed (`scripts/db-deploy.ts`, `prisma/seed.ts`) and `scripts/telegram-setup.ts`; Railway deploys from GitHub itself, after CI ("Wait for CI"). `PUBLIC_URL`: prod `https://kogane-api.up.railway.app`, local via `make tunnel` (`scripts/tunnel.sh`, restores the prod webhook on exit). Guide: `docs/deploy.md`.
 - `NODE_ENV=production` turns Swagger off (`isDocsEnabled`) and logs to JSON. Migrations must be backward compatible: they run before the new code.
 
 ## Database (Turso)

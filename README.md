@@ -42,7 +42,7 @@ Tasks are grouped in `makefiles/*.mk` (app, database, bot, quality, eval, docker
 
 ## Deployment
 
-Railway + Turso `kogane-db`, deployed by GitHub Actions on every push to `main` (tests → migrations and seed → `railway up` → Telegram webhook). Setup, variables, secrets, verification and rollback: [docs/deploy.md](docs/deploy.md). `make docker` runs the production image locally.
+Production: `https://kogane-api.up.railway.app` (Railway + Turso `kogane-db`). Railway deploys `main` by itself (GitHub integration, "Wait for CI"); GitHub Actions runs tests → migrations and seed → Telegram webhook. Local bot: `pnpm dev` + `make tunnel`. Setup, variables, secrets, verification and rollback: [docs/deploy.md](docs/deploy.md). `make docker` runs the production image locally.
 
 ## Using the bot (@kogane_finanzas_bot)
 
