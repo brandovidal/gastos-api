@@ -1,0 +1,168 @@
+import { Logger } from '@nestjs/common'
+import { ConfigService } from '@nestjs/config'
+import { Test, TestingModule } from '@nestjs/testing'
+import { vi } from 'vitest'
+
+import { AiErrorCode, AiInputPartType, AiProvider } from '@/commons/constants/ai.constant'
+import { ExpenseField } from '@/commons/constants/expense-extraction.constant'
+import { ExpenseExtractionFailedException } from '@/commons/exceptions/expense-extraction/expense-extraction-failed.exception'
+import { AiExtractorProviderStrategy } from '@/providers/ai/ai-extractor-provider.strategy'
+import { AiRequestLogDBRepository } from '@/db/models/ai-request-log/aiRequestLogDB.repository'
+import { PersonDBRepository } from '@/db/models/person/personDB.repository'
+import { PaymentMethodDBRepository } from '@/db/models/payment-method/paymentMethodDB.repository'
+import { CreditCardDBRepository } from '@/db/models/credit-card/creditCardDB.repository'
+import { CategoryDBRepository } from '@/db/models/category/categoryDB.repository'
+
+import { ExpenseExtractionService } from './expense-extraction.service'
+import {
+  mockCategories,
+  mockCreditCards,
+  mockExtractedExpense,
+  mockPaymentMethods,
+  mockPeople,
+} from './mocks/expense-extraction.mock'
+
+const config = {
+  ai: { timeoutMs: 1000 },
+  gemini: { modelLite: 'gemini-lite', model: 'gemini-flash', dailyLimitLite: 500, dailyLimit: 20 },
+  groq: { model: 'qwen', dailyLimit: 1000 },
+}
+
+const validOutput = JSON.stringify({ expenses: [mockExtractedExpense] })
+
+const mockGemini = { provider: AiProvider.GEMINI, supportsImages: true, generateJson: vi.fn() }
+const mockGroq = { provider: AiProvider.GROQ, supportsImages: false, generateJson: vi.fn() }
+
+const mockStrategy = {
+  getProvider: vi.fn((type: AiProvider) => (type === AiProvider.GEMINI ? mockGemini : mockGroq)),
+}
+const mockAiRequestLog = { create: vi.fn(), countSince: vi.fn() }
+
+describe('ExpenseExtractionService', () => {
+  let service: ExpenseExtractionService
+
+  beforeEach(async () => {
+    const module: TestingModule = await Test.createTestingModule({
+      providers: [
+        ExpenseExtractionService,
+        { provide: ConfigService, useValue: { getOrThrow: (key: string) => config[key] } },
+        { provide: AiExtractorProviderStrategy, useValue: mockStrategy },
+        { provide: AiRequestLogDBRepository, useValue: mockAiRequestLog },
+        { provide: PersonDBRepository, useValue: { findActive: vi.fn().mockResolvedValue(mockPeople) } },
+        { provide: PaymentMethodDBRepository, useValue: { findActive: vi.fn().mockResolvedValue(mockPaymentMethods) } },
+        { provide: CreditCardDBRepository, useValue: { findAll: vi.fn().mockResolvedValue(mockCreditCards) } },
+        { provide: CategoryDBRepository, useValue: { findAll: vi.fn().mockResolvedValue(mockCategories) } },
+      ],
+    }).compile()
+
+    service = module.get<ExpenseExtractionService>(ExpenseExtractionService)
+
+    mockAiRequestLog.countSince.mockResolvedValue(0)
+    mockAiRequestLog.create.mockResolvedValue({})
+    vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => {})
+    vi.spyOn(Logger.prototype, 'error').mockImplementation(() => {})
+  })
+
+  afterEach(() => {
+    vi.clearAllMocks()
+  })
+
+  it('should extract text with Gemini Flash-Lite and resolve catalog refs', async () => {
+    mockGemini.generateJson.mockResolvedValue({ text: validOutput, inputTokens: 900, outputTokens: 120 })
+
+    const result = await service.extract({ text: 'almuerzo 25 soles yape para dany', expenseFileId: 'file-1' })
+
+    expect(result.provider).toBe(AiProvider.GEMINI)
+    expect(result.model).toBe('gemini-lite')
+    expect(result.expenses[0].personId).toBe('person-danery')
+    expect(result.expenses[0].missingFields).toEqual([ExpenseField.DESTINATION])
+    expect(mockGemini.generateJson).toHaveBeenCalledWith(
+      expect.objectContaining({
+        model: 'gemini-lite',
+        parts: [{ type: AiInputPartType.TEXT, text: 'almuerzo 25 soles yape para dany' }],
+        timeoutMs: 1000,
+      }),
+    )
+    expect(mockAiRequestLog.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        provider: AiProvider.GEMINI,
+        success: true,
+        expenseFileId: 'file-1',
+        inputTokens: 900,
+      }),
+    )
+  })
+
+  it('should retry once with the validation error when the output does not match the schema', async () => {
+    mockGemini.generateJson
+      .mockResolvedValueOnce({ text: '{"expenses":[{"amount":-1}]}' })
+      .mockResolvedValueOnce({ text: validOutput })
+
+    const result = await service.extract({ text: 'almuerzo 25' })
+
+    expect(result.provider).toBe(AiProvider.GEMINI)
+    const retryParts = mockGemini.generateJson.mock.calls[1][0].parts
+    expect(retryParts[retryParts.length - 1].text).toContain('did not match the schema')
+    expect(mockAiRequestLog.create).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({ success: false, errorCode: AiErrorCode.INVALID_OUTPUT }),
+    )
+  })
+
+  it('should fall back to Groq for text when Gemini fails', async () => {
+    mockGemini.generateJson.mockRejectedValue(new Error('503'))
+    mockGroq.generateJson.mockResolvedValue({ text: validOutput })
+
+    const result = await service.extract({ text: 'almuerzo 25' })
+
+    expect(result.provider).toBe(AiProvider.GROQ)
+    expect(mockAiRequestLog.create).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({ provider: AiProvider.GEMINI, errorCode: AiErrorCode.PROVIDER_ERROR }),
+    )
+  })
+
+  it('should skip a model whose daily quota is almost spent', async () => {
+    mockAiRequestLog.countSince.mockImplementation((provider: AiProvider) => (provider === AiProvider.GEMINI ? 450 : 0))
+    mockGroq.generateJson.mockResolvedValue({ text: validOutput })
+
+    const result = await service.extract({ text: 'almuerzo 25' })
+
+    expect(result.provider).toBe(AiProvider.GROQ)
+    expect(mockGemini.generateJson).not.toHaveBeenCalled()
+  })
+
+  it('should use Gemini Flash, not Groq, as the image fallback', async () => {
+    mockGemini.generateJson.mockRejectedValueOnce(new Error('timeout')).mockResolvedValueOnce({ text: validOutput })
+
+    const result = await service.extract({ images: [{ mimeType: 'image/jpeg', data: 'base64' }] })
+
+    expect(result.model).toBe('gemini-flash')
+    expect(mockGroq.generateJson).not.toHaveBeenCalled()
+    expect(mockGemini.generateJson.mock.calls[0][0].parts).toEqual([
+      { type: AiInputPartType.IMAGE, mimeType: 'image/jpeg', data: 'base64' },
+      { type: AiInputPartType.TEXT, text: 'Extract the expenses from the image(s).' },
+    ])
+  })
+
+  it('should throw ExpenseExtractionFailedException when every model fails', async () => {
+    mockGemini.generateJson.mockRejectedValue(new Error('503'))
+    mockGroq.generateJson.mockResolvedValue({ text: 'not json' })
+
+    await expect(service.extract({ text: 'almuerzo 25' })).rejects.toThrow(ExpenseExtractionFailedException)
+    expect(mockGroq.generateJson).toHaveBeenCalledTimes(2)
+  })
+
+  it('should not lose the extraction when the usage log cannot be saved', async () => {
+    mockAiRequestLog.create.mockRejectedValue(new Error('db down'))
+    mockGemini.generateJson.mockResolvedValue({ text: validOutput })
+
+    await expect(service.extract({ text: 'almuerzo 25' })).resolves.toBeDefined()
+  })
+
+  it('should parse local corrections with the current catalog', async () => {
+    await expect(service.parseLocalCorrection('dany', ExpenseField.PERSON)).resolves.toEqual({
+      personId: 'person-danery',
+    })
+  })
+})

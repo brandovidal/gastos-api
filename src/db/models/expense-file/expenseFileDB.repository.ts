@@ -75,4 +75,23 @@ export class ExpenseFileDBRepository {
     })
     return count
   }
+
+  // /cancelar: close every open expense file of the chat
+  async discardOpenByChat(channel: ExpenseFileChannel, chatId: string): Promise<number> {
+    const { count } = await this.prisma.expenseFile.updateMany({
+      where: { channel, chatId, status: { in: OPEN_EXPENSE_FILE_STATUSES } },
+      data: { status: ExpenseFileStatus.DISCARDED, pendingField: null },
+    })
+    return count
+  }
+
+  // /ultimos
+  async findRecentSaved(channel: ExpenseFileChannel, chatId: string, limit: number): Promise<ExpenseFileDbDto[]> {
+    const expenseFiles = await this.prisma.expenseFile.findMany({
+      where: { channel, chatId, status: ExpenseFileStatus.SAVED },
+      orderBy: { confirmedAt: 'desc' },
+      take: limit,
+    })
+    return expenseFiles.map((expenseFile) => this.serializer.toDto(expenseFile))
+  }
 }

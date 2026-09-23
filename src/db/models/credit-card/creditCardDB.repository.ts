@@ -11,4 +11,8 @@ export class CreditCardDBRepository {
   async findAll(): Promise<CreditCard[]> {
     return this.prisma.creditCard.findMany({ orderBy: { code: 'asc' } })
   }
+
+  async findById(id: string): Promise<CreditCard | null> {
+    return this.prisma.creditCard.findUnique({ where: { id } })
+  }
 }

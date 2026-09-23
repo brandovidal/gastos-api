@@ -1,0 +1,232 @@
+import { Injectable, Logger } from '@nestjs/common'
+import { ConfigService } from '@nestjs/config'
+import { z } from 'zod'
+
+import {
+  AI_MAX_STRUCTURE_ATTEMPTS,
+  AI_QUOTA_TIME_ZONES,
+  AI_QUOTA_USAGE_THRESHOLD,
+  AiErrorCode,
+  AiInputPartType,
+  AiOperation,
+  AiProvider,
+} from '@/commons/constants/ai.constant'
+import { APP_TIME_ZONE } from '@/commons/constants/app.constant'
+import { ExpenseField } from '@/commons/constants/expense-extraction.constant'
+import { DateHelper } from '@/commons/helpers/date.helper'
+import { ExpenseExtractionFailedException } from '@/commons/exceptions/expense-extraction/expense-extraction-failed.exception'
+import { AiConfig, GeminiConfig, GroqConfig } from '@/settings/settings.model'
+import { AiExtractorProviderStrategy } from '@/providers/ai/ai-extractor-provider.strategy'
+import { AiInputPart, GenerateJsonResponse } from '@/providers/ai/dto/ai-extractor.dto'
+import { AiRequestLogDBRepository } from '@/db/models/ai-request-log/aiRequestLogDB.repository'
+import { PersonDBRepository } from '@/db/models/person/personDB.repository'
+import { PaymentMethodDBRepository } from '@/db/models/payment-method/paymentMethodDB.repository'
+import { CreditCardDBRepository } from '@/db/models/credit-card/creditCardDB.repository'
+import { CategoryDBRepository } from '@/db/models/category/categoryDB.repository'
+
+import { buildExtractionCatalog } from './expense-extraction.catalog'
+import { resolveExpense } from './expense-extraction.resolver'
+import { parseCorrection } from './correction-parser'
+import { generateExpenseExtractionPrompt } from './prompts/expense-extraction.prompt'
+import { expenseExtractionJsonSchema, expenseExtractionSchema } from './validations/expense-extraction.validation'
+import {
+  ExpenseExtractionInput,
+  ExpenseExtractionResult,
+  ExtractionCatalog,
+  ResolvedExpenseFields,
+} from './dto/expense-extraction.types'
+
+interface ModelCandidate {
+  provider: AiProvider
+  model: string
+  dailyLimit: number
+}
+
+type ExtractionOutput = z.infer<typeof expenseExtractionSchema>
+
+type ParsedOutput = { success: true; data: ExtractionOutput } | { success: false; error: string }
+
+@Injectable()
+export class ExpenseExtractionService {
+  private readonly logger = new Logger(ExpenseExtractionService.name)
+
+  constructor(
+    private readonly configService: ConfigService,
+    private readonly aiExtractorProviderStrategy: AiExtractorProviderStrategy,
+    private readonly aiRequestLogDBRepository: AiRequestLogDBRepository,
+    private readonly personDBRepository: PersonDBRepository,
+    private readonly paymentMethodDBRepository: PaymentMethodDBRepository,
+    private readonly creditCardDBRepository: CreditCardDBRepository,
+    private readonly categoryDBRepository: CategoryDBRepository,
+  ) {}
+
+  async loadCatalog(): Promise<ExtractionCatalog> {
+    const [people, paymentMethods, creditCards, categories] = await Promise.all([
+      this.personDBRepository.findActive(),
+      this.paymentMethodDBRepository.findActive(),
+      this.creditCardDBRepository.findAll(),
+      this.categoryDBRepository.findAll(),
+    ])
+
+    return buildExtractionCatalog({ people, paymentMethods, creditCards, categories })
+  }
+
+  // Corrections the bot understands without calling the AI; null means "ask the AI"
+  async parseLocalCorrection(
+    text: string,
+    pendingField: ExpenseField | null,
+  ): Promise<Partial<ResolvedExpenseFields> | null> {
+    const catalog = await this.loadCatalog()
+    return parseCorrection(text, pendingField, catalog, DateHelper.todayIn(APP_TIME_ZONE))
+  }
+
+  async extract(input: ExpenseExtractionInput): Promise<ExpenseExtractionResult> {
+    const catalog = await this.loadCatalog()
+    const today = DateHelper.todayIn(APP_TIME_ZONE)
+    const instructions = generateExpenseExtractionPrompt({ today, catalogText: catalog.promptText, draft: input.draft })
+    const parts = this.buildParts(input)
+    const hasImages = parts.some((part) => part.type === AiInputPartType.IMAGE)
+
+    for (const candidate of this.buildRoute(hasImages)) {
+      if (await this.isOverQuota(candidate)) {
+        this.logger.warn(`[extract] ${candidate.provider}/${candidate.model} skipped: daily quota almost spent`)
+        continue
+      }
+
+      const output = await this.tryCandidate(candidate, instructions, parts, input.expenseFileId)
+
+      if (output) {
+        return {
+          expenses: output.expenses.map((expense) => resolveExpense(expense, catalog, today)),
+          provider: candidate.provider,
+          model: candidate.model,
+        }
+      }
+    }
+
+    throw new ExpenseExtractionFailedException({ expenseFileId: input.expenseFileId })
+  }
+
+  // Text: Flash-Lite, then Groq. Images: Flash-Lite, then Flash (Groq is text-only).
+  private buildRoute(hasImages: boolean): ModelCandidate[] {
+    const gemini = this.configService.getOrThrow<GeminiConfig>('gemini')
+    const groq = this.configService.getOrThrow<GroqConfig>('groq')
+
+    const geminiLite = { provider: AiProvider.GEMINI, model: gemini.modelLite, dailyLimit: gemini.dailyLimitLite }
+
+    return hasImages
+      ? [geminiLite, { provider: AiProvider.GEMINI, model: gemini.model, dailyLimit: gemini.dailyLimit }]
+      : [geminiLite, { provider: AiProvider.GROQ, model: groq.model, dailyLimit: groq.dailyLimit }]
+  }
+
+  private async isOverQuota({ provider, model, dailyLimit }: ModelCandidate): Promise<boolean> {
+    const since = DateHelper.startOfDayIn(AI_QUOTA_TIME_ZONES[provider])
+    const used = await this.aiRequestLogDBRepository.countSince(provider, model, since)
+    return used >= Math.floor(dailyLimit * AI_QUOTA_USAGE_THRESHOLD)
+  }
+
+  private async tryCandidate(
+    candidate: ModelCandidate,
+    instructions: string,
+    parts: AiInputPart[],
+    expenseFileId?: string,
+  ): Promise<ExtractionOutput | null> {
+    const provider = this.aiExtractorProviderStrategy.getProvider(candidate.provider)
+    const { timeoutMs } = this.configService.getOrThrow<AiConfig>('ai')
+    let attemptParts = parts
+
+    for (let attempt = 1; attempt <= AI_MAX_STRUCTURE_ATTEMPTS; attempt++) {
+      const startedAt = Date.now()
+      let response: GenerateJsonResponse
+
+      try {
+        response = await provider.generateJson({
+          model: candidate.model,
+          instructions,
+          parts: attemptParts,
+          jsonSchema: expenseExtractionJsonSchema,
+          timeoutMs,
+        })
+      } catch (error) {
+        this.logger.warn(`[tryCandidate] ${candidate.provider}/${candidate.model} failed: ${(error as Error).message}`)
+        await this.logRequest(candidate, expenseFileId, Date.now() - startedAt, AiErrorCode.PROVIDER_ERROR)
+        return null
+      }
+
+      const parsed = this.parseOutput(response.text)
+      await this.logRequest(
+        candidate,
+        expenseFileId,
+        Date.now() - startedAt,
+        parsed.success ? undefined : AiErrorCode.INVALID_OUTPUT,
+        response,
+      )
+
+      if (parsed.success) return parsed.data
+
+      // Same idea as mms-ai buildRetryMessage: show the model its output and the validation error
+      attemptParts = [
+        ...parts,
+        {
+          type: AiInputPartType.TEXT,
+          text: `Your previous response did not match the schema.\nResponse:\n${response.text}\nErrors:\n${parsed.error}\nRespond again with only valid JSON.`,
+        },
+      ]
+    }
+
+    return null
+  }
+
+  private parseOutput(text: string): ParsedOutput {
+    let json: unknown
+
+    try {
+      json = JSON.parse(text.replace(/^```(?:json)?\s*|\s*```$/g, ''))
+    } catch (_error) {
+      return { success: false, error: 'Response is not valid JSON' }
+    }
+
+    const result = expenseExtractionSchema.safeParse(json)
+    return result.success
+      ? { success: true, data: result.data }
+      : { success: false, error: z.prettifyError(result.error) }
+  }
+
+  private buildParts({ text, images, draft }: ExpenseExtractionInput): AiInputPart[] {
+    const parts: AiInputPart[] = (images ?? []).map((image) => ({
+      type: AiInputPartType.IMAGE,
+      mimeType: image.mimeType,
+      data: image.data,
+    }))
+
+    const message = text?.trim() || (draft ? '' : 'Extract the expenses from the image(s).')
+    if (message) parts.push({ type: AiInputPartType.TEXT, text: message })
+
+    return parts
+  }
+
+  private async logRequest(
+    { provider, model }: ModelCandidate,
+    expenseFileId: string | undefined,
+    latencyMs: number,
+    errorCode?: AiErrorCode,
+    response?: GenerateJsonResponse,
+  ) {
+    try {
+      await this.aiRequestLogDBRepository.create({
+        provider,
+        model,
+        operation: AiOperation.EXTRACT,
+        expenseFileId: expenseFileId ?? null,
+        success: !errorCode,
+        errorCode: errorCode ?? null,
+        inputTokens: response?.inputTokens ?? null,
+        outputTokens: response?.outputTokens ?? null,
+        latencyMs,
+      })
+    } catch (error) {
+      // Losing a usage row must not lose the user's expense
+      this.logger.error(`[logRequest] could not save AI request log: ${(error as Error).message}`)
+    }
+  }
+}

@@ -25,5 +25,6 @@ pnpm dev           # http://localhost:5560/v1/health · Swagger at /docs
 | `pnpm db:generate` | Generate the Prisma client |
 | `pnpm db:migrate:dev` | Create a migration against local SQLite |
 | `pnpm db:migrate:diff` | Print SQL to apply on Turso |
+| `pnpm telegram:setup [url]` | Register the Telegram webhook and command menu |
 
 See [CLAUDE.md](CLAUDE.md) for conventions and the Turso migration flow.

@@ -1,4 +1,4 @@
 {
   "extends": "./tsconfig.json",
-  "exclude": ["node_modules", "dist", "prisma", "test", "prisma.config.ts", "vitest.*.*ts", "**/*.test.ts", "**/*integration-test.ts", "**/*mock.ts"]
+  "exclude": ["node_modules", "dist", "prisma", "test", "scripts", "prisma.config.ts", "vitest.*.*ts", "**/*.test.ts", "**/*integration-test.ts", "**/*mock.ts"]
 }

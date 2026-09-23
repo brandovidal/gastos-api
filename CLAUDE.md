@@ -6,6 +6,7 @@ NestJS backend for expense intake from chat (Telegram first, WhatsApp later) wit
 
 - Everything in code is in **English**: tables, fields, enum values, exception codes, logs and comments. Only the bot's chat replies to the user are in Spanish.
 - Never `git commit` or `push` unless explicitly asked.
+- New dependencies: let pnpm pick a version allowed by `minimumReleaseAge` (use a range like `^2.0.0`); never add `minimumReleaseAgeExclude`. Packages with install scripts go in `allowBuilds` in `pnpm-workspace.yaml`.
 - Node 22 (`.node-version`), pnpm, NestJS 11 (`nestjs-zod` does not support Nest 12 yet), Prisma 7, Zod 4.
 - Personal, single-user app: prefer the simplest thing (no Redis, queues or multi-tenant).
 
@@ -19,6 +20,7 @@ pnpm test               # unit (watch)
 pnpm test:ci            # unit (single run)
 pnpm test:integration   # against local SQLite (.env.test)
 pnpm db:generate        # Prisma client -> src/generated/prisma (git-ignored)
+pnpm telegram:setup     # register webhook + command menu (needs TELEGRAM_* and PUBLIC_URL in .env.dev)
 ```
 
 ## Structure
@@ -66,6 +68,23 @@ modules/<feature>/
 - `ExpenseFile` is every expense received from a chat (text, image or audio). Its open row (`draft` or `awaiting_confirmation`) is the conversation state of that chat; there is no session table. `@@unique([channel, chatId, messageId, itemIndex])` makes webhook retries idempotent (`DuplicateExpenseFileException`).
 - `AiRequestLog` stores one row per AI call to count usage against the free daily quota.
 - Repositories never leak Prisma errors: map them with `isPrismaError` to `AppException`s.
+
+## AI extraction
+
+- `providers/ai/`: `AiExtractorProviderStrategy` → `GeminiExtractorService` (primary, images) and `GroqExtractorService` (text-only fallback). Providers return raw JSON text; `modules/expense-extraction` validates it.
+- Route: text → Gemini Flash-Lite → Groq; image → Gemini Flash-Lite → Gemini Flash. A model is skipped at 90 % of its daily free quota (counted from `AiRequestLog`).
+- The AI picks catalog values by short refs (`p1`, `pm2`, `cc1`, `cat3`); `expense-extraction.resolver.ts` maps them to ids and computes `missingFields`. Never send database ids or secrets to the AI.
+- Simple corrections go through `correction-parser.ts` first; the AI is only called when it returns `null`.
+- Tests never call real APIs: mock `@google/genai` / `openai` with `vi.mock`.
+
+## Conversation and Telegram
+
+- `modules/conversation`: channel-agnostic. `ConversationService.handle(ChannelMessage)` returns `BotReply[]` (+ a `notice` for pressed buttons). Channels only map their updates in and render replies out; user-facing texts (Spanish) live in `conversation.messages.ts`.
+- One `ExpenseFile` per expense; one question at a time (`pendingField`); the latest open file is the one text corrections apply to; open files expire after 30 minutes.
+- A message is a correction only if it answers the pending question or **starts with a correction keyword** (`monto`, `persona`, `cuota`, `tarjeta`, …; see `correction-parser.ts`). Anything else is a new expense. ✏️ Corregir sends the next message to the AI with the draft.
+- Button data: `<action>:<expenseFileId>[:<fieldCode>:<value>]` (`bot-action.codec.ts`), always ≤ 64 bytes (Telegram limit).
+- `ExpenseSaverService` creates the record of the destination table and marks the file as saved in one transaction (`ExpenseDBRepository.saveFromExpenseFile`). Credit cards: day ≤ closing day → that month, otherwise the next one.
+- `modules/telegram`: the webhook (`POST /v1/telegram/webhook`) checks the secret header, answers 200 at once and processes the update in a per-chat in-memory queue (`KeyedQueue`). Chats outside `TELEGRAM_ALLOWED_CHAT_IDS` get a 200 and are ignored.
 
 ## Database (Turso)
 
