@@ -6,6 +6,7 @@ import {
   BotCommand,
   CARD_DAYS_FIELD_PREFIX,
   ChannelMessageType,
+  DEBT_PAYMENT_ACTIONS,
   FREE_CORRECTION_FIELD,
   DRAFTS_LIMIT,
   MAX_AUDIO_SECONDS,
@@ -13,6 +14,7 @@ import {
   RECENT_EXPENSES_LIMIT,
 } from '@/commons/constants/conversation.constant'
 import { PaymentMethodType } from '@/commons/constants/catalog.constant'
+import { DebtDirection } from '@/commons/constants/debt.constant'
 import { ExpenseDestination, SubscriptionPeriod } from '@/commons/constants/expense.constant'
 import {
   EXPENSE_DRAFT_EXPIRATION_MINUTES,
@@ -22,7 +24,7 @@ import {
   OPEN_EXPENSE_DRAFT_STATUSES,
   REVIEW_EXPENSE_DRAFT_STATUSES,
 } from '@/commons/constants/expense-draft.constant'
-import { ExpenseField } from '@/commons/constants/expense-extraction.constant'
+import { CatalogKind, ExpenseField } from '@/commons/constants/expense-extraction.constant'
 import { DateHelper } from '@/commons/helpers/date.helper'
 import { DuplicateExpenseDraftException } from '@/commons/exceptions/expense-draft/duplicate-expense-draft.exception'
 import { StoredFileExpiredException } from '@/commons/exceptions/stored-file/stored-file-expired.exception'
@@ -32,7 +34,8 @@ import { ExpenseDBRepository } from '@/db/models/expense/expenseDB.repository'
 import { PaymentMethodDBRepository } from '@/db/models/payment-method/paymentMethodDB.repository'
 import { ExpenseExtractionService } from '@/modules/expense-extraction/expense-extraction.service'
 import { completeExpense } from '@/modules/expense-extraction/expense-extraction.resolver'
-import { findCatalogEntryById } from '@/modules/expense-extraction/expense-extraction.catalog'
+import { findCatalogEntryById, matchCatalogEntry } from '@/modules/expense-extraction/expense-extraction.catalog'
+import { DebtsService } from '@/modules/debts/debts.service'
 import { StoredFilesService } from '@/modules/stored-files/stored-files.service'
 import {
   ExtractionCatalog,
@@ -41,6 +44,16 @@ import {
   MediaFile,
 } from '@/modules/expense-extraction/dto/expense-extraction.types'
 
+import { parseDebtPayment } from './debt-payment.parser'
+import {
+  buildInstallmentPickerReply,
+  buildPaymentProposalReply,
+  buildPaymentSavedReply,
+  DEBT_TEXTS,
+  formatCollectMessage,
+  formatDebtSummary,
+  formatPersonDebts,
+} from './debt.messages'
 import { ExpenseSaverService } from './expense-saver.service'
 import { MediaDownloaderRegistry } from './media-downloader.registry'
 import { toExpenseFields, toExpenseDraftUpdate } from './expense-draft.mapper'
@@ -92,6 +105,7 @@ export class ConversationService {
     private readonly expenseSaverService: ExpenseSaverService,
     private readonly mediaDownloaderRegistry: MediaDownloaderRegistry,
     private readonly storedFilesService: StoredFilesService,
+    private readonly debtsService: DebtsService,
   ) {}
 
   async handle(message: ChannelMessage): Promise<ConversationResult> {
@@ -139,7 +153,49 @@ export class ConversationService {
       }
     }
 
+    // "dany me pagó 150": a payment towards what that person owes, read without the AI (P17)
+    const payment = await this.proposeDebtPayment(text)
+    if (payment) return [payment]
+
     return this.registerNewExpenses(message, text)
+  }
+
+  // Only when the person has something open in that direction; otherwise the text is a new expense
+  private async proposeDebtPayment(text: string): Promise<BotReply | null> {
+    const intent = parseDebtPayment(text, await this.expenseExtractionService.loadCatalog())
+    if (!intent) return null
+
+    const proposal = await this.debtsService.proposePayment(intent.personId, intent.direction, intent.amount)
+    return proposal ? buildPaymentProposalReply(proposal) : null
+  }
+
+  // ✅ Confirmar · ✏️ Elegir cuota · ❌ Cancelar of a debt payment; the batch id travels as draftId
+  private async handleDebtPaymentAction({
+    name,
+    draftId: batchId,
+    value,
+  }: BotActionPayload): Promise<ConversationResult> {
+    const expired = { replies: [], notice: DEBT_TEXTS.paymentExpired }
+
+    switch (name) {
+      case BotAction.PAY_CONFIRM: {
+        const updated = await this.debtsService.confirmPayment(batchId)
+        return updated ? { replies: [buildPaymentSavedReply(updated)], notice: TEXTS.saved } : expired
+      }
+      case BotAction.PAY_LIST: {
+        const proposal = await this.debtsService.findProposal(batchId)
+        if (!proposal) return expired
+        const open = await this.debtsService.findOpen(proposal.personId, proposal.direction)
+        return { replies: [buildInstallmentPickerReply(batchId, open)] }
+      }
+      case BotAction.PAY_PICK: {
+        const proposal = value ? await this.debtsService.pickInstallment(batchId, value) : null
+        return proposal ? { replies: [buildPaymentProposalReply(proposal, true)] } : expired
+      }
+      default:
+        await this.debtsService.cancelPayment(batchId)
+        return { replies: [{ text: DEBT_TEXTS.paymentCancelled, edit: true }] }
+    }
   }
 
   private async registerNewExpenses(message: ChannelMessage, text: string): Promise<BotReply[]> {
@@ -335,6 +391,8 @@ export class ConversationService {
 
   private async handleAction(message: ChannelMessage): Promise<ConversationResult> {
     const action = message.action as BotActionPayload
+    if (DEBT_PAYMENT_ACTIONS.includes(action.name)) return this.handleDebtPaymentAction(action)
+
     const expenseDraft = await this.expenseDraftDBRepository.findById(action.draftId)
     const status = expenseDraft?.status as ExpenseDraftStatus | undefined
 
@@ -502,9 +560,36 @@ export class ConversationService {
         ])
         return [{ text: formatMonthlyTotals(totals, catalog, `${MONTH_NAMES[month - 1]} ${year}`) }]
       }
+      case BotCommand.DEBTS:
+        return [{ text: await this.debtsCommand(this.commandArgs(message)) }]
+      case BotCommand.COLLECT:
+        return [{ text: await this.collectCommand(this.commandArgs(message)) }]
       default:
         return [{ text: TEXTS.help }]
     }
+  }
+
+  // "/deudas dany" -> "dany" (channels keep the full text of commands)
+  private commandArgs(message: ChannelMessage): string {
+    return (message.text ?? '').trim().split(/\s+/).slice(1).join(' ')
+  }
+
+  // /deudas: everyone; /deudas dany: that person, installment by installment
+  private async debtsCommand(args: string): Promise<string> {
+    if (!args) return formatDebtSummary(await this.debtsService.summary())
+
+    const person = matchCatalogEntry(await this.expenseExtractionService.loadCatalog(), CatalogKind.PERSON, args)
+    if (!person) return DEBT_TEXTS.unknownPerson(args)
+    return formatPersonDebts(person.name, await this.debtsService.findOpen(person.id))
+  }
+
+  // /cobrar dany: what Danery owes, as a message to forward
+  private async collectCommand(args: string): Promise<string> {
+    if (!args) return DEBT_TEXTS.collectUsage
+
+    const person = matchCatalogEntry(await this.expenseExtractionService.loadCatalog(), CatalogKind.PERSON, args)
+    if (!person) return DEBT_TEXTS.unknownPerson(args)
+    return formatCollectMessage(person.name, await this.debtsService.findOpen(person.id, DebtDirection.OWED_TO_ME))
   }
 
   // The same receipt already saved (same operation number, e.g. typed first and then sent as a screenshot)

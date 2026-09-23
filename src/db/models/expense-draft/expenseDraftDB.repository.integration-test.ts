@@ -60,15 +60,23 @@ describe('ExpenseDraftDBRepository (integration)', () => {
     expect(open?.confidence).toEqual({ amount: 0.9 })
 
     const person = await prisma.person.create({ data: { name: 'Integration Person' } })
-    await prisma.accountReceivable.create({
-      data: { description: 'Loan', amount: 20, personId: person.id, draftId: expenseDraft.id },
+    await prisma.debt.create({
+      data: {
+        direction: 'owed_to_me',
+        description: 'Loan',
+        amount: 20,
+        personId: person.id,
+        draftId: expenseDraft.id,
+        paymentMonth: 9,
+        paymentYear: 2026,
+      },
     })
 
     const linked = await prisma.expenseDraft.findUniqueOrThrow({
       where: { id: expenseDraft.id },
-      include: { accountReceivable: true },
+      include: { debt: true },
     })
-    expect(linked.accountReceivable?.amount).toBe(20)
+    expect(linked.debt?.amount).toBe(20)
   })
 
   it('should move open expense drafts not updated since the given date to Borrador', async () => {

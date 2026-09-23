@@ -75,7 +75,8 @@ export function mapTelegramUpdate({
       chatId: String(message.chat.id),
       messageId: String(message.message_id),
       type: isCommand ? ChannelMessageType.COMMAND : ChannelMessageType.TEXT,
-      ...(isCommand ? { command: parseCommand(text) } : { text }),
+      // commands keep their text too: "/deudas dany" carries an argument
+      ...(isCommand ? { command: parseCommand(text), text } : { text }),
     },
   }
 }

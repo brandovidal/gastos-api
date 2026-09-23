@@ -8,12 +8,12 @@ import { ExpenseNotFoundException } from '@/commons/exceptions/expense/expense-n
 import { toCatalogError } from '../catalog-error.helper'
 
 // The expense tables kogane-app edits (P7). Each one has its own columns; the module validates them with Zod.
+// Loans and debts have their own module (`/v1/debts`, P17).
 export enum ExpenseResource {
   DAILY = 'daily-expenses',
   FIXED_COST = 'fixed-costs',
   SUBSCRIPTION = 'subscriptions',
   CREDIT_CARD = 'credit-card-expenses',
-  RECEIVABLE = 'receivables',
   RECURRING = 'recurring-expenses',
 }
 
@@ -31,7 +31,6 @@ const PERIOD_FILTER: Record<ExpenseResource, 'payment' | 'spentAt' | 'none'> = {
   [ExpenseResource.FIXED_COST]: 'payment',
   [ExpenseResource.SUBSCRIPTION]: 'payment',
   [ExpenseResource.CREDIT_CARD]: 'payment',
-  [ExpenseResource.RECEIVABLE]: 'none',
   [ExpenseResource.RECURRING]: 'none',
 }
 
@@ -49,7 +48,7 @@ export class ExpenseRecordDBRepository {
   async findMany(resource: ExpenseResource, { month, year, personId, paymentMethodId }: ExpenseRecordFilter) {
     const where: Record<string, unknown> = {}
     if (personId) where.personId = personId
-    if (paymentMethodId && resource !== ExpenseResource.RECEIVABLE) where.paymentMethodId = paymentMethodId
+    if (paymentMethodId) where.paymentMethodId = paymentMethodId
 
     if (month && year) {
       if (PERIOD_FILTER[resource] === 'payment') Object.assign(where, { paymentMonth: month, paymentYear: year })
@@ -105,7 +104,6 @@ export class ExpenseRecordDBRepository {
       [ExpenseResource.FIXED_COST]: this.prisma.fixedCost,
       [ExpenseResource.SUBSCRIPTION]: this.prisma.subscription,
       [ExpenseResource.CREDIT_CARD]: this.prisma.creditCardExpense,
-      [ExpenseResource.RECEIVABLE]: this.prisma.accountReceivable,
       [ExpenseResource.RECURRING]: this.prisma.recurringExpense,
     }
     return delegates[resource] as Delegate

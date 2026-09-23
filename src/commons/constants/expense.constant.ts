@@ -8,9 +8,13 @@ export enum ExpenseDestination {
   FIXED_COST = 'fixed_cost',
   SUBSCRIPTION = 'subscription',
   CREDIT_CARD = 'credit_card',
-  RECEIVABLE = 'receivable',
+  RECEIVABLE = 'receivable', // someone owes the user: saved in exp_debts as owed_to_me (P17)
+  PAYABLE = 'payable', // the user owes someone: exp_debts as i_owe
   DISCARD = 'discard',
 }
+
+// Debts are not spending: totals and "por persona" leave them out (P17)
+export const DEBT_DESTINATIONS: string[] = [ExpenseDestination.RECEIVABLE, ExpenseDestination.PAYABLE]
 
 export enum ExpenseType {
   ESSENTIAL = 'essential',
@@ -56,12 +60,6 @@ export const CREDIT_CARD_EXPENSE_STATUSES = [
   PaymentStatus.PAID,
   PaymentStatus.SKIPPED,
 ] as const
-
-export enum ReceivableStatus {
-  PENDING = 'pending',
-  PARTIAL = 'partial',
-  PAID = 'paid',
-}
 
 export enum SubscriptionPeriod {
   BIWEEKLY = 'biweekly',

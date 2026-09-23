@@ -39,7 +39,7 @@ export class MessagesService {
     if (!text) throw new UnsupportedMessageException()
 
     const message: ChannelMessage = text.startsWith('/')
-      ? { ...base, type: ChannelMessageType.COMMAND, command: parseCommand(text) }
+      ? { ...base, type: ChannelMessageType.COMMAND, command: parseCommand(text), text }
       : { ...base, type: ChannelMessageType.TEXT, text }
     return this.conversationService.handle(message)
   }

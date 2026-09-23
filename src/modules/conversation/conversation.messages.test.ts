@@ -82,6 +82,7 @@ describe('conversation messages', () => {
       'Plataforma',
       'Tarjeta',
       'Me deben',
+      'Le debo',
       '❌ Descartar',
     ])
   })
@@ -117,7 +118,7 @@ describe('conversation messages', () => {
     expect(text).toContain('<b>Resumen de setiembre 2026</b>')
     expect(text).toContain('• Costo fijo: S/ 100.00')
     expect(text).toContain('• Tarjeta: US$ 10.00')
-    expect(text).toContain('• Me deben (pendiente): S/ 50.00')
+    expect(text).toContain('• Me deben (saldo pendiente): S/ 50.00')
     expect(text).toContain('• Brando: S/ 100.00 + US$ 10.00')
     expect(text).not.toContain('• Danery')
   })

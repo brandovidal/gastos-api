@@ -33,7 +33,7 @@ model Person {
   fixedCosts         FixedCost[]
   subscriptions      Subscription[]
   creditCardExpenses CreditCardExpense[]
-  accountsReceivable AccountReceivable[]
+  debts              Debt[]
   recurringExpenses  RecurringExpense[]
 
   @@map("cat_people")
@@ -61,6 +61,7 @@ model PaymentMethod {
   subscriptions      Subscription[]
   creditCardExpenses CreditCardExpense[]
   recurringExpenses  RecurringExpense[]
+  debtPayments       DebtPayment[]
 
   @@map("cat_payment_methods")
 }
@@ -180,7 +181,7 @@ model ExpenseDraft {
   fixedCost         FixedCost?
   subscription      Subscription?
   creditCardExpense CreditCardExpense?
-  accountReceivable AccountReceivable?
+  debt              Debt?
   aiRequests        AiRequestLog[]
 
   @@unique([channel, chatId, messageId, itemIndex])
@@ -347,29 +348,57 @@ model CreditCardExpense {
   @@map("exp_credit_card_expenses")
 }
 
-// Money someone owes you: no expenseType, category or payment period
-model AccountReceivable {
+// Loans and debts with people (P17, D38, D60): one row per installment, like the Cuentas board in Notion.
+// owed_to_me = someone owes the user; i_owe = the user owes someone. paidAmount is the sum of confirmed payments and
+// status follows it (DebtStatus); "late" and "not started" are computed from the payment month, never stored.
+model Debt {
   id           String        @id @default(cuid())
+  direction    String // DebtDirection
   description  String
-  amount       Float
+  amount       Float // of this installment
   currency     String        @default("PEN")
   exchangeRate Float?
   amountInPen  Float?
-  status       String        @default("pending") // ReceivableStatus
-  personId     String // debtor
-  person       Person        @relation(fields: [personId], references: [id])
+  installment  String? // "n/m"
+  paymentMonth Int
+  paymentYear  Int
   dueDate      DateTime?
+  status       String        @default("pending") // DebtStatus
+  paidAmount   Float         @default(0)
   paidDate     DateTime?
-  paidAmount   Float?
+  personId     String
+  person       Person        @relation(fields: [personId], references: [id])
   notes        String?
-  draftId      String?       @unique
+  draftId      String?       @unique // the chat draft it came from (first installment only)
   draft        ExpenseDraft? @relation(fields: [draftId], references: [id])
   createdAt    DateTime      @default(now())
   updatedAt    DateTime      @updatedAt
 
-  @@index([status])
-  @@index([personId])
-  @@map("exp_accounts_receivable")
+  payments DebtPayment[]
+
+  @@index([personId, direction, status])
+  @@index([paymentYear, paymentMonth])
+  @@map("exp_debts")
+}
+
+// A payment towards one installment. From the bot it starts as a proposal (confirmedAt null) grouped by batchId,
+// until ✅ Confirmar; only confirmed payments count in Debt.paidAmount.
+model DebtPayment {
+  id              String         @id @default(cuid())
+  debtId          String
+  debt            Debt           @relation(fields: [debtId], references: [id], onDelete: Cascade)
+  amount          Float
+  paidAt          DateTime
+  paymentMethodId String?
+  paymentMethod   PaymentMethod? @relation(fields: [paymentMethodId], references: [id])
+  batchId         String? // one message of the bot can pay several installments
+  confirmedAt     DateTime?
+  notes           String?
+  createdAt       DateTime       @default(now())
+
+  @@index([debtId])
+  @@index([batchId])
+  @@map("exp_debt_payments")
 }
 
 model RecurringExpense {

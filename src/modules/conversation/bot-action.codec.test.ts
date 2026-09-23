@@ -26,7 +26,23 @@ describe('bot action codec', () => {
     expect(decodeBotAction(data)).toEqual(payload)
   })
 
-  it.each(['', 'unknown:id', 'ok', `set:${FILE_ID}`, `set:${FILE_ID}:zz:value`])('should reject "%s"', (data) => {
-    expect(decodeBotAction(data)).toBeNull()
+  it('should round-trip the installment picked for a debt payment under 64 bytes', () => {
+    const payload = { name: BotAction.PAY_PICK, draftId: 'a1b2c3d4e5f6a7b8c9d0', value: 'ckdebt0000000000000000001' }
+    const data = encodeBotAction(payload)
+
+    expect(data).toBe('payp:a1b2c3d4e5f6a7b8c9d0:ckdebt0000000000000000001')
+    expect(Buffer.byteLength(data)).toBeLessThanOrEqual(64)
+    expect(decodeBotAction(data)).toEqual(payload)
+    expect(decodeBotAction('pay:a1b2c3d4e5f6a7b8c9d0')).toEqual({
+      name: BotAction.PAY_CONFIRM,
+      draftId: 'a1b2c3d4e5f6a7b8c9d0',
+    })
   })
+
+  it.each(['', 'unknown:id', 'ok', `set:${FILE_ID}`, `set:${FILE_ID}:zz:value`, 'payp:batch'])(
+    'should reject "%s"',
+    (data) => {
+      expect(decodeBotAction(data)).toBeNull()
+    },
+  )
 })

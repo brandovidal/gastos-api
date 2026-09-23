@@ -40,7 +40,7 @@ export class StoredFileDBRepository {
           { fixedCost: { isNot: null } },
           { subscription: { isNot: null } },
           { creditCardExpense: { isNot: null } },
-          { accountReceivable: { isNot: null } },
+          { debt: { isNot: null } },
         ],
       },
     })

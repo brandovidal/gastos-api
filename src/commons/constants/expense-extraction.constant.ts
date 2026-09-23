@@ -32,6 +32,7 @@ export const REQUIRED_FIELDS_BY_DESTINATION: Record<ExpenseDestination, ExpenseF
   [ExpenseDestination.SUBSCRIPTION]: [...BASE_REQUIRED_FIELDS, ExpenseField.PERIOD, ExpenseField.PAYMENT_METHOD],
   [ExpenseDestination.CREDIT_CARD]: [...BASE_REQUIRED_FIELDS, ExpenseField.PAYMENT_METHOD],
   [ExpenseDestination.RECEIVABLE]: BASE_REQUIRED_FIELDS,
+  [ExpenseDestination.PAYABLE]: BASE_REQUIRED_FIELDS,
   [ExpenseDestination.DISCARD]: [],
 }
 

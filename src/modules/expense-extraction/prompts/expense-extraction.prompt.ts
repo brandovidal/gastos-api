@@ -32,11 +32,14 @@ ${JSON.stringify(draft)}
   - fixed_cost: only rent, utilities (electricity, water, internet, phone plan), loans and fixed monthly installments.
   - subscription: recurring services (Netflix, Spotify, gym, apps); also set period.
   - credit_card: only when the message names a payment method of type credit_card.
-  - receivable: money the user lent or someone owes the user ("le presté", "me debe").
+  - receivable: money the user lent or someone owes the user ("le presté", "me debe"); personRef = who owes.
+  - payable: money the user borrowed or owes someone ("me prestó", "le debo"); personRef = who lent it.
   - discard: the item is explicitly not an expense.
   - null when unsure.
 - expenseType: essential for needs; guilty_pleasure for treats or when the user says "antojo", "con culpa". null when unclear.
 - installment: "current/total" (e.g. "cuota 2 de 6" -> "2/6"). period: biweekly, monthly, quarterly, semiannual or annual.
+  receivable/payable in installments ("en 3 cuotas"): installment "1/3" and amount = one installment (total / 3 when
+  only the total is given).
 - description: short concept or service name (e.g. "Netflix", "Almuerzo"), without amount, date or payment words.
 - merchant, operationNumber: only when visible (receipts). notes: other useful details.
 - confidence: a number from 0 to 1 for every non-null field, using the same keys as the output.

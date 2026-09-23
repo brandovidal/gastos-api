@@ -2,6 +2,8 @@ import { Logger } from '@nestjs/common'
 import { Test, TestingModule } from '@nestjs/testing'
 import { vi } from 'vitest'
 
+import { PaymentMethodType } from '@/commons/constants/catalog.constant'
+import { DebtDirection } from '@/commons/constants/debt.constant'
 import { ExpenseDestination, PaymentStatus, SubscriptionPeriod } from '@/commons/constants/expense.constant'
 import { ExpenseField } from '@/commons/constants/expense-extraction.constant'
 import { ExpenseNotSaveableException } from '@/commons/exceptions/conversation/expense-not-saveable.exception'
@@ -118,7 +120,7 @@ describe('ExpenseSaverService', () => {
     expect(savedInput().data).toMatchObject({ paymentMonth: 9, paymentYear: 2026 })
   })
 
-  it('should save subscriptions with their period and receivables without expense fields', async () => {
+  it('should save subscriptions with their period and debts without expense fields', async () => {
     await service.save(
       buildExpenseDraft({ destination: ExpenseDestination.SUBSCRIPTION, period: SubscriptionPeriod.MONTHLY }),
     )
@@ -128,14 +130,72 @@ describe('ExpenseSaverService', () => {
     mockExpenseDBRepository.saveFromExpenseDraft.mockResolvedValue({ id: 'expense-2' })
 
     await service.save(buildExpenseDraft({ destination: ExpenseDestination.RECEIVABLE, amount: 100, currency: 'USD' }))
-    expect(savedInput().data).toEqual({
-      description: 'Almuerzo',
-      amount: 100,
-      currency: 'USD',
-      exchangeRate: null,
-      amountInPen: null,
-      personId: 'person-danery',
-      notes: null,
+    expect(savedInput()).toEqual({
+      destination: ExpenseDestination.RECEIVABLE,
+      data: {
+        direction: DebtDirection.OWED_TO_ME,
+        description: 'Almuerzo',
+        amount: 100,
+        currency: 'USD',
+        exchangeRate: null,
+        amountInPen: null,
+        personId: 'person-danery',
+        notes: null,
+        installment: null,
+        paymentMonth: 9,
+        paymentYear: 2026,
+      },
+      nextInstallments: [],
+    })
+  })
+
+  // P17 (D60): one row per installment in exp_debts
+  describe('debts', () => {
+    const debtDraft = (overrides = {}) =>
+      buildExpenseDraft({ destination: ExpenseDestination.RECEIVABLE, amount: 400, ...overrides })
+
+    it('should create every installment of "1/3", one per month, across the year end', async () => {
+      await service.save(debtDraft({ installment: '1/3', spentAt: new Date('2026-11-15T00:00:00.000Z') }))
+
+      const { data, nextInstallments } = savedInput()
+      expect(data).toMatchObject({ installment: '1/3', paymentMonth: 11, paymentYear: 2026, amount: 400 })
+      expect(
+        nextInstallments.map(({ installment, paymentMonth, paymentYear }: Record<string, unknown>) => [
+          installment,
+          paymentMonth,
+          paymentYear,
+        ]),
+      ).toEqual([
+        ['2/3', 12, 2026],
+        ['3/3', 1, 2027],
+      ])
+    })
+
+    it('should create only the installment named when it is not the first one', async () => {
+      await service.save(debtDraft({ installment: '3/6' }))
+
+      expect(savedInput()).toMatchObject({ data: { installment: '3/6' }, nextInstallments: [] })
+    })
+
+    it('should save "le debo" as a debt of the user', async () => {
+      await service.save(debtDraft({ destination: ExpenseDestination.PAYABLE }))
+
+      expect(savedInput()).toMatchObject({
+        destination: ExpenseDestination.PAYABLE,
+        data: { direction: DebtDirection.I_OWE },
+      })
+    })
+
+    it('should start in the billing month of the card used to buy it', async () => {
+      mockPaymentMethodDBRepository.findById.mockResolvedValue({
+        id: 'card-io',
+        type: PaymentMethodType.CREDIT_CARD,
+        billingCloseDay: 10,
+      })
+
+      await service.save(debtDraft({ paymentMethodId: 'card-io', spentAt: new Date('2026-09-22T00:00:00.000Z') }))
+
+      expect(savedInput().data).toMatchObject({ paymentMonth: 10, paymentYear: 2026 })
     })
   })
 

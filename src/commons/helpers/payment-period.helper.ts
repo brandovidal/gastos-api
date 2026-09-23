@@ -9,7 +9,7 @@ const fromIsoDate = (isoDate: string) => ({
   day: Number(isoDate.slice(8, 10)),
 })
 
-// Fixed costs, subscriptions and receivables are paid in the month of the expense
+// Fixed costs, subscriptions and debts are paid in the month of the expense
 export function paymentPeriodOf(isoDate: string): PaymentPeriod {
   const { year, month } = fromIsoDate(isoDate)
   return { paymentMonth: month, paymentYear: year }
@@ -26,3 +26,13 @@ export function creditCardPaymentPeriod(isoDate: string, billingCloseDay: number
 
   return month === 12 ? { paymentMonth: 1, paymentYear: year + 1 } : { paymentMonth: month + 1, paymentYear: year }
 }
+
+// The period `months` later (installments of a debt: one row per month)
+export function addMonths({ paymentMonth, paymentYear }: PaymentPeriod, months: number): PaymentPeriod {
+  const index = paymentYear * 12 + (paymentMonth - 1) + months
+  return { paymentMonth: (index % 12) + 1, paymentYear: Math.floor(index / 12) }
+}
+
+// Negative when `a` comes before `b`
+export const comparePeriods = (a: PaymentPeriod, b: PaymentPeriod) =>
+  a.paymentYear * 12 + a.paymentMonth - (b.paymentYear * 12 + b.paymentMonth)

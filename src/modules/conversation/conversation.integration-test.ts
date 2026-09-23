@@ -135,7 +135,7 @@ describe('Conversation flows (integration)', () => {
         fixedCost: true,
         subscription: true,
         creditCardExpense: true,
-        accountReceivable: true,
+        debt: true,
       },
     })
   // STORAGE_ENV=test: files go to the local folder with the same layout as R2
@@ -228,7 +228,40 @@ describe('Conversation flows (integration)', () => {
     ;[summary] = await text('le presté 100 a dany')
     await press(summary, 'Guardar')
     const danery = await prisma.person.findUniqueOrThrow({ where: { name: 'Danery' } })
-    expect((await lastDraft()).accountReceivable?.personId).toBe(danery.id)
+    expect((await lastDraft()).debt).toMatchObject({ personId: danery.id, direction: 'owed_to_me', amount: 100 })
+  })
+
+  // P17: the payment is read without the AI and only counts after ✅ Confirmar
+  it('should lend to Danery, register her payment with "dany me pagó", confirm it and show it in /deudas', async () => {
+    const [summary] = await text('le presté 100 a dany')
+    await press(summary, 'Guardar')
+    const danery = await prisma.person.findUniqueOrThrow({ where: { name: 'Danery' } })
+    const paidByDanery = async () =>
+      (await prisma.debt.aggregate({ where: { personId: danery.id }, _sum: { paidAmount: true } }))._sum.paidAmount
+
+    const [proposal] = await text('dany me pagó 60')
+    expect(proposal.text).toContain('Abono de Danery')
+    expect(await paidByDanery()).toBe(0)
+
+    const [saved] = await press(proposal, 'Confirmar')
+    expect(saved.text).toContain('Abono guardado')
+    expect(await paidByDanery()).toBe(60)
+
+    const [debts] = await command(BotCommand.DEBTS)
+    expect(debts.text).toContain('• Danery: te debe')
+    tick()
+    const [detail] = (
+      await conversation.handle({
+        channel: ExpenseDraftChannel.TELEGRAM,
+        chatId,
+        messageId: String(++messageCount),
+        type: ChannelMessageType.COMMAND,
+        command: BotCommand.DEBTS,
+        text: '/deudas dany',
+      })
+    ).replies
+    expect(detail.text).toContain('<b>Danery</b>')
+    expect(detail.text).toContain('(abonado S/ 60.00)')
   })
 
   it('should apply a local correction without calling the AI', async () => {

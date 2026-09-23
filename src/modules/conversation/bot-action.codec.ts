@@ -6,11 +6,14 @@ const ACTIONS = Object.values(BotAction) as string[]
 const FIELD_BY_CODE = Object.fromEntries(Object.entries(FIELD_CODES).map(([field, code]) => [code, field]))
 
 // "<action>:<draftId>[:<fieldCode>:<value>]". A cuid is 25 chars, so it stays under Telegram's 64 bytes.
+// Debt payments use the batch id as draftId and "payp:<batchId>:<debtId>" (20 + 25 chars).
 export function encodeBotAction({ name, draftId, field, value }: BotActionPayload): string {
   const parts: string[] = [name, draftId]
 
   if (field && value) {
     parts.push(FIELD_CODES[field as keyof typeof FIELD_CODES] ?? field, value)
+  } else if (name === BotAction.PAY_PICK && value) {
+    parts.push(value)
   }
 
   return parts.join(CALLBACK_SEPARATOR)
@@ -31,6 +34,11 @@ export function decodeBotAction(data: string): BotActionPayload | null {
     return fieldCode && value
       ? { name, draftId, field: fieldCode, value }
       : { name: BotAction.NEW_PAYMENT_METHOD, draftId }
+  }
+
+  // "payp:<batchId>:<debtId>": the installment picked for a debt payment
+  if (name === BotAction.PAY_PICK) {
+    return fieldCode ? { name, draftId, value: fieldCode } : null
   }
 
   return { name: name as BotAction, draftId }

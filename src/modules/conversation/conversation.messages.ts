@@ -7,7 +7,13 @@ import {
 } from '@/commons/constants/conversation.constant'
 import { PaymentMethodType } from '@/commons/constants/catalog.constant'
 import { ExpenseDraftStatus } from '@/commons/constants/expense-draft.constant'
-import { Currency, ExpenseDestination, ExpenseType, SubscriptionPeriod } from '@/commons/constants/expense.constant'
+import {
+  Currency,
+  DEBT_DESTINATIONS,
+  ExpenseDestination,
+  ExpenseType,
+  SubscriptionPeriod,
+} from '@/commons/constants/expense.constant'
 import { CatalogKind, ExpenseField } from '@/commons/constants/expense-extraction.constant'
 import { ExpenseDraftDbDto } from '@/db/models/expense-draft/expenseDraftDB.dto'
 import { MonthlyTotalDbDto } from '@/db/models/expense/expenseDB.dto'
@@ -24,6 +30,7 @@ export const DESTINATION_LABELS: Record<ExpenseDestination, string> = {
   [ExpenseDestination.SUBSCRIPTION]: 'Plataforma',
   [ExpenseDestination.CREDIT_CARD]: 'Tarjeta',
   [ExpenseDestination.RECEIVABLE]: 'Me deben',
+  [ExpenseDestination.PAYABLE]: 'Le debo',
   [ExpenseDestination.DISCARD]: 'No es gasto',
 }
 
@@ -248,21 +255,22 @@ export function formatMonthlyTotals(
 
   const destinations = [...new Set(totals.map((row) => row.destination))]
   const people = [
-    ...new Set(totals.filter((row) => row.destination !== ExpenseDestination.RECEIVABLE).map((row) => row.personId)),
+    ...new Set(totals.filter((row) => !DEBT_DESTINATIONS.includes(row.destination)).map((row) => row.personId)),
   ]
 
   return [
     `<b>Resumen de ${monthLabel}</b>`,
     ...destinations.map((destination) => {
-      const label =
-        destination === ExpenseDestination.RECEIVABLE ? 'Me deben (pendiente)' : DESTINATION_LABELS[destination]
+      const label = DEBT_DESTINATIONS.includes(destination)
+        ? `${DESTINATION_LABELS[destination]} (saldo pendiente)`
+        : DESTINATION_LABELS[destination]
       return `• ${label}: ${sum(totals.filter((row) => row.destination === destination))}`
     }),
     '',
     '<b>Por persona</b>',
     ...people.map(
       (personId) =>
-        `• ${nameOf(catalog, personId)}: ${sum(totals.filter((row) => row.personId === personId && row.destination !== ExpenseDestination.RECEIVABLE))}`,
+        `• ${nameOf(catalog, personId)}: ${sum(totals.filter((row) => row.personId === personId && !DEBT_DESTINATIONS.includes(row.destination)))}`,
     ),
   ].join('\n')
 }

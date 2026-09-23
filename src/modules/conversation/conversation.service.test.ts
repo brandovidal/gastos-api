@@ -8,6 +8,7 @@ import {
   ChannelMessageType,
   FREE_CORRECTION_FIELD,
 } from '@/commons/constants/conversation.constant'
+import { DebtDirection, DebtTiming } from '@/commons/constants/debt.constant'
 import { ExpenseDestination } from '@/commons/constants/expense.constant'
 import { PaymentMethodType } from '@/commons/constants/catalog.constant'
 import { ExpenseDraftChannel, ExpenseDraftStatus } from '@/commons/constants/expense-draft.constant'
@@ -20,6 +21,7 @@ import { ExpenseDBRepository } from '@/db/models/expense/expenseDB.repository'
 import { PaymentMethodDBRepository } from '@/db/models/payment-method/paymentMethodDB.repository'
 import { ExpenseExtractionService } from '@/modules/expense-extraction/expense-extraction.service'
 import { StoredFilesService } from '@/modules/stored-files/stored-files.service'
+import { DebtsService } from '@/modules/debts/debts.service'
 
 import { ConversationService } from './conversation.service'
 import { MediaDownloaderRegistry } from './media-downloader.registry'
@@ -51,6 +53,15 @@ const mockExpenseDraftDB = {
 const mockExpenseDB = { findMonthlyTotals: vi.fn() }
 const mockMediaDownloader = { download: vi.fn() }
 const mockStoredFiles = { download: vi.fn(), storeTemporary: vi.fn() }
+const mockDebts = {
+  proposePayment: vi.fn(),
+  findProposal: vi.fn(),
+  pickInstallment: vi.fn(),
+  confirmPayment: vi.fn(),
+  cancelPayment: vi.fn(),
+  findOpen: vi.fn(),
+  summary: vi.fn(),
+}
 const mockExtraction = {
   extract: vi.fn(),
   parseLocalCorrection: vi.fn(),
@@ -91,6 +102,7 @@ describe('ConversationService', () => {
         { provide: ExpenseSaverService, useValue: mockSaver },
         { provide: MediaDownloaderRegistry, useValue: mockMediaDownloader },
         { provide: StoredFilesService, useValue: mockStoredFiles },
+        { provide: DebtsService, useValue: mockDebts },
       ],
     }).compile()
 
@@ -107,6 +119,7 @@ describe('ConversationService', () => {
     )
     mockExpenseDraftDB.update.mockImplementation(async (id, data) => buildExpenseDraft({ id, ...data }))
     mockStoredFiles.storeTemporary.mockResolvedValue({ id: 'stored-1' })
+    mockDebts.proposePayment.mockResolvedValue(null)
     vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => {})
   })
 
@@ -835,6 +848,170 @@ describe('ConversationService', () => {
 
       expect(mockPaymentMethodDB.create).not.toHaveBeenCalled()
       expect(result.replies[0].text).toContain('no lo agregué')
+    })
+  })
+  // P17: loans and debts in the chat
+  describe('debts', () => {
+    const danery = { id: 'person-danery', name: 'Danery' }
+    const debtView = (overrides = {}) => ({
+      id: 'debt-aug',
+      direction: DebtDirection.OWED_TO_ME,
+      description: 'Iphone 16',
+      amount: 400,
+      currency: 'PEN',
+      installment: '2/3',
+      paymentMonth: 8,
+      paymentYear: 2026,
+      paidAmount: 0,
+      balance: 400,
+      timing: DebtTiming.LATE,
+      personId: danery.id,
+      person: danery,
+      ...overrides,
+    })
+    const proposal = (overrides = {}) => ({
+      batchId: 'batch1',
+      personId: danery.id,
+      direction: DebtDirection.OWED_TO_ME,
+      items: [{ debt: debtView(), amount: 150 }],
+      excess: 0,
+      ...overrides,
+    })
+    const payAction = (name: BotAction, value?: string): ChannelMessage => ({
+      channel: ExpenseDraftChannel.TELEGRAM,
+      chatId: CHAT_ID,
+      messageId: 'callback:9',
+      type: ChannelMessageType.ACTION,
+      action: { name, draftId: 'batch1', value },
+    })
+    const commandWith = (name: BotCommand, text: string): ChannelMessage => ({ ...command(name), text })
+
+    it('should propose a payment for "dany me pagó 150" without calling the AI', async () => {
+      mockDebts.proposePayment.mockResolvedValue(proposal())
+
+      const { replies } = await service.handle(textMessage('dany me pagó 150'))
+
+      expect(mockDebts.proposePayment).toHaveBeenCalledWith(danery.id, DebtDirection.OWED_TO_ME, 150)
+      expect(replies[0].text).toContain('Abono de Danery')
+      expect(replies[0].text).toContain('Iphone 16 2/3 (ago 2026): S/ 150.00 → saldo S/ 250.00')
+      expect(replies[0].buttons?.flat().map((button) => button.data)).toEqual([
+        'pay:batch1',
+        'payl:batch1',
+        'payx:batch1',
+      ])
+      expect(mockExtraction.extract).not.toHaveBeenCalled()
+      expect(mockExpenseDraftDB.create).not.toHaveBeenCalled()
+    })
+
+    it('should warn about what exceeds every installment', async () => {
+      mockDebts.proposePayment.mockResolvedValue(proposal({ items: [{ debt: debtView(), amount: 400 }], excess: 50 }))
+
+      const { replies } = await service.handle(textMessage('dany me pagó 450'))
+
+      expect(replies[0].text).toContain('pagada ✅')
+      expect(replies[0].text).toContain('Sobran S/ 50.00')
+    })
+
+    it('should read the text as a new expense when the person owes nothing', async () => {
+      mockDebts.proposePayment.mockResolvedValue(null)
+      mockExtraction.extract.mockResolvedValue({ expenses: [buildResolvedExpense()] })
+
+      await service.handle(textMessage('le pagué 50 a dany'))
+
+      expect(mockDebts.proposePayment).toHaveBeenCalledWith(danery.id, DebtDirection.I_OWE, 50)
+      expect(mockExtraction.extract).toHaveBeenCalled()
+    })
+
+    it('should save the payment with ✅ Confirmar and show the new balance', async () => {
+      mockDebts.confirmPayment.mockResolvedValue([debtView({ paidAmount: 150, balance: 250 })])
+
+      const result = await service.handle(payAction(BotAction.PAY_CONFIRM))
+
+      expect(mockDebts.confirmPayment).toHaveBeenCalledWith('batch1')
+      expect(result.notice).toBe('Guardado')
+      expect(result.replies[0]).toMatchObject({ edit: true })
+      expect(result.replies[0].text).toContain('Abono guardado')
+      expect(result.replies[0].text).toContain('saldo S/ 250.00')
+    })
+
+    it('should list the open installments with ✏️ Elegir cuota and move the payment to the one picked', async () => {
+      mockDebts.findProposal.mockResolvedValue(proposal())
+      mockDebts.findOpen.mockResolvedValue([
+        debtView(),
+        debtView({ id: 'debt-sep', installment: '3/3', paymentMonth: 9 }),
+      ])
+
+      const list = await service.handle(payAction(BotAction.PAY_LIST))
+
+      expect(mockDebts.findOpen).toHaveBeenCalledWith(danery.id, DebtDirection.OWED_TO_ME)
+      expect(list.replies[0].buttons?.flat().map((button) => button.data)).toEqual([
+        'payp:batch1:debt-aug',
+        'payp:batch1:debt-sep',
+        'payx:batch1',
+      ])
+
+      mockDebts.pickInstallment.mockResolvedValue(
+        proposal({ items: [{ debt: debtView({ id: 'debt-sep', installment: '3/3', paymentMonth: 9 }), amount: 150 }] }),
+      )
+      const picked = await service.handle(payAction(BotAction.PAY_PICK, 'debt-sep'))
+
+      expect(mockDebts.pickInstallment).toHaveBeenCalledWith('batch1', 'debt-sep')
+      expect(picked.replies[0].text).toContain('Iphone 16 3/3 (set 2026)')
+    })
+
+    it('should cancel a payment and ignore an expired one', async () => {
+      const cancelled = await service.handle(payAction(BotAction.PAY_CANCEL))
+      expect(mockDebts.cancelPayment).toHaveBeenCalledWith('batch1')
+      expect(cancelled.replies[0].text).toContain('Abono cancelado')
+
+      mockDebts.confirmPayment.mockResolvedValue(null)
+      const expired = await service.handle(payAction(BotAction.PAY_CONFIRM))
+      expect(expired).toEqual({ replies: [], notice: 'Este abono ya no está pendiente. Escríbelo de nuevo.' })
+      expect(mockExpenseDraftDB.findById).not.toHaveBeenCalled()
+    })
+
+    it('should total everyone with /deudas', async () => {
+      mockDebts.summary.mockResolvedValue([
+        { personId: danery.id, name: 'Danery', owedToMe: 800, iOwe: 50, net: 750, late: 400, dueThisMonth: 0 },
+      ])
+
+      const { replies } = await service.handle(command(BotCommand.DEBTS))
+
+      expect(replies[0].text).toContain('• Danery: te debe S/ 800.00 · le debes S/ 50.00 · ⚠️ S/ 400.00 vencido')
+      expect(replies[0].text).toContain('neto S/ 750.00')
+    })
+
+    it('should detail one person with /deudas dany', async () => {
+      mockDebts.findOpen.mockResolvedValue([debtView({ paidAmount: 100, balance: 300 })])
+
+      const { replies } = await service.handle(commandWith(BotCommand.DEBTS, '/deudas dany'))
+
+      expect(mockDebts.findOpen).toHaveBeenCalledWith(danery.id)
+      expect(replies[0].text).toContain('<b>Danery</b>')
+      expect(replies[0].text).toContain('• Iphone 16 2/3 · ago 2026 · S/ 300.00 (abonado S/ 100.00) ⚠️ vencida')
+    })
+
+    it('should write a message to forward with /cobrar dany', async () => {
+      mockDebts.findOpen.mockResolvedValue([
+        debtView(),
+        debtView({ id: 'debt-sep', installment: '3/3', paymentMonth: 9 }),
+      ])
+
+      const { replies } = await service.handle(commandWith(BotCommand.COLLECT, '/cobrar dany'))
+
+      expect(mockDebts.findOpen).toHaveBeenCalledWith(danery.id, DebtDirection.OWED_TO_ME)
+      expect(replies[0].text).toContain('Hola Danery 👋')
+      expect(replies[0].text).toContain('• Iphone 16 (cuota 3/3), set 2026: S/ 400.00')
+      expect(replies[0].text).toContain('<b>Total: S/ 800.00</b>')
+      expect(replies[0].buttons).toBeUndefined()
+    })
+
+    it('should ask who with /cobrar and say when the person is unknown', async () => {
+      expect((await service.handle(command(BotCommand.COLLECT))).replies[0].text).toContain('/cobrar dany')
+      expect((await service.handle(commandWith(BotCommand.DEBTS, '/deudas pedro'))).replies[0].text).toContain(
+        'No encontré a <b>pedro</b>',
+      )
+      expect(mockDebts.findOpen).not.toHaveBeenCalled()
     })
   })
 })

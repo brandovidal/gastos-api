@@ -37,7 +37,7 @@ export interface CategorySeed {
 // Every "Persona" option across the card, fixed cost and receivable boards. Brando is the owner (D19).
 export const PEOPLE: PersonSeed[] = [
   { name: 'Brando', aliases: ['yo', 'yuji'], isDefault: true },
-  { name: 'Danery' },
+  { name: 'Danery', aliases: ['dany'] },
   { name: 'Brenda' },
   { name: 'Bruce' },
   { name: 'Alexander' },

@@ -7,7 +7,6 @@ import {
   FIXED_COST_STATUSES,
   INSTALLMENT_REGEX,
   PaymentStatus,
-  ReceivableStatus,
   RecurringTargetType,
   SUBSCRIPTION_STATUSES,
   SubscriptionPeriod,
@@ -75,13 +74,6 @@ export const EXPENSE_SCHEMAS = {
     paymentMethodId: id,
     paymentStatus: statusOf(CREDIT_CARD_EXPENSE_STATUSES).optional(),
     processDate: date.nullable().optional(),
-  }),
-  [ExpenseResource.RECEIVABLE]: z.object({
-    ...money,
-    status: z.enum(ReceivableStatus).optional(),
-    dueDate: date.nullable().optional(),
-    paidDate: date.nullable().optional(),
-    paidAmount: z.number().min(0).nullable().optional(),
   }),
   [ExpenseResource.RECURRING]: z.object({
     ...money,

@@ -1,9 +1,22 @@
 import { Injectable, Logger } from '@nestjs/common'
 
 import { APP_TIME_ZONE } from '@/commons/constants/app.constant'
-import { Currency, ExpenseDestination, ExpenseType, PaymentStatus } from '@/commons/constants/expense.constant'
+import { PaymentMethodType } from '@/commons/constants/catalog.constant'
+import { DEBT_DIRECTION_BY_DESTINATION, DebtDirection } from '@/commons/constants/debt.constant'
+import {
+  Currency,
+  ExpenseDestination,
+  ExpenseType,
+  INSTALLMENT_REGEX,
+  PaymentStatus,
+} from '@/commons/constants/expense.constant'
 import { DateHelper } from '@/commons/helpers/date.helper'
-import { creditCardPaymentPeriod, paymentPeriodOf } from '@/commons/helpers/payment-period.helper'
+import {
+  addMonths,
+  creditCardPaymentPeriod,
+  PaymentPeriod,
+  paymentPeriodOf,
+} from '@/commons/helpers/payment-period.helper'
 import { ExpenseNotSaveableException } from '@/commons/exceptions/conversation/expense-not-saveable.exception'
 import { ExpenseDraftDbDto } from '@/db/models/expense-draft/expenseDraftDB.dto'
 import { ExpenseDBRepository } from '@/db/models/expense/expenseDB.repository'
@@ -130,10 +143,52 @@ export class ExpenseSaverService {
         }
       }
       case ExpenseDestination.RECEIVABLE:
-        return { destination, data: base }
+      case ExpenseDestination.PAYABLE: {
+        const direction = DEBT_DIRECTION_BY_DESTINATION[destination] as DebtDirection
+        return this.buildDebt(
+          expenseDraft,
+          destination,
+          { ...base, direction },
+          await this.debtPeriod(expenseDraft, spentAtIso),
+        )
+      }
       default:
         throw new ExpenseNotSaveableException({ draftId: expenseDraft.id, destination })
     }
+  }
+
+  // One row per installment (D60). "1/n" creates the n installments, one per month; "3/6" only that one (the
+  // others were registered before). The amount is always the installment's.
+  private buildDebt(
+    expenseDraft: ExpenseDraftDbDto,
+    destination: ExpenseDestination.RECEIVABLE | ExpenseDestination.PAYABLE,
+    base: { direction: DebtDirection; description: string; amount: number; personId: string } & Record<string, unknown>,
+    period: PaymentPeriod,
+  ): SaveExpenseDbDto {
+    const installment =
+      expenseDraft.installment && INSTALLMENT_REGEX.test(expenseDraft.installment) ? expenseDraft.installment : null
+    const [current, total] = installment ? installment.split('/').map(Number) : [0, 0]
+    const data = { ...base, installment, ...period }
+
+    const nextInstallments =
+      current === 1 && total > 1
+        ? Array.from({ length: total - 1 }, (_, index) => ({
+            ...data,
+            installment: `${index + 2}/${total}`,
+            ...addMonths(period, index + 1),
+          }))
+        : []
+
+    return { destination, data, nextInstallments }
+  }
+
+  // Something bought with a credit card for someone is paid back in the card's billing month (D22); otherwise now
+  private async debtPeriod(expenseDraft: ExpenseDraftDbDto, spentAtIso: string): Promise<PaymentPeriod> {
+    if (!expenseDraft.paymentMethodId) return paymentPeriodOf(spentAtIso)
+    const method = await this.paymentMethodDBRepository.findById(expenseDraft.paymentMethodId)
+    return method?.type === PaymentMethodType.CREDIT_CARD && method.billingCloseDay
+      ? creditCardPaymentPeriod(spentAtIso, method.billingCloseDay)
+      : paymentPeriodOf(spentAtIso)
   }
 
   private required<T>(expenseDraft: ExpenseDraftDbDto, value: T | null | undefined): T {

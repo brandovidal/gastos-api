@@ -29,6 +29,8 @@ const DESTINATION_WORDS: Record<string, ExpenseDestination> = {
   'me debe': ExpenseDestination.RECEIVABLE,
   prestamo: ExpenseDestination.RECEIVABLE,
   'por cobrar': ExpenseDestination.RECEIVABLE,
+  'le debo': ExpenseDestination.PAYABLE,
+  'por pagar': ExpenseDestination.PAYABLE,
 }
 
 const toNumber = (value: string) => Number(value.replace(',', '.'))

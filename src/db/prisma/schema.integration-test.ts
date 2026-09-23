@@ -3,11 +3,11 @@ import { ConfigService } from '@nestjs/config'
 import { PrismaService } from './prisma.service'
 
 import { PaymentMethodType } from '@/commons/constants/catalog.constant'
+import { DebtDirection, DebtStatus } from '@/commons/constants/debt.constant'
 import {
   ExpenseDestination,
   ExpenseType,
   PaymentStatus,
-  ReceivableStatus,
   SubscriptionPeriod,
 } from '@/commons/constants/expense.constant'
 import {
@@ -44,9 +44,12 @@ describe('Prisma schema (integration)', () => {
       'cat_categories',
       'cat_payment_methods',
       'cat_people',
+      // copied into exp_debts by the P17 migration; dropped by a later one (migrations stay backward compatible)
       'exp_accounts_receivable',
       'exp_credit_card_expenses',
       'exp_daily_expenses',
+      'exp_debt_payments',
+      'exp_debts',
       'exp_fixed_costs',
       'exp_recurring_expenses',
       'exp_subscriptions',
@@ -104,8 +107,15 @@ describe('Prisma schema (integration)', () => {
     const cardExpense = await prisma.creditCardExpense.create({
       data: { ...base, description: 'Laptop', paymentMethodId: card.id, installment: '2/6' },
     })
-    const receivable = await prisma.accountReceivable.create({
-      data: { description: 'Loan', amount: 100, personId: person.id },
+    const debt = await prisma.debt.create({
+      data: {
+        direction: DebtDirection.OWED_TO_ME,
+        description: 'Loan',
+        amount: 100,
+        personId: person.id,
+        paymentMonth: 9,
+        paymentYear: 2026,
+      },
     })
 
     expect(draft.status).toBe(ExpenseDraftStatus.SAVED)
@@ -115,7 +125,7 @@ describe('Prisma schema (integration)', () => {
     expect(fixedCost.paymentStatus).toBe(PaymentStatus.NOT_STARTED)
     expect(subscription.categoryId).toBeNull()
     expect(cardExpense.paymentStatus).toBe(PaymentStatus.PENDING)
-    expect(receivable.status).toBe(ReceivableStatus.PENDING)
+    expect(debt).toMatchObject({ status: DebtStatus.PENDING, paidAmount: 0, currency: 'PEN' })
 
     const savedCard = await prisma.paymentMethod.findUniqueOrThrow({
       where: { id: card.id },

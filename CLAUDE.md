@@ -74,6 +74,7 @@ modules/<feature>/
 - `ExpenseDraft` (`bot_expense_drafts`) is every expense received from a chat while the bot works on it. Its open row (`draft` or `awaiting_confirmation`) is the conversation state of that chat; there is no session table. `@@unique([channel, chatId, messageId, itemIndex])` makes webhook retries idempotent (`DuplicateExpenseDraftException`). Saving a draft creates the record of its destination table, linked by `draftId`.
 - `DailyExpense` (`exp_daily_expenses`) holds only confirmed day-to-day expenses ("gastos sin culpa").
 - Credit cards are `PaymentMethod` rows of type `credit_card` (with `code` and billing days); there is no card table. `showInBot` decides the quick replies. The payment method decides daily vs credit card (`applyPaymentMethodRule`).
+- Debts (P17, D60): `Debt` (`exp_debts`) is one row per installment with `direction` (`owed_to_me` · `i_owe`), `installment` n/m and payment month; `DebtPayment` (`exp_debt_payments`) holds the payments. `paidAmount`, `paidDate` and `status` (`pending · partial · prepaid · paid`) are recomputed in the same transaction as every payment change (`DebtDBRepository.recompute`, `debtStatusFor`); "late" and "upcoming" are computed from today (`debtTiming`). The bot saves `receivable` (me deben) and `payable` (le debo) drafts there; "1/n" creates the n installments. `exp_accounts_receivable` was copied by the migration and is dropped by a later one.
 - `AiRequestLog` stores one row per AI call to count usage against the free daily quota.
 - Repositories never leak Prisma errors: map them with `isPrismaError` to `AppException`s.
 
@@ -100,15 +101,17 @@ modules/<feature>/
 - Errors (P8): `TelegramClient` retries 429 (waits `retry_after`, up to 30 s), 5xx and network errors twice, with a 10 s timeout. A failed edit is sent as a new message (the work is already done). On shutdown the chat queues get 10 s to finish; on startup, drafts the AI never finished (still `draft`, no data, no question) become `failed` and the chat is told to use `/borrador`. The same happens when they expire after 30 minutes.
 - Borrador (D50, formerly Bandeja): `REVIEW_EXPENSE_DRAFT_STATUSES` = open + `pending_review` + `failed`. 📝 Borrador (`BotAction.LATER`) parks a draft as `pending_review`; open drafts older than 30 minutes move there too (`moveStaleOpenToReview`) instead of being discarded.
 - OCR probe (P21): `make ocr-probe [DIR=…]` runs tesseract.js (Spanish, `PSM.SPARSE_TEXT`: the default single-block mode skips big amounts) on screenshots, without AI; full text goes to the git-ignored `test/eval/ocr-report/`.
+- Debts in the chat (P17): "dany me pagó 150", "abono 150 dany" or "le pagué 50 a dany" are read by `debt-payment.parser.ts` (no AI; the name must be a whole person name or alias) and only when that person has something open in that direction. The payment covers the oldest installments first (`allocatePayment`) and is saved as unconfirmed `DebtPayment` rows grouped by `batchId` until ✅ Confirmar (`pay:<batchId>`; ✏️ Elegir cuota `payl`/`payp:<batchId>:<debtId>`; ❌ `payx`); proposals expire after 30 minutes. `/deudas [persona]` and `/cobrar <persona>` read the command text (channels pass it along with the command).
 - Observability: `/uso` shows today's AI calls per model against 90 % of its free quota; `GET /v1/health` includes the webhook state from `getWebhookInfo`.
 
 ## REST API for kogane-app (P7)
 
 - Every route uses `@ApiRest(tag)` (`commons/decorators/api-rest.decorator.ts`): Swagger tag, `x-api-key` and `ApiKeyGuard` (constant-time comparison).
 - `modules/catalogs`: people, payment-methods (deactivated, never deleted), categories, budget-groups (409 `CATALOG_ITEM_IN_USE` while used).
-- `modules/expenses`: `/v1/expenses/:resource` (`ExpenseResource`: daily-expenses, fixed-costs, subscriptions, credit-card-expenses, receivables, recurring-expenses) on `ExpenseRecordDBRepository`, validated per resource in `EXPENSE_SCHEMAS`; `POST /v1/expenses/extract` prefills "Nuevo gasto".
+- `modules/expenses`: `/v1/expenses/:resource` (`ExpenseResource`: daily-expenses, fixed-costs, subscriptions, credit-card-expenses, recurring-expenses) on `ExpenseRecordDBRepository`, validated per resource in `EXPENSE_SCHEMAS`; `POST /v1/expenses/extract` prefills "Nuevo gasto".
 - `modules/drafts`: Borrador (`tab=review|failed|discarded`), Nuevo gasto (`POST /v1/drafts` channel `web`, input `manual`), save through `ExpenseSaverService` like the bot, retry through `ConversationService.retryExtraction`. Web edits keep drafts in `pending_review` so they never reopen a chat.
 - `modules/messages`: web chat = channel `web` (`WEB_CHAT_ID`), multipart text/image/voice; uploads go through `StoredFilesService.storeTemporary` and the draft keeps its `fileId`.
+- `modules/debts` (P17, D60): `/v1/debts` CRUD (`installments: n` creates one row per month), `GET /v1/debts/summary` (per person: owed to me · I owe · net · late · due this month) and `POST|DELETE /v1/debts/:id/payments` (422 above the balance).
 - `modules/summary`: month totals, salary/limit (`bud_monthly_budgets`), surplus and budget groups.
 
 ## Deployment (P10)

@@ -1,6 +1,7 @@
 import { ConfigService } from '@nestjs/config'
 
 import { PrismaService } from '@/db/prisma/prisma.service'
+import { DebtDirection } from '@/commons/constants/debt.constant'
 import { ExpenseDestination, PaymentStatus } from '@/commons/constants/expense.constant'
 import {
   ExpenseDraftChannel,
@@ -58,7 +59,7 @@ describe('ExpenseDBRepository (integration)', () => {
     expect(saved.confirmedAt).not.toBeNull()
     expect(saved.fixedCost?.id).toBe(id)
 
-    // Receivables are not scoped by month: other tests' pending loans also show up, so look at this person only
+    // Debts are not scoped by month: other tests' open debts also show up, so look at this person only
     const totals = (await repository.findMonthlyTotals(9, 2031)).filter((row) => row.personId === person.id)
     expect(totals).toEqual([
       { destination: ExpenseDestination.FIXED_COST, currency: 'PEN', personId: person.id, total: 1000, count: 1 },
@@ -71,11 +72,31 @@ describe('ExpenseDBRepository (integration)', () => {
     await expect(
       repository.saveFromExpenseDraft('missing-expense-file', {
         destination: ExpenseDestination.RECEIVABLE,
-        data: { description: 'Rollback loan', amount: 10, personId: person.id },
+        data: {
+          direction: DebtDirection.OWED_TO_ME,
+          description: 'Rollback loan',
+          amount: 10,
+          personId: person.id,
+          installment: '1/2',
+          paymentMonth: 9,
+          paymentYear: 2031,
+        },
+        nextInstallments: [
+          {
+            direction: DebtDirection.OWED_TO_ME,
+            description: 'Rollback loan',
+            amount: 10,
+            personId: person.id,
+            installment: '2/2',
+            paymentMonth: 10,
+            paymentYear: 2031,
+          },
+        ],
       }),
     ).rejects.toThrow()
 
-    await expect(prisma.accountReceivable.count({ where: { description: 'Rollback loan' } })).resolves.toBe(0)
+    // Neither installment stays behind
+    await expect(prisma.debt.count({ where: { description: 'Rollback loan' } })).resolves.toBe(0)
   })
 
   it('should save a day-to-day expense in exp_daily_expenses and count it in the month', async () => {

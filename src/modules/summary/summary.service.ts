@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common'
 
-import { Currency, ExpenseDestination } from '@/commons/constants/expense.constant'
+import { Currency, DEBT_DESTINATIONS } from '@/commons/constants/expense.constant'
 import { BudgetGroupDBRepository } from '@/db/models/budget-group/budgetGroupDB.repository'
 import { ExpenseDBRepository } from '@/db/models/expense/expenseDB.repository'
 import { MonthlyBudgetDBRepository } from '@/db/models/monthly-budget/monthlyBudgetDB.repository'
@@ -25,7 +25,7 @@ export class SummaryService {
     ])
 
     const spentPen = totals
-      .filter((row) => row.currency === Currency.PEN && row.destination !== ExpenseDestination.RECEIVABLE)
+      .filter((row) => row.currency === Currency.PEN && !DEBT_DESTINATIONS.includes(row.destination))
       .reduce((sum, row) => sum + row.total, 0)
     const salary = budget?.salary ?? null
     const limit = salary != null ? (salary * (budget?.limitPercent ?? 100)) / 100 : null

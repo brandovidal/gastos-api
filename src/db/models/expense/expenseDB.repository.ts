@@ -1,7 +1,8 @@
 import { Injectable } from '@nestjs/common'
 
 import { PrismaService } from '@/db/prisma/prisma.service'
-import { ExpenseDestination, ReceivableStatus } from '@/commons/constants/expense.constant'
+import { DebtDirection, OPEN_DEBT_STATUSES } from '@/commons/constants/debt.constant'
+import { ExpenseDestination } from '@/commons/constants/expense.constant'
 import { ExpenseDraftStatus } from '@/commons/constants/expense-draft.constant'
 
 import { MonthlyTotalDbDto, SaveExpenseDbDto } from './expenseDB.dto'
@@ -26,7 +27,7 @@ export class ExpenseDBRepository {
     })
   }
 
-  // Totals of the month per destination, currency and person (receivables: everything not paid yet)
+  // Totals of the month per destination, currency and person (debts: the balance of everything not paid yet)
   async findMonthlyTotals(month: number, year: number): Promise<MonthlyTotalDbDto[]> {
     const where = { paymentMonth: month, paymentYear: year }
     const monthStart = new Date(Date.UTC(year, month - 1, 1))
@@ -34,7 +35,7 @@ export class ExpenseDBRepository {
     const by: ['currency', 'personId'] = ['currency', 'personId']
     const aggregate = { _sum: { amount: true }, _count: { _all: true } } as const
 
-    const [daily, fixedCosts, subscriptions, creditCards, receivables] = await Promise.all([
+    const [daily, fixedCosts, subscriptions, creditCards, debts] = await Promise.all([
       this.prisma.dailyExpense.groupBy({
         by,
         where: { spentAt: { gte: monthStart, lt: nextMonthStart } },
@@ -43,7 +44,12 @@ export class ExpenseDBRepository {
       this.prisma.fixedCost.groupBy({ by, where, ...aggregate }),
       this.prisma.subscription.groupBy({ by, where, ...aggregate }),
       this.prisma.creditCardExpense.groupBy({ by, where, ...aggregate }),
-      this.prisma.accountReceivable.groupBy({ by, where: { status: { not: ReceivableStatus.PAID } }, ...aggregate }),
+      this.prisma.debt.groupBy({
+        by: ['currency', 'personId', 'direction'],
+        where: { status: { in: OPEN_DEBT_STATUSES } },
+        _sum: { amount: true, paidAmount: true },
+        _count: { _all: true },
+      }),
     ])
 
     type Row = {
@@ -66,11 +72,18 @@ export class ExpenseDBRepository {
       ...toTotals(ExpenseDestination.FIXED_COST, fixedCosts),
       ...toTotals(ExpenseDestination.SUBSCRIPTION, subscriptions),
       ...toTotals(ExpenseDestination.CREDIT_CARD, creditCards),
-      ...toTotals(ExpenseDestination.RECEIVABLE, receivables),
+      ...debts.map((row) => ({
+        destination: row.direction === DebtDirection.I_OWE ? ExpenseDestination.PAYABLE : ExpenseDestination.RECEIVABLE,
+        currency: row.currency,
+        personId: row.personId,
+        total: (row._sum.amount ?? 0) - (row._sum.paidAmount ?? 0),
+        count: row._count._all,
+      })),
     ]
   }
 
-  private createRecord(tx: Transaction, draftId: string, { destination, data }: SaveExpenseDbDto) {
+  private async createRecord(tx: Transaction, draftId: string, input: SaveExpenseDbDto) {
+    const { destination, data } = input
     switch (destination) {
       case ExpenseDestination.DAILY:
         return tx.dailyExpense.create({ data: { ...data, draftId } })
@@ -81,7 +94,13 @@ export class ExpenseDBRepository {
       case ExpenseDestination.CREDIT_CARD:
         return tx.creditCardExpense.create({ data: { ...data, draftId } })
       case ExpenseDestination.RECEIVABLE:
-        return tx.accountReceivable.create({ data: { ...data, draftId } })
+      case ExpenseDestination.PAYABLE: {
+        const debt = await tx.debt.create({ data: { ...data, draftId } })
+        if ('nextInstallments' in input && input.nextInstallments.length) {
+          await tx.debt.createMany({ data: input.nextInstallments })
+        }
+        return debt
+      }
     }
   }
 }

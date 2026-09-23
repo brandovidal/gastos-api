@@ -10,6 +10,7 @@ import { ExpensesModule } from '@/modules/expenses/expenses.module'
 import { DraftsModule } from '@/modules/drafts/drafts.module'
 import { MessagesModule } from '@/modules/messages/messages.module'
 import { SummaryModule } from '@/modules/summary/summary.module'
+import { DebtsModule } from '@/modules/debts/debts.module'
 
 @Module({
   imports: [
@@ -24,6 +25,7 @@ import { SummaryModule } from '@/modules/summary/summary.module'
     DraftsModule,
     MessagesModule,
     SummaryModule,
+    DebtsModule,
   ],
   controllers: [],
   providers: [],

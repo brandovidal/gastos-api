@@ -15,7 +15,19 @@ export enum BotAction {
   SET_FIELD = 'set',
   RESUME = 're', // /borrador: reopen a pending or failed expense
   NEW_PAYMENT_METHOD = 'new', // create the payment method the user typed
+  // Debt payments (P17): "<action>:<batchId>[:<debtId>]"; the batch groups the payments of one message
+  PAY_CONFIRM = 'pay',
+  PAY_LIST = 'payl', // ✏️ Elegir cuota
+  PAY_PICK = 'payp',
+  PAY_CANCEL = 'payx',
 }
+
+export const DEBT_PAYMENT_ACTIONS: string[] = [
+  BotAction.PAY_CONFIRM,
+  BotAction.PAY_LIST,
+  BotAction.PAY_PICK,
+  BotAction.PAY_CANCEL,
+]
 
 export enum BotCommand {
   START = 'start',
@@ -25,6 +37,8 @@ export enum BotCommand {
   SUMMARY = 'resumen',
   DRAFTS = 'borrador',
   USAGE = 'uso',
+  DEBTS = 'deudas', // /deudas [persona]
+  COLLECT = 'cobrar', // /cobrar <persona>
 }
 
 // Descriptions shown in the Telegram command menu (Spanish: user-facing)
@@ -36,6 +50,8 @@ export const BOT_COMMAND_DESCRIPTIONS: Record<BotCommand, string> = {
   [BotCommand.SUMMARY]: 'Total del mes',
   [BotCommand.DRAFTS]: 'Gastos pendientes de revisar',
   [BotCommand.USAGE]: 'Uso de la AI hoy',
+  [BotCommand.DEBTS]: 'Me deben y le debo, por persona',
+  [BotCommand.COLLECT]: 'Mensaje para cobrarle a una persona',
 }
 
 export const CALLBACK_SEPARATOR = ':'
@@ -62,6 +78,9 @@ export const MAX_QUICK_REPLIES = 10
 export const QUICK_REPLIES_PER_ROW = 2
 export const RECENT_EXPENSES_LIMIT = 5
 export const DRAFTS_LIMIT = 5
+
+// ✏️ Elegir cuota shows at most this many installments
+export const MAX_INSTALLMENT_BUTTONS = 10
 
 // Images sent as files (documents) above this size are rejected before downloading (photos are already compressed)
 export const MAX_IMAGE_BYTES = 10 * 1024 * 1024

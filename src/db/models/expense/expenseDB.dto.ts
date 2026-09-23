@@ -14,8 +14,10 @@ export type SaveExpenseDbDto =
       data: Omit<Prisma.CreditCardExpenseUncheckedCreateInput, 'draftId'>
     }
   | {
-      destination: ExpenseDestination.RECEIVABLE
-      data: Omit<Prisma.AccountReceivableUncheckedCreateInput, 'draftId'>
+      // P17: the first installment is linked to the draft; with "1/n" the following ones are created too (D60)
+      destination: ExpenseDestination.RECEIVABLE | ExpenseDestination.PAYABLE
+      data: Omit<Prisma.DebtUncheckedCreateInput, 'draftId'>
+      nextInstallments: Omit<Prisma.DebtUncheckedCreateInput, 'draftId'>[]
     }
 
 export interface MonthlyTotalDbDto {
