@@ -1,3 +1,5 @@
+import { AiProvider } from '@/commons/constants/ai.constant'
+
 export interface AppConfig {
   env: string
   port: number
@@ -14,6 +16,7 @@ export interface DatabaseConfig {
 
 export interface AiConfig {
   timeoutMs: number
+  textPrimary: AiProvider
 }
 
 export interface GeminiConfig {

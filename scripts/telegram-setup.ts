@@ -1,6 +1,6 @@
 // Registers the webhook and the command menu of the Telegram bot (plan, section 3, steps 6 and 7).
-// Usage: pnpm telegram:setup [https://public-url]   (defaults to PUBLIC_URL from .env.local)
-//        --optional-webhook: without a public URL only the command menu is updated (used by pnpm deps)
+// Usage: make telegram URL=https://public-url   (defaults to PUBLIC_URL from the env file)
+//        --optional-webhook: without a public URL only the command menu is updated (used by make deps)
 import { BOT_COMMAND_DESCRIPTIONS } from '../src/commons/constants/conversation.constant'
 import { TELEGRAM_ALLOWED_UPDATES, TELEGRAM_API_URL } from '../src/commons/constants/telegram.constant'
 
@@ -38,7 +38,7 @@ async function main() {
       drop_pending_updates: true,
     })
   } else {
-    console.log('No https PUBLIC_URL: webhook left as it is (run pnpm telegram:setup <url> once the tunnel is up)')
+    console.log('No https PUBLIC_URL: webhook left as it is (run make telegram URL=<url> once the tunnel is up)')
   }
 
   await call(token, 'setMyCommands', {

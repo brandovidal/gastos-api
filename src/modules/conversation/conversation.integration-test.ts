@@ -23,7 +23,7 @@ import { ConversationService } from './conversation.service'
 import { MediaDownloaderRegistry } from './media-downloader.registry'
 import { BotReply } from './dto/conversation.types'
 
-// Real AI answers recorded by `pnpm eval:extraction:record` (P9): the flows run the real prompt output through the
+// Real AI answers recorded by `make eval-ai CONFIRM=yes RECORD=1` (P9): the flows run the real prompt output through the
 // resolver, the state machine and SQLite without calling the AI
 const fixtures = JSON.parse(readFileSync(join(process.cwd(), 'test/fixtures/ai-responses.json'), 'utf8')) as {
   recordedAt: string

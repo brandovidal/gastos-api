@@ -1,9 +1,9 @@
-// Golden set evaluation of the AI extraction (P9). Calls the REAL AI: run it by hand, never in CI.
-//   pnpm eval:extraction            score every case of test/golden/extraction.golden.json
-//   pnpm eval:extraction:record     also save the raw AI answers to test/fixtures/ai-responses.json,
-//                                   which the conversation integration tests replay
-//   pnpm eval:extraction:replay     score the recorded answers again without calling the AI (prompt-free checks
-//                                   of the resolver and catalog)
+// Golden set evaluation of the AI extraction (P9). The real-AI run burns the free daily quota: only when asked,
+// never in CI.
+//   make eval-replay                      score the recorded answers again without calling the AI (free)
+//   make eval-ai CONFIRM=yes              score every case of test/golden/extraction.golden.json with the REAL AI
+//   make eval-ai CONFIRM=yes RECORD=1     also save the raw answers to test/fixtures/ai-responses.json, which the
+//                                         conversation integration tests replay
 // The report is printed and saved to test/eval/last-report.txt (git-ignored).
 // Images (P4): put real screenshots in test/golden/images/ (git-ignored: they carry personal data) with a cases.json
 // like [{ "file": "yape-1.jpg", "message": "persona dany", "expected": [{ "amount": 18, "paymentMethod": "Yape" }] }].
@@ -154,7 +154,9 @@ describe('AI extraction golden set', () => {
           : undefined
         const result = await extraction.extract({ text: message || undefined, images })
         expenses = result.expenses
-        models.set(`${result.provider}/${result.model}`, (models.get(`${result.provider}/${result.model}`) ?? 0) + 1)
+        // Replayed answers keep the model that recorded them, not the current route
+        const label = REPLAY ? 'replay (recorded answers)' : `${result.provider}/${result.model}`
+        models.set(label, (models.get(label) ?? 0) + 1)
       } catch (error) {
         failures.push(`"${file ?? message}": extraction failed (${(error as Error).message})`)
       }

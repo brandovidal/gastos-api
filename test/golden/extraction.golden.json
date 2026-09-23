@@ -1,5 +1,5 @@
 {
-  "description": "Golden set for the AI extraction (P9). Only the fields listed in each expected expense are compared. Names are catalog names from the seed; spentAt is today, yesterday or YYYY-MM-DD. Run: pnpm eval:extraction (calls the real AI, ~1 call per case).",
+  "description": "Golden set for the AI extraction (P9). Only the fields listed in each expected expense are compared. Names are catalog names from the seed; spentAt is today, yesterday or YYYY-MM-DD. Run: make eval-replay (recorded answers, free) or make eval-ai CONFIRM=yes (real AI, ~1 call per case; only when asked).",
   "cases": [
     { "message": "almuerzo 25 soles con yape", "expected": [{ "destination": "daily", "amount": 25, "currency": "PEN", "paymentMethod": "Yape", "person": "Brando", "category": "Comida", "spentAt": "today" }] },
     { "message": "uber 18.50 ayer", "expected": [{ "destination": "daily", "amount": 18.5, "paymentMethod": null, "category": "Transporte", "spentAt": "yesterday" }] },

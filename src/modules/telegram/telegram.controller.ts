@@ -21,7 +21,7 @@ export class TelegramController {
   @ApiOperation({
     summary: 'Telegram webhook (called by Telegram only)',
     description:
-      'Registered with `pnpm telegram:setup`. Answers 200 at once and processes the update in the chat queue. ' +
+      'Registered with `make telegram URL=<public-url>`. Answers 200 at once and processes the update in the chat queue. ' +
       'Chats outside TELEGRAM_ALLOWED_CHAT_IDS also get 200 and are ignored.',
   })
   @ApiHeader({ name: TELEGRAM_SECRET_HEADER, required: true, description: 'TELEGRAM_WEBHOOK_SECRET' })

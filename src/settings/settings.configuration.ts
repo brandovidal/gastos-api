@@ -10,6 +10,7 @@ import {
   DEFAULT_GROQ_MODEL,
   DEFAULT_GROQ_TRANSCRIBE_DAILY_LIMIT,
   DEFAULT_GROQ_TRANSCRIBE_MODEL,
+  AiProvider,
 } from '@/commons/constants/ai.constant'
 
 export default () => ({
@@ -26,6 +27,8 @@ export default () => ({
   },
   ai: {
     timeoutMs: Number(process.env.AI_TIMEOUT_MS ?? DEFAULT_AI_TIMEOUT_MS),
+    // Primary model for text (D37): groq (Qwen, then Flash-Lite; default) or gemini. Images always use Gemini
+    textPrimary: process.env.AI_TEXT_PRIMARY === AiProvider.GEMINI ? AiProvider.GEMINI : AiProvider.GROQ,
   },
   gemini: {
     apiKey: process.env.GEMINI_API_KEY,

@@ -165,16 +165,19 @@ export class ExpenseExtractionService {
     return { provider: AiProvider.GROQ, model: groq.transcribeModel, dailyLimit: groq.transcribeDailyLimit }
   }
 
-  // Text: Flash-Lite, then Groq. Images: Flash-Lite, then Flash (Groq is text-only).
+  // Text: Flash-Lite and Qwen (on Groq), in the order of AI_TEXT_PRIMARY. Images: Flash-Lite, then Flash
+  // (Groq is text-only).
   private buildRoute(hasImages: boolean): ModelCandidate[] {
     const gemini = this.configService.getOrThrow<GeminiConfig>('gemini')
     const groq = this.configService.getOrThrow<GroqConfig>('groq')
+    const { textPrimary } = this.configService.getOrThrow<AiConfig>('ai')
 
     const geminiLite = { provider: AiProvider.GEMINI, model: gemini.modelLite, dailyLimit: gemini.dailyLimitLite }
+    const qwen = { provider: AiProvider.GROQ, model: groq.model, dailyLimit: groq.dailyLimit }
 
-    return hasImages
-      ? [geminiLite, { provider: AiProvider.GEMINI, model: gemini.model, dailyLimit: gemini.dailyLimit }]
-      : [geminiLite, { provider: AiProvider.GROQ, model: groq.model, dailyLimit: groq.dailyLimit }]
+    if (hasImages)
+      return [geminiLite, { provider: AiProvider.GEMINI, model: gemini.model, dailyLimit: gemini.dailyLimit }]
+    return textPrimary === AiProvider.GROQ ? [qwen, geminiLite] : [geminiLite, qwen]
   }
 
   private async isOverQuota({ provider, model, dailyLimit }: ModelCandidate): Promise<boolean> {

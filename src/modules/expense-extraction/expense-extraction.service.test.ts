@@ -119,6 +119,23 @@ describe('ExpenseExtractionService', () => {
     )
   })
 
+  it('should try Qwen first when AI_TEXT_PRIMARY is groq, and keep Gemini for images', async () => {
+    config.ai = { timeoutMs: 1000, textPrimary: AiProvider.GROQ } as typeof config.ai
+    mockGroq.generateJson.mockResolvedValue({ text: validOutput })
+
+    try {
+      await expect(service.extract({ text: 'almuerzo 25' })).resolves.toMatchObject({ provider: AiProvider.GROQ })
+      expect(mockGemini.generateJson).not.toHaveBeenCalled()
+
+      mockGemini.generateJson.mockResolvedValue({ text: validOutput })
+      await expect(service.extract({ images: [{ mimeType: 'image/jpeg', data: 'b64' }] })).resolves.toMatchObject({
+        provider: AiProvider.GEMINI,
+      })
+    } finally {
+      config.ai = { timeoutMs: 1000 }
+    }
+  })
+
   it('should skip a model whose daily quota is almost spent', async () => {
     mockAiRequestLog.countSince.mockImplementation((provider: AiProvider) => (provider === AiProvider.GEMINI ? 450 : 0))
     mockGroq.generateJson.mockResolvedValue({ text: validOutput })

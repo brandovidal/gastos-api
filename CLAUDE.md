@@ -12,22 +12,18 @@ NestJS backend for expense intake from chat (Telegram first, WhatsApp later) wit
 
 ## Commands
 
+Tasks live in the `Makefile` (`make help`); `ENV=local` (default, `.env.local`, SQLite `dev.db`) or `ENV=dev` (`.env.dev`, Turso). `package.json` only keeps what Railway, CI and husky call.
+
 ```sh
-pnpm deps               # after pulling: Prisma client + pending migrations + seed + bot menu (.env.local); deps:dev on Turso
-pnpm local              # watch mode with .env.local (SQLite file:./dev.db)
-pnpm dev                # watch mode with .env.dev (Turso)
-pnpm build
-pnpm lint / pnpm format
-pnpm test               # unit (watch)
-pnpm test:ci            # unit (single run)
-pnpm test:integration   # against local SQLite (.env.test)
-pnpm eval:extraction    # golden set with the REAL AI (not in CI); :record saves fixtures, :replay rescoring for free
-pnpm db:generate        # Prisma client -> src/generated/prisma (git-ignored)
-pnpm db:migrate --name <name>   # new migration on local dev.db + prisma generate
-pnpm db:deploy:dev      # apply pending migrations to Turso (dev)
-pnpm db:seed            # upsert catalogs locally (people, payment methods, budget groups, categories); safe to re-run
-pnpm db:seed:dev        # same on Turso (dev)
-pnpm telegram:setup     # register webhook + command menu (needs TELEGRAM_* and PUBLIC_URL in .env.local)
+make deps [ENV=dev]     # after pulling: Prisma client + pending migrations + seed + bot command menu
+make dev [ENV=dev]      # watch mode
+make migrate NAME=x     # new migration on local dev.db + prisma generate
+make db-deploy / seed / studio [ENV=dev]
+make telegram URL=https://…   # webhook + command menu
+make lint / format / build / test / test-integration
+make check              # lint + build + unit + integration (what CI runs)
+make eval-replay        # golden set with the recorded answers (no AI calls)
+make eval-ai CONFIRM=yes [RECORD=1]   # golden set with the REAL AI (~30 calls): only when the user asks
 ```
 
 ## Structure
@@ -73,7 +69,7 @@ modules/<feature>/
 - Enum-like columns are strings (SQLite has no enums); validate them with `commons/constants/expense.constant.ts` and `catalog.constant.ts`.
 - `aliases` in `Person` and `PaymentMethod` is a JSON array stored as a string.
 - Installments use the `n/m` format (`INSTALLMENT_REGEX`).
-- Catalogs live in `src/db/seed/catalog.seed.data.ts` (from the Notion boards). Edit that file and run `pnpm db:seed` to add people, aliases, cards or categories; exactly one person should have `isDefault`.
+- Catalogs live in `src/db/seed/catalog.seed.data.ts` (from the Notion boards). Edit that file and run `make seed` to add people, aliases, cards or categories; exactly one person should have `isDefault`.
 - Table names carry a prefix by use (`cat_`, `bud_`, `exp_`, `bot_`, `ai_`, `imp_`) through `@@map`; model names do not.
 - `ExpenseDraft` (`bot_expense_drafts`) is every expense received from a chat while the bot works on it. Its open row (`draft` or `awaiting_confirmation`) is the conversation state of that chat; there is no session table. `@@unique([channel, chatId, messageId, itemIndex])` makes webhook retries idempotent (`DuplicateExpenseDraftException`). Saving a draft creates the record of its destination table, linked by `draftId`.
 - `DailyExpense` (`exp_daily_expenses`) holds only confirmed day-to-day expenses ("gastos sin culpa").
@@ -84,13 +80,13 @@ modules/<feature>/
 ## AI extraction
 
 - `providers/ai/`: `AiExtractorProviderStrategy` → `GeminiExtractorService` (primary, images) and `GroqExtractorService` (text-only fallback). Providers return raw JSON text; `modules/expense-extraction` validates it.
-- Route: text → Gemini Flash-Lite → Groq; image → Gemini Flash-Lite → Gemini Flash. A model is skipped at 90 % of its daily free quota (counted from `AiRequestLog`).
+- Route: text → Qwen on Groq → Gemini Flash-Lite (`AI_TEXT_PRIMARY=groq`, default; `gemini` swaps them); image → Gemini Flash-Lite → Gemini Flash. Groq allows ~1,000 output tokens per minute, so bursts fall back to Gemini. A model is skipped at 90 % of its daily free quota (counted from `AiRequestLog`).
 - The AI picks catalog values by short refs (`p1`, `pm2`, `cc1`, `cat3`); `expense-extraction.resolver.ts` maps them to ids and computes `missingFields`. Never send database ids or secrets to the AI.
 - Simple corrections go through `correction-parser.ts` first; the AI is only called when it returns `null`.
 - Images (P4): a photo or `image/*` file becomes `ChannelMessageType.IMAGE`; the draft keeps `mediaFileId` + `mediaUniqueId` (same image sent again → no AI call) and the caption in `rawText`. Files are downloaded in memory through `MediaDownloaderRegistry` (each channel registers its downloader) and never stored.
 - Voice notes (P5): `ChannelMessageType.AUDIO` (≤ 60 s) → `ExpenseExtractionService.transcribe` (Whisper on Groq, logged as `transcribe`) → the transcription is stored in `rawText` and read like a typed message; the reply starts with "🎙️ Entendí: «…»". A retry from /bandeja only transcribes again if `rawText` is empty.
 - Tests never call real APIs: mock `@google/genai` / `openai` with `vi.mock`.
-- Golden set (P9): `test/golden/extraction.golden.json`. When the prompt or schema changes, run `pnpm eval:extraction:record` (real AI) so `test/fixtures/ai-responses.json` stays current; `conversation.integration-test.ts` replays those answers with the clock frozen on `recordedAt`. A new flow test needs its message in the golden set first.
+- Golden set (P9): `test/golden/extraction.golden.json`. When the prompt or schema changes, ask the user before running `make eval-ai CONFIRM=yes RECORD=1` (real AI, burns quota) so `test/fixtures/ai-responses.json` stays current; `conversation.integration-test.ts` replays those answers with the clock frozen on `recordedAt`. A new flow test needs its message in the golden set first.
 
 ## Conversation and Telegram
 
@@ -109,8 +105,8 @@ Environments: `.env.local` = SQLite `file:./dev.db`, `.env.dev` = Turso (`libsql
 
 Prisma Migrate cannot run against remote Turso. Flow:
 
-1. `pnpm db:migrate --name <name>` creates the migration against local `dev.db` and regenerates the client (Prisma 7 `migrate dev` no longer runs `generate`).
-2. `pnpm db:deploy:dev` applies the pending `prisma/migrations/*/migration.sql` to Turso (`scripts/db-deploy.ts`, one batch per migration, tracked in `_app_migrations`; safe to re-run).
-3. `pnpm db:seed:dev` if catalogs changed.
+1. `make migrate NAME=<name>` creates the migration against local `dev.db` and regenerates the client (Prisma 7 `migrate dev` no longer runs `generate`).
+2. `make db-deploy ENV=dev` (or `make deps ENV=dev`) applies the pending `prisma/migrations/*/migration.sql` to Turso (`scripts/db-deploy.ts`, one batch per migration, tracked in `_app_migrations`; safe to re-run).
+3. `make seed ENV=dev` if catalogs changed.
 
 Remote Turso does not send SQLite extended codes: a unique violation arrives as `P2039`, not `P2002`. `isPrismaError` handles it; always go through that helper.
