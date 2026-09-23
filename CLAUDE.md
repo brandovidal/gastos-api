@@ -114,6 +114,7 @@ modules/<feature>/
 ## Deployment (P10)
 
 - `Dockerfile` + `railway.json` (health `/v1/health`); `.github/workflows/deploy.yml` runs `unit-test.yml`, then migrations and seed (`scripts/db-deploy.ts`, `prisma/seed.ts`) and `scripts/telegram-setup.ts`; Railway deploys from GitHub itself, after CI ("Wait for CI"). `PUBLIC_URL`: prod `https://kogane-api.up.railway.app`, local via `make tunnel` (`scripts/tunnel.sh`, restores the prod webhook on exit). Guide: `docs/deploy.md`.
+- The `image` job of `deploy.yml` runs `make docker` (`scripts/docker-smoke.sh`, also the local check): builds the image and requires `/v1/health` 200 and `/docs` 404 before migrating Turso. The Prisma generator pins `importFileExtension = ""`: during the Docker install there is no `tsconfig.json` yet and Prisma 7 would emit `./internal/class.ts` imports that crash on start. `.dockerignore` excludes `src/generated`.
 - `NODE_ENV=production` turns Swagger off (`isDocsEnabled`) and logs to JSON. Migrations must be backward compatible: they run before the new code.
 
 ## Database (Turso)

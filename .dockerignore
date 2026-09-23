@@ -3,6 +3,8 @@
 .husky
 node_modules
 dist
+# Railway builds from git, where the Prisma client is generated inside the image: never copy the local one
+src/generated
 coverage
 *.env*
 !.env.example
@@ -10,7 +12,6 @@ coverage
 *.db-journal
 test/golden/images
 test/eval/last-report.txt
-.docker-data
 .cache
 test/eval/ocr-report
 .data

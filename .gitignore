@@ -43,8 +43,6 @@ test/eval/last-report.txt
 # P4 real screenshots for the eval (personal data)
 test/golden/images/
 
-# make docker: copy of dev.db for the local production image
-.docker-data/
 
 # P21 OCR probe: full text of real screenshots (personal data) and the Spanish model cache
 test/eval/ocr-report/

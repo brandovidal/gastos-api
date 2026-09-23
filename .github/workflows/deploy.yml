@@ -14,8 +14,16 @@ jobs:
   check:
     uses: ./.github/workflows/unit-test.yml
 
+  # The production image must start before anything touches Turso (a broken image kept Railway on 502, 2026-09-23)
+  image:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build the image and check that it starts
+        run: make docker
+
   db:
-    needs: check
+    needs: [check, image]
     runs-on: ubuntu-latest
     environment: production
     env:

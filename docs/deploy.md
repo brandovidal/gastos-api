@@ -133,7 +133,7 @@ Plan gratis: 10 GB, 1 M escrituras y 10 M lecturas al mes, sin cobro de salida.
 - `curl https://…/v1/health` → `database: OK` y `telegram.webhook: OK`.
 - `https://…/docs` → **404** (Swagger apagado en producción).
 - Desde Telegram: un texto, una foto de Yape y una nota de voz se guardan; `/uso` muestra la cuota del día.
-- Imagen local igual a la de Railway: `make docker` (puerto 5570, copia de `dev.db`, sin tokens; `/docs` debe dar 404).
+- Imagen igual a la de Railway: `make docker` la construye, la arranca sin secretos y comprueba `/v1/health` 200 y `/docs` 404. El CI corre lo mismo antes de cada deploy.
 - Antes de hacer push: `make check` (lo mismo que el job `check`).
 
 ## 6b. Si Railway responde 502 "Application failed to respond"
@@ -142,6 +142,8 @@ La app no arrancó. Railway → Deployments → el último → **Deploy Logs**:
 
 - `DATABASE_URL is not set` o `DATABASE_AUTH_TOKEN is not set for Turso`: falta la variable (o se pegó con comillas).
 - `URL_INVALID`: la URL de Turso tiene comillas o espacios.
+- `STORAGE_ENV must be dev, prod or test` o `R2_… are required`: faltan `STORAGE_ENV=prod` o las claves de R2 (sección 4b).
+- `Cannot find module './internal/class.ts'`: el cliente de Prisma se generó con imports `.ts`. Lo evita `importFileExtension = ""` en `prisma/schema.prisma`; el job `image` del CI (`make docker`) frena el deploy si la imagen no arranca.
 - Ningún error y el health check falla: revisar que el servicio use el `Dockerfile` (`railway.json`) y que `PORT` no esté fijado a mano.
 
 ## 7. Volver atrás
