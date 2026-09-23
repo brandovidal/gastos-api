@@ -1,0 +1,7 @@
+# Only run build and test for main
+BRANCH=$(git symbolic-ref --short HEAD)
+
+if [ "$BRANCH" = "main" ]; then
+  pnpm run build
+  pnpm run test:ci
+fi

@@ -1,0 +1,38 @@
+# compiled output
+/dist
+/node_modules
+/build
+
+# Prisma generated client
+/src/generated
+
+# Local SQLite databases
+*.db
+*.db-journal
+
+# Logs
+logs
+*.log
+npm-debug.log*
+pnpm-debug.log*
+
+# OS
+.DS_Store
+
+# Tests
+/coverage
+
+# IDEs and editors
+/.idea
+.vscode/*
+!.vscode/settings.json
+!.vscode/extensions.json
+
+# dotenv environment variable files
+*.env*
+!.env.example
+
+# temp directory
+.temp
+.tmp
+tmp/

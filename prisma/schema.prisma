@@ -1,0 +1,11 @@
+// Models are pending: see P1 (data model) in personal/docs/plans/2026-09-22-gastos-bot-ai-design.md
+
+generator client {
+  provider     = "prisma-client"
+  output       = "../src/generated/prisma"
+  moduleFormat = "cjs"
+}
+
+datasource db {
+  provider = "sqlite"
+}
