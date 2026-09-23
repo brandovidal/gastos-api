@@ -74,6 +74,7 @@ export const TEXTS = {
   emptyAudio: '🎙️ No entendí el audio. Prueba de nuevo o escríbelo.',
   heard: (transcript: string) => `🎙️ Entendí: <i>«${escapeHtml(transcript)}»</i>`,
   duplicateAudio: '🎙️ Ya recibí este audio antes. Búscalo en /ultimos o /borrador.',
+  fileExpired: '📎 La captura ya expiró (7 días). Mándala otra vez.',
   duplicateImage: '🖼️ Ya recibí esta imagen antes. Búscala en /ultimos o /borrador.',
   imageTooLarge: '🖼️ La imagen pesa demasiado. Envíala como foto (no como archivo) o una captura más liviana.',
   possibleDuplicate: (operationNumber: string) =>

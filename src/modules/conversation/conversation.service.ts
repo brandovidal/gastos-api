@@ -25,6 +25,7 @@ import {
 import { ExpenseField } from '@/commons/constants/expense-extraction.constant'
 import { DateHelper } from '@/commons/helpers/date.helper'
 import { DuplicateExpenseDraftException } from '@/commons/exceptions/expense-draft/duplicate-expense-draft.exception'
+import { StoredFileExpiredException } from '@/commons/exceptions/stored-file/stored-file-expired.exception'
 import { ExpenseDraftDBRepository } from '@/db/models/expense-draft/expenseDraftDB.repository'
 import { ExpenseDraftDbDto } from '@/db/models/expense-draft/expenseDraftDB.dto'
 import { ExpenseDBRepository } from '@/db/models/expense/expenseDB.repository'
@@ -32,6 +33,7 @@ import { PaymentMethodDBRepository } from '@/db/models/payment-method/paymentMet
 import { ExpenseExtractionService } from '@/modules/expense-extraction/expense-extraction.service'
 import { completeExpense } from '@/modules/expense-extraction/expense-extraction.resolver'
 import { findCatalogEntryById } from '@/modules/expense-extraction/expense-extraction.catalog'
+import { StoredFilesService } from '@/modules/stored-files/stored-files.service'
 import {
   ExtractionCatalog,
   ResolvedExpense,
@@ -89,6 +91,7 @@ export class ConversationService {
     private readonly expenseExtractionService: ExpenseExtractionService,
     private readonly expenseSaverService: ExpenseSaverService,
     private readonly mediaDownloaderRegistry: MediaDownloaderRegistry,
+    private readonly storedFilesService: StoredFilesService,
   ) {}
 
   async handle(message: ChannelMessage): Promise<ConversationResult> {
@@ -189,7 +192,7 @@ export class ConversationService {
         rawText: isAudio ? null : message.text?.trim() || null,
         mediaFileId: media.fileId,
         mediaUniqueId: media.uniqueId,
-        storageKey: media.storageKey ?? null,
+        fileId: media.storedFileId ?? null,
       })
     } catch (error) {
       if (error instanceof DuplicateExpenseDraftException) return []
@@ -224,7 +227,7 @@ export class ConversationService {
     } catch (error) {
       this.logger.warn(`[extractInto] extraction failed: ${(error as Error).message}`)
       await this.expenseDraftDBRepository.update(expenseDraft.id, { status: ExpenseDraftStatus.FAILED })
-      return [{ text: TEXTS.failed, edit }]
+      return [{ text: error instanceof StoredFileExpiredException ? TEXTS.fileExpired : TEXTS.failed, edit }]
     }
 
     // Voice notes show what was understood, so a wrong transcription is easy to spot
@@ -250,6 +253,7 @@ export class ConversationService {
               inputType: expenseDraft.inputType,
               rawText: text ?? null,
               mediaFileId: expenseDraft.mediaFileId,
+              fileId: expenseDraft.fileId,
             })
 
       const updated = await this.expenseDraftDBRepository.update(target.id, toExpenseDraftUpdate(expense))
@@ -260,9 +264,28 @@ export class ConversationService {
     return replies
   }
 
-  private download(expenseDraft: ExpenseDraftDbDto): Promise<MediaFile> {
+  // From R2 when the file is already stored (D58); otherwise from the channel the first time, and kept in R2 for 7 days
+  // so retries and kogane-app use that copy. A storage failure only logs: the extraction goes on with the bytes.
+  private async download(expenseDraft: ExpenseDraftDbDto): Promise<MediaFile> {
+    if (expenseDraft.fileId) return this.storedFilesService.download(expenseDraft.fileId)
     if (!expenseDraft.mediaFileId) throw new Error('The expense draft has no media file')
-    return this.mediaDownloaderRegistry.download(expenseDraft.channel as ExpenseDraftChannel, expenseDraft.mediaFileId)
+
+    const media = await this.mediaDownloaderRegistry.download(
+      expenseDraft.channel as ExpenseDraftChannel,
+      expenseDraft.mediaFileId,
+    )
+    try {
+      const file = await this.storedFilesService.storeTemporary(
+        expenseDraft.channel,
+        Buffer.from(media.data, 'base64'),
+        media.mimeType,
+      )
+      await this.expenseDraftDBRepository.update(expenseDraft.id, { fileId: file.id })
+      expenseDraft.fileId = file.id
+    } catch (error) {
+      this.logger.warn(`[download] file not stored: ${(error as Error).message}`)
+    }
+    return media
   }
 
   // Downloads the voice note, transcribes it and keeps the text in rawText

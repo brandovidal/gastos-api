@@ -4,13 +4,14 @@ import { ExpenseDraftDBModule } from '@/db/models/expense-draft/expenseDraftDB.m
 import { ExpenseDBModule } from '@/db/models/expense/expenseDB.module'
 import { PaymentMethodDBModule } from '@/db/models/payment-method/paymentMethodDB.module'
 import { ExpenseExtractionModule } from '@/modules/expense-extraction/expense-extraction.module'
+import { StoredFilesModule } from '@/modules/stored-files/stored-files.module'
 
 import { ConversationService } from './conversation.service'
 import { ExpenseSaverService } from './expense-saver.service'
 import { MediaDownloaderRegistry } from './media-downloader.registry'
 
 @Module({
-  imports: [ExpenseDraftDBModule, ExpenseDBModule, PaymentMethodDBModule, ExpenseExtractionModule],
+  imports: [ExpenseDraftDBModule, ExpenseDBModule, PaymentMethodDBModule, ExpenseExtractionModule, StoredFilesModule],
   providers: [ConversationService, ExpenseSaverService, MediaDownloaderRegistry],
   exports: [ConversationService, ExpenseSaverService, MediaDownloaderRegistry],
 })

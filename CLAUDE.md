@@ -83,7 +83,8 @@ modules/<feature>/
 - Route: text → Qwen on Groq → Gemini Flash-Lite (`AI_TEXT_PRIMARY=groq`, default; `gemini` swaps them); image → Gemini Flash-Lite → Gemini Flash. Groq allows ~1,000 output tokens per minute, so bursts fall back to Gemini. A model is skipped at 90 % of its daily free quota (counted from `AiRequestLog`).
 - The AI picks catalog values by short refs (`p1`, `pm2`, `cc1`, `cat3`); `expense-extraction.resolver.ts` maps them to ids and computes `missingFields`. Never send database ids or secrets to the AI.
 - Simple corrections go through `correction-parser.ts` first; the AI is only called when it returns `null`.
-- Images (P4): a photo or `image/*` file becomes `ChannelMessageType.IMAGE`; the draft keeps `mediaFileId` + `mediaUniqueId` (same image sent again → no AI call) and the caption in `rawText`. Files are downloaded in memory through `MediaDownloaderRegistry` (each channel registers its downloader) and never stored.
+- Images (P4): a photo or `image/*` file becomes `ChannelMessageType.IMAGE`; the draft keeps `mediaFileId` + `mediaUniqueId` (same image sent again → no AI call) and the caption in `rawText`. The first download goes through `MediaDownloaderRegistry` (each channel registers its downloader); then the bytes are kept in R2 and the draft points to them with `fileId`.
+- Files (D58, `modules/stored-files`): **the database never stores bytes**. `bot_files` (`StoredFile`) keeps the R2 key and metadata: `<STORAGE_ENV>/finance/drafts/<yyyy-mm>/…` (`temporary`, 7 days) → `<env>/finance/expenses/<yyyy>/<mm>/…` (`kept`) when an expense is saved (`ExpenseSaverService` → `keep`, failure only logs). `StoredFilesCleanupTask` deletes expired ones daily (row stays `deleted`); an expired file makes the draft `failed` (`TEXTS.fileExpired`). Same `sha256` → the stored file is reused. `STORAGE_ENV=dev|prod` always uses R2 (boot fails without keys); only `test` uses `LocalStorage`. Signed URLs for kogane-app last 10 min.
 - Voice notes (P5): `ChannelMessageType.AUDIO` (≤ 60 s) → `ExpenseExtractionService.transcribe` (Whisper on Groq, logged as `transcribe`) → the transcription is stored in `rawText` and read like a typed message; the reply starts with "🎙️ Entendí: «…»". A retry from /borrador only transcribes again if `rawText` is empty.
 - Tests never call real APIs: mock `@google/genai` / `openai` with `vi.mock`.
 - Golden set (P9): `test/golden/extraction.golden.json`. When the prompt or schema changes, ask the user before running `make eval-ai CONFIRM=yes RECORD=1` (real AI, burns quota) so `test/fixtures/ai-responses.json` stays current; `conversation.integration-test.ts` replays those answers with the clock frozen on `recordedAt`. A new flow test needs its message in the golden set first.
@@ -107,7 +108,7 @@ modules/<feature>/
 - `modules/catalogs`: people, payment-methods (deactivated, never deleted), categories, budget-groups (409 `CATALOG_ITEM_IN_USE` while used).
 - `modules/expenses`: `/v1/expenses/:resource` (`ExpenseResource`: daily-expenses, fixed-costs, subscriptions, credit-card-expenses, receivables, recurring-expenses) on `ExpenseRecordDBRepository`, validated per resource in `EXPENSE_SCHEMAS`; `POST /v1/expenses/extract` prefills "Nuevo gasto".
 - `modules/drafts`: Borrador (`tab=review|failed|discarded`), Nuevo gasto (`POST /v1/drafts` channel `web`, input `manual`), save through `ExpenseSaverService` like the bot, retry through `ConversationService.retryExtraction`. Web edits keep drafts in `pending_review` so they never reopen a chat.
-- `modules/messages`: web chat = channel `web` (`WEB_CHAT_ID`), multipart text/image/voice; uploads go to `providers/storage` (R2 with `aws4fetch`, or `STORAGE_LOCAL_DIR` without keys) and `storageKey`; the web downloader reads them back for retries.
+- `modules/messages`: web chat = channel `web` (`WEB_CHAT_ID`), multipart text/image/voice; uploads go through `StoredFilesService.storeTemporary` and the draft keeps its `fileId`.
 - `modules/summary`: month totals, salary/limit (`bud_monthly_budgets`), surplus and budget groups.
 
 ## Deployment (P10)
@@ -122,7 +123,7 @@ Environments: `.env.dev` = SQLite `file:./dev.db`, `.env.prod` = Turso `kogane-d
 Prisma Migrate cannot run against remote Turso. Flow:
 
 1. `make migrate NAME=<name>` creates the migration against local `dev.db` and regenerates the client (Prisma 7 `migrate dev` no longer runs `generate`).
-2. In production the deploy workflow (`.github/workflows/deploy.yml`) does it; by hand, `make db-deploy ENV=prod` (or `make deps ENV=prod`) applies the pending `prisma/migrations/*/migration.sql` to Turso (`scripts/db-deploy.ts`, one batch per migration, tracked in `_app_migrations`; safe to re-run).
+2. In production the deploy workflow (`.github/workflows/deploy.yml`) does it; by hand, `make db-deploy ENV=prod` (or `make deps ENV=prod`) applies the pending `prisma/migrations/*/migration.sql` to Turso (`scripts/db-deploy.ts`, tracked in `_app_migrations`; safe to re-run). Each migration runs with libSQL `migrate()`, which turns foreign keys off outside the transaction (SQLite ignores `PRAGMA foreign_keys=OFF` inside one, so a table redefinition would fire `ON DELETE SET NULL`); the migration's own PRAGMA lines are skipped and `PRAGMA foreign_key_check` runs after it.
 3. `make seed ENV=prod` if catalogs changed (the deploy workflow also seeds).
 
 Remote Turso does not send SQLite extended codes: a unique violation arrives as `P2039`, not `P2002`. `isPrismaError` handles it; always go through that helper.

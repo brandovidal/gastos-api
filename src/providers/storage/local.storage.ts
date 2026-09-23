@@ -1,4 +1,4 @@
-import { mkdir, readFile, writeFile } from 'node:fs/promises'
+import { copyFile, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { dirname, extname, join, resolve } from 'node:path'
 
 import { StorageRequestFailedException } from '@/commons/exceptions/storage/storage-request-failed.exception'
@@ -18,7 +18,7 @@ const CONTENT_TYPES: Record<string, string> = {
   '.wav': 'audio/wav',
 }
 
-// Local development without R2 keys: files in a git-ignored folder
+// Tests only (STORAGE_ENV=test): files in a git-ignored folder, never R2
 export class LocalStorage implements ObjectStorage {
   readonly driver = 'local' as const
 
@@ -41,6 +41,16 @@ export class LocalStorage implements ObjectStorage {
     } catch {
       throw new StorageRequestFailedException({ operation: 'get', key })
     }
+  }
+
+  async copy(fromKey: string, toKey: string): Promise<void> {
+    const target = this.path(toKey)
+    await mkdir(dirname(target), { recursive: true })
+    await copyFile(this.path(fromKey), target)
+  }
+
+  async delete(key: string): Promise<void> {
+    await rm(this.path(key), { force: true })
   }
 
   async signedUrl(): Promise<null> {

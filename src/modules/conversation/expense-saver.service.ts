@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common'
+import { Injectable, Logger } from '@nestjs/common'
 
 import { APP_TIME_ZONE } from '@/commons/constants/app.constant'
 import { Currency, ExpenseDestination, ExpenseType, PaymentStatus } from '@/commons/constants/expense.constant'
@@ -9,20 +9,36 @@ import { ExpenseDraftDbDto } from '@/db/models/expense-draft/expenseDraftDB.dto'
 import { ExpenseDBRepository } from '@/db/models/expense/expenseDB.repository'
 import { SaveExpenseDbDto } from '@/db/models/expense/expenseDB.dto'
 import { PaymentMethodDBRepository } from '@/db/models/payment-method/paymentMethodDB.repository'
+import { StoredFilesService } from '@/modules/stored-files/stored-files.service'
 
 // Turns a confirmed ExpenseDraft into a record of its destination table (✅ Guardar)
 @Injectable()
 export class ExpenseSaverService {
+  private readonly logger = new Logger(ExpenseSaverService.name)
+
   constructor(
     private readonly expenseDBRepository: ExpenseDBRepository,
     private readonly paymentMethodDBRepository: PaymentMethodDBRepository,
+    private readonly storedFilesService: StoredFilesService,
   ) {}
 
   async save(expenseDraft: ExpenseDraftDbDto): Promise<{ id: string }> {
     this.assertComplete(expenseDraft)
 
     const input = await this.buildInput(expenseDraft)
-    return this.expenseDBRepository.saveFromExpenseDraft(expenseDraft.id, input)
+    const saved = await this.expenseDBRepository.saveFromExpenseDraft(expenseDraft.id, input)
+    await this.keepFile(expenseDraft.fileId)
+    return saved
+  }
+
+  // The screenshot of a saved expense moves out of drafts (D58). The expense is already saved: a failure only logs
+  private async keepFile(fileId: string | null) {
+    if (!fileId) return
+    try {
+      await this.storedFilesService.keep(fileId)
+    } catch (error) {
+      this.logger.warn(`[keepFile] file ${fileId} not kept: ${(error as Error).message}`)
+    }
   }
 
   private assertComplete({ id, missingFields, destination, description, amount, personId }: ExpenseDraftDbDto) {

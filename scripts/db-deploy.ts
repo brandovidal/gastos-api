@@ -2,7 +2,7 @@
 // Usage: make db-deploy ENV=prod   (make deps runs it too; on SQLite make uses prisma migrate deploy instead)
 // Migrations are the SQL files generated locally by `make migrate NAME=<name>` (prisma/migrations/*/migration.sql),
 // applied in name order. Applied ones are recorded in `_app_migrations`, so running it twice is safe.
-import { createClient } from '@libsql/client'
+import { Client, createClient } from '@libsql/client'
 import { readdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 
@@ -32,15 +32,26 @@ async function main() {
 
   for (const name of pending) {
     const sql = readFileSync(join(MIGRATIONS_DIR, name, 'migration.sql'), 'utf8')
-    // One batch per migration: its statements and the record are applied together
-    await db.batch(
-      [
-        ...splitStatements(sql).map((statement) => ({ sql: statement, args: [] })),
-        { sql: 'INSERT INTO _app_migrations (name) VALUES (?)', args: [name] },
-      ],
-      'write',
-    )
+    // One transaction per migration (statements + record). migrate() turns foreign keys off *outside* the
+    // transaction: Prisma rebuilds SQLite tables (create new, copy, drop old, rename) and with foreign keys on,
+    // dropping the old table would run ON DELETE SET NULL on every row that points to it (e.g. expenses → drafts).
+    // Its PRAGMA foreign_keys=OFF line is ignored inside a transaction, so it is skipped here.
+    await db.migrate([
+      ...splitStatements(sql)
+        .filter((statement) => !/^PRAGMA\s+foreign_keys\s*=/i.test(statement))
+        .map((statement) => ({ sql: statement, args: [] })),
+      { sql: 'INSERT INTO _app_migrations (name) VALUES (?)', args: [name] },
+    ])
+    await assertForeignKeys(db, name)
     console.log(`Applied ${name}`)
+  }
+}
+
+// The rebuilt tables must still satisfy every foreign key
+async function assertForeignKeys(db: Client, migration: string) {
+  const { rows } = await db.execute('PRAGMA foreign_key_check')
+  if (rows.length) {
+    throw new Error(`${migration} left ${rows.length} broken foreign key(s): ${JSON.stringify(rows.slice(0, 5))}`)
   }
 }
 

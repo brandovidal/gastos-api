@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 
-import { Inject, Injectable } from '@nestjs/common'
+import { Injectable } from '@nestjs/common'
 
 import {
   ExpenseDraftChannel,
@@ -19,8 +19,7 @@ import { ExpenseExtractionService } from '@/modules/expense-extraction/expense-e
 import { findDefaultPerson } from '@/modules/expense-extraction/expense-extraction.catalog'
 import { completeExpense } from '@/modules/expense-extraction/expense-extraction.resolver'
 import { ResolvedExpenseFields } from '@/modules/expense-extraction/dto/expense-extraction.types'
-import { OBJECT_STORAGE } from '@/providers/storage/storage.module'
-import { ObjectStorage } from '@/providers/storage/storage.types'
+import { StoredFilesService } from '@/modules/stored-files/stored-files.service'
 
 import { DraftFieldsDto, DraftListQueryDto } from './dto/request/drafts.dto'
 import { DraftTab } from './validations/drafts.validation'
@@ -31,9 +30,6 @@ const TAB_STATUSES: Record<DraftTab, ExpenseDraftStatus[]> = {
   [DraftTab.DISCARDED]: [ExpenseDraftStatus.DISCARDED],
 }
 
-// Signed links to see a screenshot in the web last this long
-const MEDIA_URL_TTL_SECONDS = 10 * 60
-
 // Borrador and Nuevo gasto in kogane-app (D50, D57). Every save goes through ExpenseSaverService, like the bot.
 @Injectable()
 export class DraftsService {
@@ -42,7 +38,7 @@ export class DraftsService {
     private readonly expenseExtractionService: ExpenseExtractionService,
     private readonly expenseSaverService: ExpenseSaverService,
     private readonly conversationService: ConversationService,
-    @Inject(OBJECT_STORAGE) private readonly storage: ObjectStorage,
+    private readonly storedFilesService: StoredFilesService,
   ) {}
 
   list({ tab, limit, offset }: DraftListQueryDto) {
@@ -51,9 +47,8 @@ export class DraftsService {
 
   async get(id: string) {
     const expenseDraft = await this.find(id)
-    const mediaUrl = expenseDraft.storageKey
-      ? await this.storage.signedUrl(expenseDraft.storageKey, MEDIA_URL_TTL_SECONDS)
-      : null
+    // Signed link of 10 minutes (D58); null once the file expired
+    const mediaUrl = await this.storedFilesService.signedUrl(expenseDraft.fileId)
     return { ...expenseDraft, mediaUrl }
   }
 

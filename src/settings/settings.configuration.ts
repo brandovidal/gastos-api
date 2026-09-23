@@ -21,12 +21,13 @@ export default () => ({
   auth: {
     apiKey: process.env.API_KEY,
   },
-  // Screenshots and voice notes (D54): Cloudflare R2 when its keys are set, a local folder otherwise
+  // Screenshots and voice notes (D54, D58): Cloudflare R2 under <STORAGE_ENV>/ in dev and prod; a local folder only in tests
   storage: {
+    env: process.env.STORAGE_ENV,
     r2AccountId: process.env.R2_ACCOUNT_ID,
     r2AccessKeyId: process.env.R2_ACCESS_KEY_ID,
     r2SecretAccessKey: process.env.R2_SECRET_ACCESS_KEY,
-    r2Bucket: process.env.R2_BUCKET ?? 'kogane-captures',
+    r2Bucket: process.env.R2_BUCKET ?? 'kogane',
     localDir: process.env.STORAGE_LOCAL_DIR ?? '.data/storage',
   },
   db: {

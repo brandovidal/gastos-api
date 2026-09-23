@@ -14,7 +14,7 @@ export interface ChannelMedia {
   uniqueId: string // stable id of the file: the same image sent twice has the same one
   sizeBytes?: number
   durationSeconds?: number // audio
-  storageKey?: string // the file kept in R2 (D54): web uploads always have one
+  storedFileId?: string // bot_files row already holding the bytes (D58): web uploads always have one
 }
 
 // A message from any channel, already translated by its adapter (Telegram now, WhatsApp later)

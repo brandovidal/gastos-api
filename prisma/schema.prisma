@@ -145,7 +145,8 @@ model ExpenseDraft {
   rawText         String? // message text or audio transcription
   mediaFileId     String? // channel file id, the file itself is not stored
   mediaUniqueId   String? // stable id of the file in the channel (Telegram file_unique_id): same image sent again
-  storageKey      String? // object key of the screenshot / voice note in Cloudflare R2 (D54)
+  fileId          String? // the screenshot / voice note kept in R2 (D54, D58); several drafts can share one file
+  file            StoredFile?    @relation(fields: [fileId], references: [id])
   status          String         @default("draft") // ExpenseDraftStatus
   pendingField    String? // what the bot is asking for
   destination     String? // ExpenseDestination
@@ -182,8 +183,31 @@ model ExpenseDraft {
   @@unique([channel, chatId, messageId, itemIndex])
   @@index([channel, chatId, status])
   @@index([channel, chatId, mediaUniqueId])
+  @@index([fileId])
   @@index([destination, status, spentAt])
   @@map("bot_expense_drafts")
+}
+
+// Screenshots and voice notes in Cloudflare R2 (D54, D58): the database decides where each file lives.
+// temporary (tmp/, expires after 7 days) → kept (kept/, never expires) when an expense that uses it is saved.
+model StoredFile {
+  id          String    @id @default(cuid())
+  channel     String // ExpenseDraftChannel
+  storageKey  String    @unique // object key in the bucket (tmp/… or kept/…)
+  contentType String
+  sizeBytes   Int?
+  sha256      String? // same bytes = same file
+  status      String    @default("temporary") // StoredFileStatus
+  expiresAt   DateTime? // temporary files only
+  keptAt      DateTime?
+  deletedAt   DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  drafts ExpenseDraft[]
+
+  @@index([status, expiresAt])
+  @@map("bot_files")
 }
 
 // ==================== EXPENSES (exp_) ====================

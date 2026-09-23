@@ -33,7 +33,8 @@ jobs:
         run: pnpm build
 
       - name: Create test env
-        run: cp .env.example .env.test
+        # Tests never call R2 (D58): files go to a local folder
+        run: cp .env.example .env.test && sed -i 's/^STORAGE_ENV=.*/STORAGE_ENV=test/' .env.test
 
       - name: Run Unit Tests
         run: pnpm test:ci

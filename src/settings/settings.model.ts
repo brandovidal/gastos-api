@@ -10,6 +10,7 @@ export interface AuthConfig {
 }
 
 export interface StorageConfig {
+  env?: string // StorageEnv
   r2AccountId?: string
   r2AccessKeyId?: string
   r2SecretAccessKey?: string

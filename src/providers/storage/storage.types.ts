@@ -8,6 +8,8 @@ export interface ObjectStorage {
   readonly driver: 'r2' | 'local'
   put(key: string, data: Buffer, contentType: string): Promise<void>
   get(key: string): Promise<StoredObject>
+  copy(fromKey: string, toKey: string): Promise<void>
+  delete(key: string): Promise<void>
   // Short-lived URL to show the file in kogane-app; null when the driver cannot sign (local)
   signedUrl(key: string, expiresInSeconds: number): Promise<string | null>
 }

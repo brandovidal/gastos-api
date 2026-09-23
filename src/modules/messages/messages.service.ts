@@ -1,6 +1,6 @@
-import { createHash, randomUUID } from 'node:crypto'
+import { randomUUID } from 'node:crypto'
 
-import { Inject, Injectable, OnModuleInit } from '@nestjs/common'
+import { Injectable } from '@nestjs/common'
 
 import { ChannelMessageType } from '@/commons/constants/conversation.constant'
 import { ExpenseDraftChannel, WEB_CHAT_ID } from '@/commons/constants/expense-draft.constant'
@@ -8,9 +8,7 @@ import { UnsupportedMessageException } from '@/commons/exceptions/messages/unsup
 import { decodeBotAction } from '@/modules/conversation/bot-action.codec'
 import { ConversationService } from '@/modules/conversation/conversation.service'
 import { ChannelMessage, ConversationResult } from '@/modules/conversation/dto/conversation.types'
-import { MediaDownloaderRegistry } from '@/modules/conversation/media-downloader.registry'
-import { OBJECT_STORAGE } from '@/providers/storage/storage.module'
-import { ObjectStorage } from '@/providers/storage/storage.types'
+import { StoredFilesService } from '@/modules/stored-files/stored-files.service'
 
 import { MessageActionDto, SendMessageDto } from './dto/request/messages.dto'
 
@@ -20,37 +18,17 @@ export interface UploadedMessageFile {
   size: number
 }
 
-const EXTENSION_BY_MIME: Record<string, string> = {
-  'image/jpeg': '.jpg',
-  'image/png': '.png',
-  'image/webp': '.webp',
-  'audio/webm': '.webm',
-  'audio/ogg': '.ogg',
-  'audio/mpeg': '.mp3',
-  'audio/mp4': '.m4a',
-  'audio/wav': '.wav',
-}
-
 // "/resumen extra" -> "resumen"
 const parseCommand = (text: string) => text.slice(1).split(/\s+/)[0].toLowerCase()
 
 // Mensajes in kogane-app (D49, D57): the web is one more channel of the same ConversationService as Telegram.
-// Uploads are kept in R2 (D54) so a failed image or voice note can be read again from Borrador.
+// Uploads go to R2 as temporary files (D58), so the AI, a retry from Borrador and the preview read them from there.
 @Injectable()
-export class MessagesService implements OnModuleInit {
+export class MessagesService {
   constructor(
     private readonly conversationService: ConversationService,
-    private readonly mediaDownloaderRegistry: MediaDownloaderRegistry,
-    @Inject(OBJECT_STORAGE) private readonly storage: ObjectStorage,
+    private readonly storedFilesService: StoredFilesService,
   ) {}
-
-  // For web messages the media "file id" is the storage key
-  onModuleInit() {
-    this.mediaDownloaderRegistry.register(ExpenseDraftChannel.WEB, async (storageKey) => {
-      const { data, contentType } = await this.storage.get(storageKey)
-      return { mimeType: contentType, data: data.toString('base64') }
-    })
-  }
 
   async send(body: SendMessageDto, file?: UploadedMessageFile): Promise<ConversationResult> {
     const base = { channel: ExpenseDraftChannel.WEB, chatId: WEB_CHAT_ID, messageId: body.messageId }
@@ -85,20 +63,18 @@ export class MessagesService implements OnModuleInit {
     const isAudio = file.mimetype.startsWith('audio/')
     if (!isImage && !isAudio) throw new UnsupportedMessageException({ mimetype: file.mimetype })
 
-    const mimeType = file.mimetype.split(';')[0]
-    const storageKey = `web/${new Date().toISOString().slice(0, 7)}/${body.messageId}${EXTENSION_BY_MIME[mimeType] ?? ''}`
-    await this.storage.put(storageKey, file.buffer, mimeType)
+    const storedFile = await this.storedFilesService.storeTemporary(ExpenseDraftChannel.WEB, file.buffer, file.mimetype)
 
     return {
       type: isImage ? ChannelMessageType.IMAGE : ChannelMessageType.AUDIO,
       ...(body.text?.trim() ? { text: body.text.trim() } : {}),
       media: {
-        fileId: storageKey,
+        fileId: storedFile.id,
         // same bytes = same file: a screenshot uploaded twice is detected like a Telegram file_unique_id
-        uniqueId: createHash('sha256').update(file.buffer).digest('hex'),
+        uniqueId: storedFile.sha256 as string,
         sizeBytes: file.size,
         durationSeconds: body.durationSeconds,
-        storageKey,
+        storedFileId: storedFile.id,
       },
     }
   }

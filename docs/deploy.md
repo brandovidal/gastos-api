@@ -12,11 +12,11 @@ Las migraciones corren **antes** que el código nuevo: tienen que funcionar tamb
 
 ## Entornos
 
-| Entorno | Archivo o lugar | Base | Para qué |
-|---|---|---|---|
-| local (dev) | `.env.dev` | SQLite `file:./dev.db` | `pnpm dev` (o `make dev`), `make deps`, `make tunnel` para probar el bot |
-| producción | Railway (variables) · GitHub (secretos) · `.env.prod` en tu máquina | Turso `kogane-db` | La API real; `make <tarea> ENV=prod` para operar a mano |
-| tests | `.env.test` | SQLite `file:./test.db` | `make check` y el CI |
+| Entorno     | Archivo o lugar                                                     | Base                    | Para qué                                                                 |
+| ----------- | ------------------------------------------------------------------- | ----------------------- | ------------------------------------------------------------------------ |
+| local (dev) | `.env.dev`                                                          | SQLite `file:./dev.db`  | `pnpm dev` (o `make dev`), `make deps`, `make tunnel` para probar el bot |
+| producción  | Railway (variables) · GitHub (secretos) · `.env.prod` en tu máquina | Turso `kogane-db`       | La API real; `make <tarea> ENV=prod` para operar a mano                  |
+| tests       | `.env.test`                                                         | SQLite `file:./test.db` | `make check` y el CI                                                     |
 
 Los `.env*` no se suben al repo (salvo `.env.example`). Nunca pegues tokens en chats ni issues.
 
@@ -24,11 +24,11 @@ Los `.env*` no se suben al repo (salvo `.env.example`). Nunca pegues tokens en c
 
 Es la URL pública (HTTPS) donde Telegram manda el webhook: `PUBLIC_URL` + `/v1/telegram/webhook`.
 
-| Entorno | Valor | Nota |
-|---|---|---|
+| Entorno                                       | Valor                               | Nota                                                                                                 |
+| --------------------------------------------- | ----------------------------------- | ---------------------------------------------------------------------------------------------------- |
 | **producción** (Railway, GitHub, `.env.prod`) | `https://kogane-api.up.railway.app` | El dominio que genera Railway. **No** `kogane-api.railway.internal` (red privada): Telegram no llega |
-| **local** (`.env.dev`) | `http://localhost:5560` o vacío | Telegram exige HTTPS público: la URL la pone `make tunnel` (cloudflared, cambia en cada arranque) |
-| **tests** (`.env.test`) | vacío | Los tests no registran webhooks |
+| **local** (`.env.dev`)                        | `http://localhost:5560` o vacío     | Telegram exige HTTPS público: la URL la pone `make tunnel` (cloudflared, cambia en cada arranque)    |
+| **tests** (`.env.test`)                       | vacío                               | Los tests no registran webhooks                                                                      |
 
 `make tunnel` abre el túnel, apunta el webhook del bot de `.env.dev` al túnel y, con Ctrl+C, lo **devuelve a producción** (`PUBLIC_URL` de `.env.prod`). Si local y producción usan el mismo bot, mientras el túnel está abierto el bot de producción no recibe mensajes. Para evitarlo, crea un segundo bot en @BotFather y pon su token en `.env.dev`.
 
@@ -38,14 +38,14 @@ Secretos (`API_KEY`, `TELEGRAM_WEBHOOK_SECRET`): `make secret` (o `openssl rand 
 
 El `Makefile` define las variables comunes (`ENV`, archivo `.env.<ENV>`) e incluye un archivo por grupo en `makefiles/`:
 
-| Archivo | Tareas | Uso en el despliegue |
-|---|---|---|
-| `makefiles/app.mk` | `dev`, `debug`, `clean` | `pnpm dev` equivale a `make dev` (local) |
-| `makefiles/db.mk` | `deps`, `generate`, `db-deploy`, `migrate`, `seed`, `studio` | `make deps ENV=prod` / `make db-deploy ENV=prod` hacen a mano lo que el job `db` |
-| `makefiles/bot.mk` | `telegram`, `tunnel`, `secret` | `make telegram ENV=prod` hace a mano lo que el job `telegram`; `make tunnel` para el bot en local |
-| `makefiles/quality.mk` | `lint`, `format`, `build`, `test`, `test-integration`, `check` | `make check` es lo mismo que el job `check` |
-| `makefiles/eval.mk` | `eval-replay`, `eval-ai` | no entra al despliegue; `eval-ai` gasta cuota y pide `CONFIRM=yes` |
-| `makefiles/docker.mk` | `docker` | prueba local de la imagen de Railway |
+| Archivo                | Tareas                                                         | Uso en el despliegue                                                                              |
+| ---------------------- | -------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| `makefiles/app.mk`     | `dev`, `debug`, `clean`                                        | `pnpm dev` equivale a `make dev` (local)                                                          |
+| `makefiles/db.mk`      | `deps`, `generate`, `db-deploy`, `migrate`, `seed`, `studio`   | `make deps ENV=prod` / `make db-deploy ENV=prod` hacen a mano lo que el job `db`                  |
+| `makefiles/bot.mk`     | `telegram`, `tunnel`, `secret`                                 | `make telegram ENV=prod` hace a mano lo que el job `telegram`; `make tunnel` para el bot en local |
+| `makefiles/quality.mk` | `lint`, `format`, `build`, `test`, `test-integration`, `check` | `make check` es lo mismo que el job `check`                                                       |
+| `makefiles/eval.mk`    | `eval-replay`, `eval-ai`                                       | no entra al despliegue; `eval-ai` gasta cuota y pide `CONFIRM=yes`                                |
+| `makefiles/docker.mk`  | `docker`                                                       | prueba local de la imagen de Railway                                                              |
 
 `package.json` solo tiene `pnpm dev` y lo que llaman Railway (`build`, `start:prod`), el CI (`test:ci`, `test:integration`) y husky (`lint`, `format`).
 
@@ -61,20 +61,21 @@ El `Makefile` define las variables comunes (`ENV`, archivo `.env.<ENV>`) e inclu
 2. **Settings → Networking → Generate Domain**: la URL pública es `PUBLIC_URL` (hoy `https://kogane-api.up.railway.app`). **No** uses `kogane-api.railway.internal`: es la red privada de Railway y ni Telegram ni Cloudflare llegan a ella.
 3. **Variables** del servicio (las lee la app en runtime):
 
-| Variable | Valor |
-|---|---|
-| `NODE_ENV` | `production` (apaga Swagger `/docs` y deja los logs en JSON) |
-| `API_KEY` | una nueva: `make secret` (la usa kogane-app en `x-api-key`) |
-| `DATABASE_URL`, `DATABASE_AUTH_TOKEN` | de Turso |
-| `GROQ_API_KEY`, `GEMINI_API_KEY` | claves de AI (capas gratuitas) |
-| `AI_TEXT_PRIMARY` | `groq` (por defecto) o `gemini` |
-| `TELEGRAM_BOT_TOKEN` | de @BotFather |
-| `TELEGRAM_WEBHOOK_SECRET` | uno nuevo: `make secret` |
-| `TELEGRAM_ALLOWED_CHAT_IDS` | tu `chat_id` |
-| `PUBLIC_URL` | la URL del paso 2 |
-| `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_BUCKET` | Cloudflare R2 (capturas y notas de voz, D54); ver la sección 4b |
+| Variable                                                                 | Valor                                                                        |
+| ------------------------------------------------------------------------ | ---------------------------------------------------------------------------- |
+| `NODE_ENV`                                                               | `production` (apaga Swagger `/docs` y deja los logs en JSON)                 |
+| `API_KEY`                                                                | una nueva: `make secret` (la usa kogane-app en `x-api-key`)                  |
+| `DATABASE_URL`, `DATABASE_AUTH_TOKEN`                                    | de Turso                                                                     |
+| `GROQ_API_KEY`, `GEMINI_API_KEY`                                         | claves de AI (capas gratuitas)                                               |
+| `AI_TEXT_PRIMARY`                                                        | `groq` (por defecto) o `gemini`                                              |
+| `TELEGRAM_BOT_TOKEN`                                                     | de @BotFather                                                                |
+| `TELEGRAM_WEBHOOK_SECRET`                                                | uno nuevo: `make secret`                                                     |
+| `TELEGRAM_ALLOWED_CHAT_IDS`                                              | tu `chat_id`                                                                 |
+| `PUBLIC_URL`                                                             | la URL del paso 2                                                            |
+| `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_BUCKET` | Cloudflare R2 (capturas y notas de voz, D54); ver la sección 4b              |
+| `STORAGE_ENV`                                                            | `prod`: carpeta de producción en el bucket (D58). Sin ella la API no arranca |
 
-   `PORT` lo pone Railway. El resto de variables de `.env.example` tienen valores por defecto. Pega los valores **sin comillas**.
+`PORT` lo pone Railway. El resto de variables de `.env.example` tienen valores por defecto. Pega los valores **sin comillas**.
 
 `railway.json` define el build con el `Dockerfile` y el health check `/v1/health`. Plan Hobby: 5 USD/mes con 5 USD de uso incluido.
 
@@ -82,12 +83,11 @@ El `Makefile` define las variables comunes (`ENV`, archivo `.env.<ENV>`) e inclu
 
 **Settings → Environments → `production`** (se crea sola en el primer deploy si no existe) con estos **secretos**:
 
-| Secreto | Lo usa el job |
-|---|---|
-| `DATABASE_URL`, `DATABASE_AUTH_TOKEN` | `db` (migraciones y seed) |
-| `PUBLIC_URL` | `telegram` (`https://kogane-api.up.railway.app`) |
-| `TELEGRAM_BOT_TOKEN`, `TELEGRAM_WEBHOOK_SECRET` | `telegram` (webhook y menú) |
-
+| Secreto                                         | Lo usa el job                                    |
+| ----------------------------------------------- | ------------------------------------------------ |
+| `DATABASE_URL`, `DATABASE_AUTH_TOKEN`           | `db` (migraciones y seed)                        |
+| `PUBLIC_URL`                                    | `telegram` (`https://kogane-api.up.railway.app`) |
+| `TELEGRAM_BOT_TOKEN`, `TELEGRAM_WEBHOOK_SECRET` | `telegram` (webhook y menú)                      |
 
 ## 4. Telegram
 
@@ -97,9 +97,28 @@ El `Makefile` define las variables comunes (`ENV`, archivo `.env.<ENV>`) e inclu
 
 ## 4b. Cloudflare R2 (capturas)
 
-1. R2 → **Create bucket** `kogane-captures` (privado; sin acceso público).
-2. R2 → **Manage API tokens → Create API token** con permiso *Object Read & Write* solo para ese bucket → `R2_ACCESS_KEY_ID` y `R2_SECRET_ACCESS_KEY`; el **Account ID** → `R2_ACCOUNT_ID`.
-3. Cargarlas en Railway. Sin ellas la API guarda los archivos en `STORAGE_LOCAL_DIR` (sirve solo en local: en Railway el disco se pierde en cada deploy).
+1. R2 → **Create bucket** `kogane` (privado; sin acceso público).
+2. R2 → **Manage API tokens → Create API token** con permiso _Object Read & Write_ solo para ese bucket → `R2_ACCESS_KEY_ID` y `R2_SECRET_ACCESS_KEY`; el **Account ID** → `R2_ACCOUNT_ID`.
+3. Cargarlas en Railway con `STORAGE_ENV=prod`, y en tu `.env.dev` las mismas claves con `STORAGE_ENV=dev`. `dev` y `prod` siempre usan R2; sin las claves la API no arranca. Solo los tests (`STORAGE_ENV=test`) guardan en disco (`.data/storage-test`).
+4. **Valor del token:** la app no lo usa (el Secret Access Key es su SHA-256). Sirve para `wrangler` y la API REST de Cloudflare; guárdalo en tu gestor de contraseñas.
+5. **Reglas de ciclo de vida** (respaldo de la limpieza diaria de la API), una sola vez con `npx wrangler login`:
+
+   ```sh
+   npx wrangler r2 bucket lifecycle add kogane prod-drafts-expire prod/finance/drafts/ --expire-days 8
+   npx wrangler r2 bucket lifecycle add kogane dev-drafts-expire dev/finance/drafts/ --expire-days 3
+   ```
+
+**Estructura del bucket (D58).** La base (`bot_files`) guarda solo la clave y los metadatos, nunca los bytes:
+
+```
+prod/finance/drafts/<yyyy-mm>/<id>.<ext>       borrador: se borra a los 7 días
+prod/finance/expenses/<yyyy>/<mm>/<id>.<ext>   gasto guardado: se conserva
+dev/finance/…                                   lo mismo para tu máquina
+```
+
+- Guardar un gasto copia el archivo a `expenses/` (CopyObject) y borra el de `drafts/`. La tarea diaria borra los `drafts/` vencidos y deja la fila como `deleted`.
+- kogane-app ve la captura con una URL firmada de 10 minutos (R2 permite hasta 7 días; solo funciona con el endpoint S3, no con un dominio propio).
+- Cada base limpia solo lo suyo: `dev.db` conoce claves `dev/` y Turso claves `prod/`. El token alcanza todo el bucket (R2 no limita por carpeta), así que la clave de `.env.dev` también podría tocar `prod/`: no la compartas.
 
 Plan gratis: 10 GB, 1 M escrituras y 10 M lecturas al mes, sin cobro de salida.
 
