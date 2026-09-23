@@ -2,7 +2,7 @@ import { Injectable } from '@nestjs/common'
 import { ConfigService } from '@nestjs/config'
 import OpenAI from 'openai'
 
-import { AiInputPartType, AiProvider, GROQ_BASE_URL } from '@/commons/constants/ai.constant'
+import { AiInputPartType, AiProvider, GROQ_BASE_URL, GROQ_MAX_OUTPUT_TOKENS } from '@/commons/constants/ai.constant'
 import { AiInputNotSupportedException } from '@/commons/exceptions/ai/ai-input-not-supported.exception'
 import { AiRequestFailedException } from '@/commons/exceptions/ai/ai-request-failed.exception'
 import { GroqConfig } from '@/settings/settings.model'
@@ -37,6 +37,7 @@ export class GroqExtractorService implements AiExtractorProvider {
       {
         model,
         temperature: 0,
+        max_completion_tokens: GROQ_MAX_OUTPUT_TOKENS,
         response_format: { type: 'json_object' },
         messages: [
           {

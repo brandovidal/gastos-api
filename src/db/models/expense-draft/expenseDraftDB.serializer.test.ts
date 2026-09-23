@@ -1,11 +1,11 @@
-import { ExpenseFileDBSerializer } from './expenseFileDB.serializer'
-import { mockExpenseFileRow } from './mocks/expenseFileDB.mock'
+import { ExpenseDraftDBSerializer } from './expenseDraftDB.serializer'
+import { mockExpenseDraftRow } from './mocks/expenseDraftDB.mock'
 
-describe('ExpenseFileDBSerializer', () => {
-  const serializer = new ExpenseFileDBSerializer()
+describe('ExpenseDraftDBSerializer', () => {
+  const serializer = new ExpenseDraftDBSerializer()
 
   it('should parse the JSON columns', () => {
-    const dto = serializer.toDto(mockExpenseFileRow)
+    const dto = serializer.toDto(mockExpenseDraftRow)
 
     expect(dto.confidence).toEqual({ amount: 0.95 })
     expect(dto.missingFields).toEqual(['personId'])
@@ -13,7 +13,7 @@ describe('ExpenseFileDBSerializer', () => {
   })
 
   it('should fall back to empty values when the JSON columns are corrupt', () => {
-    const dto = serializer.toDto({ ...mockExpenseFileRow, confidence: '{bad', missingFields: 'bad' })
+    const dto = serializer.toDto({ ...mockExpenseDraftRow, confidence: '{bad', missingFields: 'bad' })
 
     expect(dto.confidence).toEqual({})
     expect(dto.missingFields).toEqual([])

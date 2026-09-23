@@ -23,14 +23,15 @@ ${JSON.stringify(draft)}
 # Rules
 - Today is ${today} (America/Lima). Resolve relative dates ("hoy", "ayer", "el lunes") to YYYY-MM-DD in spentAt.
 - currency: "soles", "S/", "s/." -> PEN; "$", "dólares", "USD" -> USD. null when not stated.
-- personRef, paymentMethodRef, creditCardRef and categoryRef must be refs from the catalogs below (e.g. "p1").
+- personRef, paymentMethodRef and categoryRef must be refs from the catalogs below (e.g. "p1").
   Match names and aliases case-insensitively. Use null when nothing matches. Never invent refs.
   Leave personRef null when the message does not say who the expense is for (the [default] person is applied later).
-- If the payment method is linked to a credit card ("-> cc1"), also set creditCardRef.
+- paymentMethodRef only when the message says how it was paid ("con yape", "con la oh", "efectivo"). Otherwise null: the bot asks.
 - destination:
-  - fixed_cost: household bills and regular costs (rent, utilities, groceries, food).
-  - subscription: recurring services (Netflix, Spotify, gym); also set period.
-  - credit_card: paid with a credit card.
+  - daily: everyday spending (meals, coffee, taxi, Uber, delivery, snacks, small purchases, groceries). The most common one.
+  - fixed_cost: only rent, utilities (electricity, water, internet, phone plan), loans and fixed monthly installments.
+  - subscription: recurring services (Netflix, Spotify, gym, apps); also set period.
+  - credit_card: only when the message names a payment method of type credit_card.
   - receivable: money the user lent or someone owes the user ("le presté", "me debe").
   - discard: the item is explicitly not an expense.
   - null when unsure.

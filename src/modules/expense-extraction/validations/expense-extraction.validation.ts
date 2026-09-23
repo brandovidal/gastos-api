@@ -9,6 +9,32 @@ import {
 } from '@/commons/constants/expense.constant'
 import { MAX_EXPENSES_PER_MESSAGE } from '@/commons/constants/expense-extraction.constant'
 
+const confidenceValue = z.number().min(0).max(1).optional()
+
+// One optional key per field. Not z.record(): Gemini rejects schema-valued additionalProperties (400 INVALID_ARGUMENT)
+export const CONFIDENCE_KEYS = [
+  'destination',
+  'description',
+  'amount',
+  'currency',
+  'spentAt',
+  'expenseType',
+  'installment',
+  'period',
+  'personRef',
+  'paymentMethodRef',
+  'categoryRef',
+  'merchant',
+  'operationNumber',
+  'notes',
+] as const
+
+const confidenceSchema = z.object(
+  Object.fromEntries(CONFIDENCE_KEYS.map((key) => [key, confidenceValue])) as {
+    [K in (typeof CONFIDENCE_KEYS)[number]]: typeof confidenceValue
+  },
+)
+
 // What the AI returns for each expense. Catalog values come as short refs (p1, pm2…), never database ids.
 export const extractedExpenseSchema = z.object({
   destination: z.enum(ExpenseDestination).nullable(),
@@ -21,20 +47,23 @@ export const extractedExpenseSchema = z.object({
   period: z.enum(SubscriptionPeriod).nullable(),
   personRef: z.string().nullable(),
   paymentMethodRef: z.string().nullable(),
-  creditCardRef: z.string().nullable(),
   categoryRef: z.string().nullable(),
   merchant: z.string().nullable(),
   operationNumber: z.string().nullable(),
   notes: z.string().nullable(),
-  confidence: z.record(z.string(), z.number().min(0).max(1)),
+  confidence: confidenceSchema,
 })
 
 export const expenseExtractionSchema = z.object({
   expenses: z.array(extractedExpenseSchema).max(MAX_EXPENSES_PER_MESSAGE),
 })
 
-// Sent to Gemini as responseJsonSchema and to Groq inside the instructions
+// Sent to Gemini as responseJsonSchema and to Groq inside the instructions. Built without maxItems:
+// Gemini answers 400 INVALID_ARGUMENT for this schema when the array has maxItems (checked 2026-09-23).
+// The 10 items limit is still enforced when the answer is validated with expenseExtractionSchema.
 export const expenseExtractionJsonSchema = (() => {
-  const { $schema: _schema, ...jsonSchema } = z.toJSONSchema(expenseExtractionSchema) as Record<string, unknown>
+  const { $schema: _schema, ...jsonSchema } = z.toJSONSchema(
+    z.object({ expenses: z.array(extractedExpenseSchema) }),
+  ) as Record<string, unknown>
   return jsonSchema
 })()

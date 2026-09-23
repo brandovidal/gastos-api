@@ -5,59 +5,79 @@ import { Currency, ExpenseDestination, ExpenseType, PaymentStatus } from '@/comm
 import { DateHelper } from '@/commons/helpers/date.helper'
 import { creditCardPaymentPeriod, paymentPeriodOf } from '@/commons/helpers/payment-period.helper'
 import { ExpenseNotSaveableException } from '@/commons/exceptions/conversation/expense-not-saveable.exception'
-import { ExpenseFileDbDto } from '@/db/models/expense-file/expenseFileDB.dto'
+import { ExpenseDraftDbDto } from '@/db/models/expense-draft/expenseDraftDB.dto'
 import { ExpenseDBRepository } from '@/db/models/expense/expenseDB.repository'
 import { SaveExpenseDbDto } from '@/db/models/expense/expenseDB.dto'
-import { CreditCardDBRepository } from '@/db/models/credit-card/creditCardDB.repository'
+import { PaymentMethodDBRepository } from '@/db/models/payment-method/paymentMethodDB.repository'
 
-// Turns a confirmed ExpenseFile into a record of its destination table (✅ Guardar)
+// Turns a confirmed ExpenseDraft into a record of its destination table (✅ Guardar)
 @Injectable()
 export class ExpenseSaverService {
   constructor(
     private readonly expenseDBRepository: ExpenseDBRepository,
-    private readonly creditCardDBRepository: CreditCardDBRepository,
+    private readonly paymentMethodDBRepository: PaymentMethodDBRepository,
   ) {}
 
-  async save(expenseFile: ExpenseFileDbDto): Promise<{ id: string }> {
-    const input = await this.buildInput(expenseFile)
-    return this.expenseDBRepository.saveFromExpenseFile(expenseFile.id, input)
+  async save(expenseDraft: ExpenseDraftDbDto): Promise<{ id: string }> {
+    this.assertComplete(expenseDraft)
+
+    const input = await this.buildInput(expenseDraft)
+    return this.expenseDBRepository.saveFromExpenseDraft(expenseDraft.id, input)
   }
 
-  private async buildInput(expenseFile: ExpenseFileDbDto): Promise<SaveExpenseDbDto> {
-    const { destination, description, amount, personId } = expenseFile
-
-    if (expenseFile.missingFields.length || !destination || !description || amount == null || !personId) {
-      throw new ExpenseNotSaveableException({ expenseFileId: expenseFile.id, missingFields: expenseFile.missingFields })
+  private assertComplete({ id, missingFields, destination, description, amount, personId }: ExpenseDraftDbDto) {
+    if (missingFields.length || !destination || !description || amount == null || !personId) {
+      throw new ExpenseNotSaveableException({ draftId: id, missingFields })
     }
+  }
 
-    const currency = expenseFile.currency ?? Currency.PEN
-    const spentAt = expenseFile.spentAt ?? new Date(`${DateHelper.todayIn(APP_TIME_ZONE)}T00:00:00.000Z`)
+  private async buildInput(expenseDraft: ExpenseDraftDbDto): Promise<SaveExpenseDbDto> {
+    const { destination } = expenseDraft
+    const description = expenseDraft.description as string
+    const amount = expenseDraft.amount as number
+    const personId = expenseDraft.personId as string
+
+    const currency = expenseDraft.currency ?? Currency.PEN
+    const spentAt = expenseDraft.spentAt ?? new Date(`${DateHelper.todayIn(APP_TIME_ZONE)}T00:00:00.000Z`)
     const spentAtIso = spentAt.toISOString().slice(0, 10)
 
     const base = {
       description,
       amount,
       currency,
-      exchangeRate: expenseFile.exchangeRate,
+      exchangeRate: expenseDraft.exchangeRate,
       amountInPen: currency === Currency.PEN ? amount : null,
       personId,
-      notes: expenseFile.notes,
+      notes: expenseDraft.notes,
     }
     const expense = {
       ...base,
-      expenseType: expenseFile.expenseType ?? ExpenseType.ESSENTIAL,
-      categoryId: expenseFile.categoryId,
-      installment: expenseFile.installment,
+      expenseType: expenseDraft.expenseType ?? ExpenseType.ESSENTIAL,
+      categoryId: expenseDraft.categoryId,
+      installment: expenseDraft.installment,
     }
 
     switch (destination) {
+      case ExpenseDestination.DAILY:
+        return {
+          destination,
+          data: {
+            ...base,
+            expenseType: expenseDraft.expenseType ?? ExpenseType.ESSENTIAL,
+            paymentMethodId: this.required(expenseDraft, expenseDraft.paymentMethodId),
+            categoryId: expenseDraft.categoryId,
+            spentAt,
+            merchant: expenseDraft.merchant,
+            operationNumber: expenseDraft.operationNumber,
+          },
+        }
       case ExpenseDestination.FIXED_COST:
         return {
           destination,
           data: {
             ...expense,
-            categoryId: this.required(expenseFile, expenseFile.categoryId),
-            paymentMethodId: expenseFile.paymentMethodId,
+            categoryId: this.required(expenseDraft, expenseDraft.categoryId),
+            paymentMethodId: expenseDraft.paymentMethodId,
             paymentStatus: PaymentStatus.NOT_STARTED,
             paymentDate: spentAt,
             ...paymentPeriodOf(spentAtIso),
@@ -68,37 +88,41 @@ export class ExpenseSaverService {
           destination,
           data: {
             ...expense,
-            period: this.required(expenseFile, expenseFile.period),
-            paymentMethodId: expenseFile.paymentMethodId,
+            period: this.required(expenseDraft, expenseDraft.period),
+            paymentMethodId: expenseDraft.paymentMethodId,
             paymentStatus: PaymentStatus.NOT_STARTED,
             paymentDate: spentAt,
             ...paymentPeriodOf(spentAtIso),
           },
         }
       case ExpenseDestination.CREDIT_CARD: {
-        const creditCardId = this.required(expenseFile, expenseFile.creditCardId)
-        const creditCard = this.required(expenseFile, await this.creditCardDBRepository.findById(creditCardId))
+        const paymentMethodId = this.required(expenseDraft, expenseDraft.paymentMethodId)
+        const card = this.required(expenseDraft, await this.paymentMethodDBRepository.findById(paymentMethodId))
+        // A card without closing day (e.g. just created from the bot) is billed in the month of the purchase
+        const period = card.billingCloseDay
+          ? creditCardPaymentPeriod(spentAtIso, card.billingCloseDay)
+          : paymentPeriodOf(spentAtIso)
         return {
           destination,
           data: {
             ...expense,
-            creditCardId,
+            paymentMethodId,
             paymentStatus: PaymentStatus.PENDING,
             processDate: spentAt,
-            ...creditCardPaymentPeriod(spentAtIso, creditCard.billingCloseDay),
+            ...period,
           },
         }
       }
       case ExpenseDestination.RECEIVABLE:
         return { destination, data: base }
       default:
-        throw new ExpenseNotSaveableException({ expenseFileId: expenseFile.id, destination })
+        throw new ExpenseNotSaveableException({ draftId: expenseDraft.id, destination })
     }
   }
 
-  private required<T>(expenseFile: ExpenseFileDbDto, value: T | null | undefined): T {
+  private required<T>(expenseDraft: ExpenseDraftDbDto, value: T | null | undefined): T {
     if (value == null) {
-      throw new ExpenseNotSaveableException({ expenseFileId: expenseFile.id })
+      throw new ExpenseNotSaveableException({ draftId: expenseDraft.id })
     }
     return value
   }

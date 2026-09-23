@@ -1,4 +1,4 @@
-# gastos-api
+# kogane-api
 
 NestJS backend for expense intake from chat (Telegram first, WhatsApp later) with AI extraction. Design and pending decisions live in `../docs/plans/2026-09-22-gastos-bot-ai-design.md`. Structure, rules and tests mirror `clemente/mms-ai`.
 
@@ -13,14 +13,19 @@ NestJS backend for expense intake from chat (Telegram first, WhatsApp later) wit
 ## Commands
 
 ```sh
-pnpm dev                # watch mode with .env.dev
+pnpm local              # watch mode with .env.local (SQLite file:./dev.db)
+pnpm dev                # watch mode with .env.dev (Turso)
 pnpm build
 pnpm lint / pnpm format
 pnpm test               # unit (watch)
 pnpm test:ci            # unit (single run)
 pnpm test:integration   # against local SQLite (.env.test)
 pnpm db:generate        # Prisma client -> src/generated/prisma (git-ignored)
-pnpm telegram:setup     # register webhook + command menu (needs TELEGRAM_* and PUBLIC_URL in .env.dev)
+pnpm db:migrate --name <name>   # new migration on local dev.db + prisma generate
+pnpm db:deploy:dev      # apply pending migrations to Turso (dev)
+pnpm db:seed            # upsert catalogs locally (people, payment methods, budget groups, categories); safe to re-run
+pnpm db:seed:dev        # same on Turso (dev)
+pnpm telegram:setup     # register webhook + command menu (needs TELEGRAM_* and PUBLIC_URL in .env.local)
 ```
 
 ## Structure
@@ -51,7 +56,7 @@ modules/<feature>/
 
 - Exceptions extend `AppException` with their own code: `commons/exceptions/<domain>/<name>.exception.ts` (e.g. `API_KEY_REQUIRED`).
 - Successful responses are wrapped by `ResponseInterceptor`; set the code and message with `@ResponseMessage('CODE', 'Message')`.
-- REST endpoints for gastos-app use `@UseGuards(ApiKeyGuard)` (header `x-api-key`).
+- REST endpoints for kogane-app use `@UseGuards(ApiKeyGuard)` (header `x-api-key`).
 - Routes are versioned by URI with default version `1` (`VERSIONING_OPTIONS`): `@Controller('health')` is served at `/v1/health`. Use `@Version('2')` only for breaking changes. Swagger stays at `/docs`.
 
 ## Tests
@@ -65,7 +70,11 @@ modules/<feature>/
 - Enum-like columns are strings (SQLite has no enums); validate them with `commons/constants/expense.constant.ts` and `catalog.constant.ts`.
 - `aliases` in `Person` and `PaymentMethod` is a JSON array stored as a string.
 - Installments use the `n/m` format (`INSTALLMENT_REGEX`).
-- `ExpenseFile` is every expense received from a chat (text, image or audio). Its open row (`draft` or `awaiting_confirmation`) is the conversation state of that chat; there is no session table. `@@unique([channel, chatId, messageId, itemIndex])` makes webhook retries idempotent (`DuplicateExpenseFileException`).
+- Catalogs live in `src/db/seed/catalog.seed.data.ts` (from the Notion boards). Edit that file and run `pnpm db:seed` to add people, aliases, cards or categories; exactly one person should have `isDefault`.
+- Table names carry a prefix by use (`cat_`, `bud_`, `exp_`, `bot_`, `ai_`, `imp_`) through `@@map`; model names do not.
+- `ExpenseDraft` (`bot_expense_drafts`) is every expense received from a chat while the bot works on it. Its open row (`draft` or `awaiting_confirmation`) is the conversation state of that chat; there is no session table. `@@unique([channel, chatId, messageId, itemIndex])` makes webhook retries idempotent (`DuplicateExpenseDraftException`). Saving a draft creates the record of its destination table, linked by `draftId`.
+- `DailyExpense` (`exp_daily_expenses`) holds only confirmed day-to-day expenses ("gastos sin culpa").
+- Credit cards are `PaymentMethod` rows of type `credit_card` (with `code` and billing days); there is no card table. `showInBot` decides the quick replies. The payment method decides daily vs credit card (`applyPaymentMethodRule`).
 - `AiRequestLog` stores one row per AI call to count usage against the free daily quota.
 - Repositories never leak Prisma errors: map them with `isPrismaError` to `AppException`s.
 
@@ -80,16 +89,20 @@ modules/<feature>/
 ## Conversation and Telegram
 
 - `modules/conversation`: channel-agnostic. `ConversationService.handle(ChannelMessage)` returns `BotReply[]` (+ a `notice` for pressed buttons). Channels only map their updates in and render replies out; user-facing texts (Spanish) live in `conversation.messages.ts`.
-- One `ExpenseFile` per expense; one question at a time (`pendingField`); the latest open file is the one text corrections apply to; open files expire after 30 minutes.
+- One `ExpenseDraft` per expense; one question at a time (`pendingField`); the latest open file is the one text corrections apply to; open files expire after 30 minutes.
 - A message is a correction only if it answers the pending question or **starts with a correction keyword** (`monto`, `persona`, `cuota`, `tarjeta`, …; see `correction-parser.ts`). Anything else is a new expense. ✏️ Corregir sends the next message to the AI with the draft.
-- Button data: `<action>:<expenseFileId>[:<fieldCode>:<value>]` (`bot-action.codec.ts`), always ≤ 64 bytes (Telegram limit).
-- `ExpenseSaverService` creates the record of the destination table and marks the file as saved in one transaction (`ExpenseDBRepository.saveFromExpenseFile`). Credit cards: day ≤ closing day → that month, otherwise the next one.
+- Button data: `<action>:<draftId>[:<fieldCode>:<value>]` (`bot-action.codec.ts`), always ≤ 64 bytes (Telegram limit).
+- `ExpenseSaverService` creates the record of the destination table and marks the draft as saved in one transaction (`ExpenseDBRepository.saveFromExpenseDraft`), `daily` included. Credit cards: day ≤ closing day → that month, otherwise the next one.
 - `modules/telegram`: the webhook (`POST /v1/telegram/webhook`) checks the secret header, answers 200 at once and processes the update in a per-chat in-memory queue (`KeyedQueue`). Chats outside `TELEGRAM_ALLOWED_CHAT_IDS` get a 200 and are ignored.
 
 ## Database (Turso)
 
+Environments: `.env.local` = SQLite `file:./dev.db`, `.env.dev` = Turso (`libsql://…` + `DATABASE_AUTH_TOKEN`), `.env.test` = `file:./test.db`. All are git-ignored.
+
 Prisma Migrate cannot run against remote Turso. Flow:
 
-1. `pnpm db:migrate:dev --name <name>` creates the migration against local `dev.db` and regenerates the client (Prisma 7 `migrate dev` no longer runs `generate`).
-2. `pnpm db:migrate:diff > migration.sql` (or use the generated `prisma/migrations/*/migration.sql`).
-3. `turso db shell <db> < migration.sql`.
+1. `pnpm db:migrate --name <name>` creates the migration against local `dev.db` and regenerates the client (Prisma 7 `migrate dev` no longer runs `generate`).
+2. `pnpm db:deploy:dev` applies the pending `prisma/migrations/*/migration.sql` to Turso (`scripts/db-deploy.ts`, one batch per migration, tracked in `_app_migrations`; safe to re-run).
+3. `pnpm db:seed:dev` if catalogs changed.
+
+Remote Turso does not send SQLite extended codes: a unique violation arrives as `P2039`, not `P2002`. `isPrismaError` handles it; always go through that helper.

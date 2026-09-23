@@ -1,5 +1,5 @@
 import { ChannelMessageType } from '@/commons/constants/conversation.constant'
-import { ExpenseFileChannel } from '@/commons/constants/expense-file.constant'
+import { ExpenseDraftChannel } from '@/commons/constants/expense-draft.constant'
 import { decodeBotAction } from '@/modules/conversation/bot-action.codec'
 import { BotButton, ChannelMessage } from '@/modules/conversation/dto/conversation.types'
 
@@ -24,7 +24,7 @@ export function mapTelegramUpdate({
 
     return {
       message: {
-        channel: ExpenseFileChannel.TELEGRAM,
+        channel: ExpenseDraftChannel.TELEGRAM,
         chatId: String(callbackQuery.message.chat.id),
         messageId: `callback:${callbackQuery.id}`,
         type: ChannelMessageType.ACTION,
@@ -42,7 +42,7 @@ export function mapTelegramUpdate({
 
   return {
     message: {
-      channel: ExpenseFileChannel.TELEGRAM,
+      channel: ExpenseDraftChannel.TELEGRAM,
       chatId: String(message.chat.id),
       messageId: String(message.message_id),
       type: isCommand ? ChannelMessageType.COMMAND : ChannelMessageType.TEXT,

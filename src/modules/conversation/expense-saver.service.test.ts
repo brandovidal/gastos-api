@@ -5,13 +5,13 @@ import { ExpenseDestination, PaymentStatus, SubscriptionPeriod } from '@/commons
 import { ExpenseField } from '@/commons/constants/expense-extraction.constant'
 import { ExpenseNotSaveableException } from '@/commons/exceptions/conversation/expense-not-saveable.exception'
 import { ExpenseDBRepository } from '@/db/models/expense/expenseDB.repository'
-import { CreditCardDBRepository } from '@/db/models/credit-card/creditCardDB.repository'
+import { PaymentMethodDBRepository } from '@/db/models/payment-method/paymentMethodDB.repository'
 
 import { ExpenseSaverService } from './expense-saver.service'
-import { buildExpenseFile, FILE_ID } from './mocks/conversation.mock'
+import { buildExpenseDraft, FILE_ID } from './mocks/conversation.mock'
 
-const mockExpenseDBRepository = { saveFromExpenseFile: vi.fn() }
-const mockCreditCardDBRepository = { findById: vi.fn() }
+const mockExpenseDBRepository = { saveFromExpenseDraft: vi.fn() }
+const mockPaymentMethodDBRepository = { findById: vi.fn() }
 
 describe('ExpenseSaverService', () => {
   let service: ExpenseSaverService
@@ -21,24 +21,48 @@ describe('ExpenseSaverService', () => {
       providers: [
         ExpenseSaverService,
         { provide: ExpenseDBRepository, useValue: mockExpenseDBRepository },
-        { provide: CreditCardDBRepository, useValue: mockCreditCardDBRepository },
+        { provide: PaymentMethodDBRepository, useValue: mockPaymentMethodDBRepository },
       ],
     }).compile()
 
     service = module.get<ExpenseSaverService>(ExpenseSaverService)
-    mockExpenseDBRepository.saveFromExpenseFile.mockResolvedValue({ id: 'expense-1' })
+    mockExpenseDBRepository.saveFromExpenseDraft.mockResolvedValue({ id: 'expense-1' })
   })
 
   afterEach(() => {
     vi.clearAllMocks()
   })
 
-  const savedInput = () => mockExpenseDBRepository.saveFromExpenseFile.mock.calls[0][1]
+  const savedInput = () => mockExpenseDBRepository.saveFromExpenseDraft.mock.calls[0][1]
+
+  it('should save a day-to-day expense in exp_daily_expenses with its payment method and date', async () => {
+    await service.save(buildExpenseDraft({ destination: ExpenseDestination.DAILY }))
+
+    expect(mockExpenseDBRepository.saveFromExpenseDraft).toHaveBeenCalledWith(FILE_ID, expect.anything())
+    expect(savedInput()).toEqual({
+      destination: ExpenseDestination.DAILY,
+      data: expect.objectContaining({
+        description: 'Almuerzo',
+        amount: 25,
+        amountInPen: 25,
+        personId: 'person-danery',
+        paymentMethodId: 'method-yape',
+        categoryId: 'category-food',
+        spentAt: new Date('2026-09-22T00:00:00.000Z'),
+      }),
+    })
+  })
+
+  it('should refuse a day-to-day expense without payment method', async () => {
+    await expect(
+      service.save(buildExpenseDraft({ destination: ExpenseDestination.DAILY, paymentMethodId: null })),
+    ).rejects.toThrow(ExpenseNotSaveableException)
+  })
 
   it('should save a fixed cost in the month of the expense', async () => {
-    await expect(service.save(buildExpenseFile())).resolves.toEqual({ id: 'expense-1' })
+    await expect(service.save(buildExpenseDraft())).resolves.toEqual({ id: 'expense-1' })
 
-    expect(mockExpenseDBRepository.saveFromExpenseFile).toHaveBeenCalledWith(FILE_ID, expect.anything())
+    expect(mockExpenseDBRepository.saveFromExpenseDraft).toHaveBeenCalledWith(FILE_ID, expect.anything())
     expect(savedInput()).toEqual({
       destination: ExpenseDestination.FIXED_COST,
       data: expect.objectContaining({
@@ -55,19 +79,20 @@ describe('ExpenseSaverService', () => {
     })
   })
 
-  it('should use the card closing day for credit card expenses', async () => {
-    mockCreditCardDBRepository.findById.mockResolvedValue({ id: 'card-oh', billingCloseDay: 10 })
+  it('should use the closing day of the card (a payment method) for credit card expenses', async () => {
+    mockPaymentMethodDBRepository.findById.mockResolvedValue({ id: 'method-ohpay', billingCloseDay: 10 })
 
     await service.save(
-      buildExpenseFile({
+      buildExpenseDraft({
         destination: ExpenseDestination.CREDIT_CARD,
-        creditCardId: 'card-oh',
+        paymentMethodId: 'method-ohpay',
         spentAt: new Date('2026-09-15T00:00:00.000Z'),
       }),
     )
 
+    expect(mockPaymentMethodDBRepository.findById).toHaveBeenCalledWith('method-ohpay')
     expect(savedInput().data).toMatchObject({
-      creditCardId: 'card-oh',
+      paymentMethodId: 'method-ohpay',
       paymentStatus: PaymentStatus.PENDING,
       paymentMonth: 10,
       paymentYear: 2026,
@@ -75,16 +100,30 @@ describe('ExpenseSaverService', () => {
     })
   })
 
+  it('should bill a card without closing day (created from the bot) in the month of the purchase', async () => {
+    mockPaymentMethodDBRepository.findById.mockResolvedValue({ id: 'method-new', billingCloseDay: null })
+
+    await service.save(
+      buildExpenseDraft({
+        destination: ExpenseDestination.CREDIT_CARD,
+        paymentMethodId: 'method-new',
+        spentAt: new Date('2026-09-28T00:00:00.000Z'),
+      }),
+    )
+
+    expect(savedInput().data).toMatchObject({ paymentMonth: 9, paymentYear: 2026 })
+  })
+
   it('should save subscriptions with their period and receivables without expense fields', async () => {
     await service.save(
-      buildExpenseFile({ destination: ExpenseDestination.SUBSCRIPTION, period: SubscriptionPeriod.MONTHLY }),
+      buildExpenseDraft({ destination: ExpenseDestination.SUBSCRIPTION, period: SubscriptionPeriod.MONTHLY }),
     )
     expect(savedInput().data).toMatchObject({ period: SubscriptionPeriod.MONTHLY, paymentMonth: 9 })
 
     vi.clearAllMocks()
-    mockExpenseDBRepository.saveFromExpenseFile.mockResolvedValue({ id: 'expense-2' })
+    mockExpenseDBRepository.saveFromExpenseDraft.mockResolvedValue({ id: 'expense-2' })
 
-    await service.save(buildExpenseFile({ destination: ExpenseDestination.RECEIVABLE, amount: 100, currency: 'USD' }))
+    await service.save(buildExpenseDraft({ destination: ExpenseDestination.RECEIVABLE, amount: 100, currency: 'USD' }))
     expect(savedInput().data).toEqual({
       description: 'Almuerzo',
       amount: 100,
@@ -102,15 +141,15 @@ describe('ExpenseSaverService', () => {
     ['a discarded item', { destination: ExpenseDestination.DISCARD }],
     ['a fixed cost without category', { categoryId: null }],
   ])('should refuse %s', async (_case, overrides) => {
-    await expect(service.save(buildExpenseFile(overrides))).rejects.toThrow(ExpenseNotSaveableException)
-    expect(mockExpenseDBRepository.saveFromExpenseFile).not.toHaveBeenCalled()
+    await expect(service.save(buildExpenseDraft(overrides))).rejects.toThrow(ExpenseNotSaveableException)
+    expect(mockExpenseDBRepository.saveFromExpenseDraft).not.toHaveBeenCalled()
   })
 
-  it('should refuse a credit card expense whose card no longer exists', async () => {
-    mockCreditCardDBRepository.findById.mockResolvedValue(null)
+  it('should refuse a credit card expense whose payment method no longer exists', async () => {
+    mockPaymentMethodDBRepository.findById.mockResolvedValue(null)
 
     await expect(
-      service.save(buildExpenseFile({ destination: ExpenseDestination.CREDIT_CARD, creditCardId: 'card-gone' })),
+      service.save(buildExpenseDraft({ destination: ExpenseDestination.CREDIT_CARD, paymentMethodId: 'gone' })),
     ).rejects.toThrow(ExpenseNotSaveableException)
   })
 })

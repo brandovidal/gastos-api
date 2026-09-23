@@ -1,6 +1,7 @@
 import { z } from 'zod'
 
 import { AiProvider } from '@/commons/constants/ai.constant'
+import { PaymentMethodType } from '@/commons/constants/catalog.constant'
 import { CatalogKind, ExpenseField } from '@/commons/constants/expense-extraction.constant'
 
 import { extractedExpenseSchema } from '../validations/expense-extraction.validation'
@@ -13,8 +14,10 @@ export interface CatalogEntry {
   id: string
   name: string
   aliases: string[]
-  creditCardId?: string | null // payment methods linked to a credit card
   isDefault?: boolean // the default person
+  paymentType?: PaymentMethodType // payment methods
+  showInBot?: boolean // payment methods offered as quick replies
+  billingCloseDay?: number | null // credit cards
 }
 
 export interface ExtractionCatalog {
@@ -22,7 +25,7 @@ export interface ExtractionCatalog {
   promptText: string
 }
 
-// Expense fields with real database ids, ready to be stored in ExpenseFile
+// Expense fields with real database ids, ready to be stored in ExpenseDraft
 export interface ResolvedExpenseFields {
   destination: string | null
   description: string | null
@@ -34,7 +37,6 @@ export interface ResolvedExpenseFields {
   period: string | null
   personId: string | null
   paymentMethodId: string | null
-  creditCardId: string | null
   categoryId: string | null
   merchant: string | null
   operationNumber: string | null
@@ -55,7 +57,7 @@ export interface ExpenseExtractionImage {
 export interface ExpenseExtractionInput {
   text?: string
   images?: ExpenseExtractionImage[]
-  expenseFileId?: string
+  draftId?: string
   draft?: Partial<ResolvedExpenseFields> // expense being corrected
 }
 

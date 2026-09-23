@@ -21,7 +21,7 @@ export enum AiErrorCode {
 // Model names change often: override them with env vars (see .env.example)
 export const DEFAULT_GEMINI_MODEL_LITE = 'gemini-3.5-flash-lite'
 export const DEFAULT_GEMINI_MODEL = 'gemini-3.5-flash'
-export const DEFAULT_GROQ_MODEL = 'qwen/qwen3-32b'
+export const DEFAULT_GROQ_MODEL = 'qwen/qwen3.8-27b'
 
 // Free tier requests per day (September 2026)
 export const DEFAULT_GEMINI_LITE_DAILY_LIMIT = 500
@@ -43,3 +43,6 @@ export const DEFAULT_AI_TIMEOUT_MS = 20_000
 export const AI_MAX_STRUCTURE_ATTEMPTS = 2
 
 export const GROQ_BASE_URL = 'https://api.groq.com/openai/v1'
+
+// Groq free tier allows 1,000 output tokens per minute on Qwen: without a cap it reserves more and answers 429
+export const GROQ_MAX_OUTPUT_TOKENS = 900

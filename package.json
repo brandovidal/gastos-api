@@ -1,7 +1,7 @@
 {
-  "name": "gastos-api",
+  "name": "kogane-api",
   "version": "0.0.1",
-  "description": "Gastos API: expense intake from chat with AI",
+  "description": "Kogane API: expense intake from chat with AI",
   "author": "Brando Vidal",
   "private": true,
   "engines": {
@@ -10,9 +10,10 @@
   },
   "scripts": {
     "build": "nest build",
+    "local": "dotenv -e .env.local -- nest start --watch",
     "dev": "dotenv -e .env.dev -- nest start --watch",
     "start": "nest start",
-    "start:debug": "dotenv -e .env.dev -- nest start --debug --watch",
+    "start:debug": "dotenv -e .env.local -- nest start --debug --watch",
     "start:prod": "node dist/main",
     "format": "prettier --write \"src/**/*.ts\"",
     "lint": "eslint \"src/**/*.ts\"",
@@ -24,13 +25,17 @@
     "test:unit": "dotenv -e .env.test -- vitest --project unit",
     "test:integration": "dotenv -e .env.test -- vitest --project integration",
     "db:generate": "prisma generate",
-    "db:migrate:dev": "dotenv -e .env.dev -- sh -c 'prisma migrate dev \"$@\" && prisma generate' --",
+    "db:migrate": "dotenv -e .env.local -- sh -c 'prisma migrate dev \"$@\" && prisma generate' --",
     "db:migrate:diff": "prisma migrate diff --from-migrations prisma/migrations --to-schema prisma/schema.prisma --script",
-    "db:studio": "dotenv -e .env.dev -- prisma studio",
+    "db:studio": "dotenv -e .env.local -- prisma studio",
     "postinstall": "prisma generate",
     "clean": "rimraf node_modules/ dist/ coverage/ src/generated/",
     "prepare": "husky",
-    "telegram:setup": "dotenv -e .env.dev -- tsx scripts/telegram-setup.ts"
+    "telegram:setup": "dotenv -e .env.local -- tsx scripts/telegram-setup.ts",
+    "db:seed": "dotenv -e .env.local -- tsx prisma/seed.ts",
+    "db:seed:dev": "dotenv -e .env.dev -- tsx prisma/seed.ts",
+    "db:deploy": "tsx scripts/db-deploy.ts",
+    "db:deploy:dev": "dotenv -e .env.dev -- tsx scripts/db-deploy.ts"
   },
   "dependencies": {
     "@google/genai": "2.23.0",

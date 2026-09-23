@@ -48,6 +48,7 @@ describe('GroqExtractorService', () => {
 
     const [body, options] = mockCreate.mock.calls[0]
     expect(body.response_format).toEqual({ type: 'json_object' })
+    expect(body.max_completion_tokens).toBe(900)
     expect(body.messages[0].content).toContain('{"type":"object"}')
     expect(body.messages[1]).toEqual({ role: 'user', content: 'almuerzo 25' })
     expect(options).toEqual({ timeout: 1000 })

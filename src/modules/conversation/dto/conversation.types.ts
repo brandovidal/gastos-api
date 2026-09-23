@@ -1,16 +1,16 @@
 import { BotAction, ChannelMessageType } from '@/commons/constants/conversation.constant'
-import { ExpenseFileChannel } from '@/commons/constants/expense-file.constant'
+import { ExpenseDraftChannel } from '@/commons/constants/expense-draft.constant'
 
 export interface BotActionPayload {
   name: BotAction
-  expenseFileId: string
+  draftId: string
   field?: string // SET_FIELD: ExpenseField
   value?: string // SET_FIELD: enum value or catalog id
 }
 
 // A message from any channel, already translated by its adapter (Telegram now, WhatsApp later)
 export interface ChannelMessage {
-  channel: ExpenseFileChannel
+  channel: ExpenseDraftChannel
   chatId: string
   messageId: string
   type: ChannelMessageType

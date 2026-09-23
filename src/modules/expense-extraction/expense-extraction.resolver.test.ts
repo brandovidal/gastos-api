@@ -2,13 +2,31 @@ import { Currency, ExpenseDestination, SubscriptionPeriod } from '@/commons/cons
 import { ExpenseField } from '@/commons/constants/expense-extraction.constant'
 
 import { buildExtractionCatalog } from './expense-extraction.catalog'
-import { completeExpense, resolveExpense } from './expense-extraction.resolver'
+import { applyPaymentMethodRule, completeExpense, resolveExpense } from './expense-extraction.resolver'
+import { ResolvedExpenseFields } from './dto/expense-extraction.types'
 import { mockCatalogSource, mockExtractedExpense } from './mocks/expense-extraction.mock'
 
-describe('resolveExpense', () => {
-  const catalog = buildExtractionCatalog(mockCatalogSource)
-  const today = '2026-09-22'
+const catalog = buildExtractionCatalog(mockCatalogSource)
+const today = '2026-09-22'
 
+const base: ResolvedExpenseFields = {
+  destination: ExpenseDestination.DAILY,
+  description: 'Almuerzo',
+  amount: 25,
+  currency: Currency.PEN,
+  spentAt: today,
+  expenseType: null,
+  installment: null,
+  period: null,
+  personId: 'person-brando',
+  paymentMethodId: 'method-yape',
+  categoryId: null,
+  merchant: null,
+  operationNumber: null,
+  notes: null,
+}
+
+describe('resolveExpense', () => {
   it('should map refs to database ids and apply defaults', () => {
     const expense = resolveExpense(mockExtractedExpense, catalog, today)
 
@@ -19,21 +37,34 @@ describe('resolveExpense', () => {
     expect(expense.spentAt).toBe(today)
   })
 
-  it('should ask for the destination when the AI did not decide it', () => {
-    const expense = resolveExpense(mockExtractedExpense, catalog, today)
-
-    expect(expense.missingFields).toEqual([ExpenseField.DESTINATION])
+  it('should ask for the destination when the AI did not decide it and the method is not a card', () => {
+    expect(resolveExpense(mockExtractedExpense, catalog, today).missingFields).toEqual([ExpenseField.DESTINATION])
   })
 
   it('should drop invented refs and ask for those fields', () => {
     const expense = resolveExpense(
-      { ...mockExtractedExpense, destination: ExpenseDestination.FIXED_COST, categoryRef: 'x1' },
+      {
+        ...mockExtractedExpense,
+        destination: ExpenseDestination.FIXED_COST,
+        categoryRef: 'x1',
+        paymentMethodRef: 'pm9',
+      },
       catalog,
       today,
     )
 
     expect(expense.categoryId).toBeNull()
-    expect(expense.missingFields).toEqual([ExpenseField.CATEGORY])
+    expect(expense.missingFields).toEqual([ExpenseField.CATEGORY, ExpenseField.PAYMENT_METHOD])
+  })
+
+  it('should ask how it was paid for day-to-day expenses', () => {
+    const expense = resolveExpense(
+      { ...mockExtractedExpense, destination: ExpenseDestination.DAILY, paymentMethodRef: null },
+      catalog,
+      today,
+    )
+
+    expect(expense.missingFields).toEqual([ExpenseField.PAYMENT_METHOD])
   })
 
   it('should assign the default person when the message does not say who (D19)', () => {
@@ -50,25 +81,6 @@ describe('resolveExpense', () => {
     expect(resolveExpense({ ...mockExtractedExpense, personRef: null }, withoutDefault, today).personId).toBeNull()
   })
 
-  it('should fill the credit card and destination from a payment method linked to a card', () => {
-    const expense = resolveExpense({ ...mockExtractedExpense, paymentMethodRef: 'pm2' }, catalog, today)
-
-    expect(expense.creditCardId).toBe('card-oh')
-    expect(expense.destination).toBe(ExpenseDestination.CREDIT_CARD)
-    expect(expense.missingFields).toEqual([])
-  })
-
-  it('should keep the destination chosen by the AI', () => {
-    const expense = resolveExpense(
-      { ...mockExtractedExpense, paymentMethodRef: 'pm2', destination: ExpenseDestination.SUBSCRIPTION },
-      catalog,
-      today,
-    )
-
-    expect(expense.destination).toBe(ExpenseDestination.SUBSCRIPTION)
-    expect(expense.missingFields).toEqual([ExpenseField.PERIOD])
-  })
-
   it('should store confidence with field names and flag low confidence values', () => {
     const expense = resolveExpense(mockExtractedExpense, catalog, today)
 
@@ -77,44 +89,49 @@ describe('resolveExpense', () => {
   })
 })
 
+describe('applyPaymentMethodRule', () => {
+  it.each([
+    [
+      'a expense draft paid with a credit card',
+      ExpenseDestination.DAILY,
+      'method-ohpay',
+      ExpenseDestination.CREDIT_CARD,
+    ],
+    ['an undecided expense paid with a credit card', null, 'method-ohpay', ExpenseDestination.CREDIT_CARD],
+    ['a card expense paid with Yape', ExpenseDestination.CREDIT_CARD, 'method-yape', ExpenseDestination.DAILY],
+    ['a fixed cost paid with a card', ExpenseDestination.FIXED_COST, 'method-ohpay', ExpenseDestination.FIXED_COST],
+    ['a expense draft paid with Yape', ExpenseDestination.DAILY, 'method-yape', ExpenseDestination.DAILY],
+    ['an expense without payment method', ExpenseDestination.CREDIT_CARD, null, ExpenseDestination.CREDIT_CARD],
+  ])('%s', (_case, destination, paymentMethodId, expected) => {
+    expect(applyPaymentMethodRule({ ...base, destination, paymentMethodId }, catalog).destination).toBe(expected)
+  })
+})
+
 describe('completeExpense', () => {
-  const base = {
-    destination: ExpenseDestination.SUBSCRIPTION,
-    description: 'Netflix',
-    amount: 45,
-    currency: Currency.PEN,
-    spentAt: '2026-09-22',
-    expenseType: null,
-    installment: null,
-    period: SubscriptionPeriod.MONTHLY,
-    personId: 'person-brando',
-    paymentMethodId: 'method-yape',
-    creditCardId: null,
-    categoryId: null,
-    merchant: null,
-    operationNumber: null,
-    notes: null,
-  }
+  it('should require concept, amount and payment method for day-to-day expenses', () => {
+    expect(completeExpense(base, {}, catalog).missingFields).toEqual([])
+    expect(completeExpense({ ...base, paymentMethodId: null, amount: null }, {}, catalog).missingFields).toEqual([
+      ExpenseField.AMOUNT,
+      ExpenseField.PAYMENT_METHOD,
+    ])
+  })
 
   it('should not require a category for subscriptions', () => {
-    expect(completeExpense(base, {}).missingFields).toEqual([])
+    const subscription = { ...base, destination: ExpenseDestination.SUBSCRIPTION, period: SubscriptionPeriod.MONTHLY }
+
+    expect(completeExpense(subscription, {}, catalog).missingFields).toEqual([])
   })
 
   it('should require nothing for discarded items', () => {
     expect(
-      completeExpense({ ...base, destination: ExpenseDestination.DISCARD, amount: null }, {}).missingFields,
+      completeExpense({ ...base, destination: ExpenseDestination.DISCARD, amount: null }, {}, catalog).missingFields,
     ).toEqual([])
   })
 
-  it('should turn an expense with a credit card and no destination into a credit card expense', () => {
-    const expense = completeExpense({ ...base, destination: null, creditCardId: 'card-oh' }, {})
+  it('should turn an expense paid with a credit card and no destination into a credit card expense', () => {
+    const expense = completeExpense({ ...base, destination: null, paymentMethodId: 'method-ohpay' }, {}, catalog)
 
     expect(expense.destination).toBe(ExpenseDestination.CREDIT_CARD)
-  })
-
-  it('should require the credit card for credit card expenses', () => {
-    const expense = completeExpense({ ...base, destination: ExpenseDestination.CREDIT_CARD }, {})
-
-    expect(expense.missingFields).toEqual([ExpenseField.CREDIT_CARD])
+    expect(expense.missingFields).toEqual([])
   })
 })

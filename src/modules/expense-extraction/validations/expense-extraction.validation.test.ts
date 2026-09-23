@@ -31,4 +31,28 @@ describe('expenseExtractionSchema', () => {
     expect(expenseExtractionJsonSchema.type).toBe('object')
     expect(expenseExtractionJsonSchema.required).toEqual(['expenses'])
   })
+
+  it('should not use keywords that make Gemini reject the schema (400 INVALID_ARGUMENT)', () => {
+    const offending: string[] = []
+    const walk = (node: unknown, path: string) => {
+      if (!node || typeof node !== 'object') return
+      for (const [key, value] of Object.entries(node)) {
+        if (key === 'additionalProperties' && typeof value === 'object') offending.push(path)
+        if (key === 'propertyNames') offending.push(`${path}.propertyNames`)
+        if (key === 'maxItems') offending.push(`${path}.maxItems`)
+        walk(value, `${path}.${key}`)
+      }
+    }
+    walk(expenseExtractionJsonSchema, '$')
+
+    expect(offending).toEqual([])
+  })
+
+  it('should accept partial confidence and drop unknown confidence keys', () => {
+    const result = expenseExtractionSchema.parse({
+      expenses: [{ ...mockExtractedExpense, confidence: { amount: 0.9, madeUp: 0.2 } }],
+    })
+
+    expect(result.expenses[0].confidence).toEqual({ amount: 0.9 })
+  })
 })

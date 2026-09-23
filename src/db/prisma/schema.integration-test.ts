@@ -3,7 +3,18 @@ import { ConfigService } from '@nestjs/config'
 import { PrismaService } from './prisma.service'
 
 import { PaymentMethodType } from '@/commons/constants/catalog.constant'
-import { ExpenseType, PaymentStatus, ReceivableStatus, SubscriptionPeriod } from '@/commons/constants/expense.constant'
+import {
+  ExpenseDestination,
+  ExpenseType,
+  PaymentStatus,
+  ReceivableStatus,
+  SubscriptionPeriod,
+} from '@/commons/constants/expense.constant'
+import {
+  ExpenseDraftChannel,
+  ExpenseDraftInputType,
+  ExpenseDraftStatus,
+} from '@/commons/constants/expense-draft.constant'
 
 describe('Prisma schema (integration)', () => {
   let prisma: PrismaService
@@ -19,15 +30,66 @@ describe('Prisma schema (integration)', () => {
     await prisma.onModuleDestroy()
   })
 
-  it('should create catalogs and one expense per table with unified fields', async () => {
+  it('should use the table prefixes by use', async () => {
+    const tables = await prisma.$queryRaw<{ name: string }[]>`
+      SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE '\\_prisma%' ESCAPE '\\' AND name NOT LIKE 'sqlite%'`
+
+    expect(tables.map((table) => table.name).sort()).toEqual([
+      'ai_request_logs',
+      'bot_expense_drafts',
+      'bud_budget_groups',
+      'bud_category_budgets',
+      'bud_monthly_budgets',
+      'cat_categories',
+      'cat_payment_methods',
+      'cat_people',
+      'exp_accounts_receivable',
+      'exp_credit_card_expenses',
+      'exp_daily_expenses',
+      'exp_fixed_costs',
+      'exp_recurring_expenses',
+      'exp_subscriptions',
+    ])
+  })
+
+  it('should create catalogs, a chat draft and one expense per table with unified fields', async () => {
     const person = await prisma.person.create({ data: { name: 'Test Person', aliases: JSON.stringify(['tp']) } })
     const category = await prisma.category.create({ data: { name: 'Test Category' } })
-    const creditCard = await prisma.creditCard.create({
-      data: { code: 'TST', name: 'Test Card', billingCloseDay: 20, paymentDueDay: 5 },
-    })
     const wallet = await prisma.paymentMethod.create({ data: { name: 'Test Wallet', type: PaymentMethodType.WALLET } })
-    const cardMethod = await prisma.paymentMethod.create({
-      data: { name: 'Test Card Method', type: PaymentMethodType.CREDIT_CARD, creditCardId: creditCard.id },
+    const card = await prisma.paymentMethod.create({
+      data: {
+        name: 'Test Card',
+        type: PaymentMethodType.CREDIT_CARD,
+        code: 'TST',
+        billingCloseDay: 20,
+        paymentDueDay: 5,
+      },
+    })
+
+    const draft = await prisma.expenseDraft.create({
+      data: {
+        channel: ExpenseDraftChannel.TELEGRAM,
+        chatId: 'schema-chat',
+        messageId: '1',
+        inputType: ExpenseDraftInputType.TEXT,
+        destination: ExpenseDestination.DAILY,
+        description: 'Almuerzo',
+        amount: 25,
+        personId: person.id,
+        paymentMethodId: wallet.id,
+        status: ExpenseDraftStatus.SAVED,
+      },
+    })
+
+    const daily = await prisma.dailyExpense.create({
+      data: {
+        description: 'Café',
+        amount: 8,
+        spentAt: new Date('2026-09-22T00:00:00.000Z'),
+        personId: person.id,
+        paymentMethodId: wallet.id,
+        draftId: draft.id,
+      },
     })
 
     const base = { amount: 50, personId: person.id, paymentMonth: 9, paymentYear: 2026 }
@@ -39,40 +101,36 @@ describe('Prisma schema (integration)', () => {
       data: { ...base, description: 'Streaming', period: SubscriptionPeriod.MONTHLY },
     })
     const cardExpense = await prisma.creditCardExpense.create({
-      data: { ...base, description: 'Laptop', creditCardId: creditCard.id, installment: '2/6' },
+      data: { ...base, description: 'Laptop', paymentMethodId: card.id, installment: '2/6' },
     })
     const receivable = await prisma.accountReceivable.create({
       data: { description: 'Loan', amount: 100, personId: person.id },
     })
 
+    expect(draft.status).toBe(ExpenseDraftStatus.SAVED)
+    expect(daily.expenseType).toBe(ExpenseType.ESSENTIAL)
+    expect(daily.currency).toBe('PEN')
     expect(fixedCost.expenseType).toBe(ExpenseType.ESSENTIAL)
     expect(fixedCost.paymentStatus).toBe(PaymentStatus.NOT_STARTED)
-    expect(fixedCost.currency).toBe('PEN')
     expect(subscription.categoryId).toBeNull()
     expect(cardExpense.paymentStatus).toBe(PaymentStatus.PENDING)
     expect(receivable.status).toBe(ReceivableStatus.PENDING)
 
-    const card = await prisma.creditCard.findUniqueOrThrow({
-      where: { id: creditCard.id },
-      include: { paymentMethod: true, expenses: true },
+    const savedCard = await prisma.paymentMethod.findUniqueOrThrow({
+      where: { id: card.id },
+      include: { creditCardExpenses: true },
     })
 
-    expect(card.paymentMethod?.id).toBe(cardMethod.id)
-    expect(card.expenses).toHaveLength(1)
+    expect(savedCard.showInBot).toBe(true)
+    expect(savedCard.billingCloseDay).toBe(20)
+    expect(savedCard.creditCardExpenses).toHaveLength(1)
   })
 
-  it('should reject a payment method already linked to the same credit card', async () => {
-    const creditCard = await prisma.creditCard.create({
-      data: { code: 'DUP', name: 'Dup Card', billingCloseDay: 1, paymentDueDay: 15 },
-    })
-    await prisma.paymentMethod.create({
-      data: { name: 'Dup A', type: PaymentMethodType.CREDIT_CARD, creditCardId: creditCard.id },
-    })
+  it('should reject two payment methods with the same card code', async () => {
+    await prisma.paymentMethod.create({ data: { name: 'Dup A', type: PaymentMethodType.CREDIT_CARD, code: 'DUP' } })
 
     await expect(
-      prisma.paymentMethod.create({
-        data: { name: 'Dup B', type: PaymentMethodType.CREDIT_CARD, creditCardId: creditCard.id },
-      }),
+      prisma.paymentMethod.create({ data: { name: 'Dup B', type: PaymentMethodType.CREDIT_CARD, code: 'DUP' } }),
     ).rejects.toThrow()
   })
 })

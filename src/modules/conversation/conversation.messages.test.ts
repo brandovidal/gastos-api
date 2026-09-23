@@ -1,16 +1,19 @@
 import { ExpenseDestination } from '@/commons/constants/expense.constant'
-import { ExpenseFileStatus } from '@/commons/constants/expense-file.constant'
+import { ExpenseDraftStatus } from '@/commons/constants/expense-draft.constant'
 import { ExpenseField } from '@/commons/constants/expense-extraction.constant'
 
 import { decodeBotAction } from './bot-action.codec'
 import {
   buildExpenseReply,
+  buildInboxReplies,
+  buildNewPaymentMethodReply,
+  toNewPaymentMethodName,
   formatAmount,
   formatMonthlyTotals,
   formatRecent,
   formatSummary,
 } from './conversation.messages'
-import { buildExpenseFile, mockCatalog } from './mocks/conversation.mock'
+import { buildExpenseDraft, FILE_ID, mockCatalog } from './mocks/conversation.mock'
 
 describe('conversation messages', () => {
   it('should format amounts by currency', () => {
@@ -20,7 +23,7 @@ describe('conversation messages', () => {
   })
 
   it('should summarize the expense with catalog names and ❓ on doubtful fields', () => {
-    const summary = formatSummary(buildExpenseFile({ confidence: { personId: 0.4 } }), mockCatalog)
+    const summary = formatSummary(buildExpenseDraft({ confidence: { personId: 0.4 } }), mockCatalog)
 
     expect(summary).toContain('🧾 <b>Almuerzo</b> — S/ 25.00')
     expect(summary).toContain('👤 Danery ❓')
@@ -30,13 +33,13 @@ describe('conversation messages', () => {
   })
 
   it('should escape HTML coming from the user', () => {
-    expect(formatSummary(buildExpenseFile({ description: '<b>x</b> & y' }), mockCatalog)).toContain(
+    expect(formatSummary(buildExpenseDraft({ description: '<b>x</b> & y' }), mockCatalog)).toContain(
       '&lt;b&gt;x&lt;/b&gt; &amp; y',
     )
   })
 
   it('should show the confirmation buttons when nothing is missing', () => {
-    const reply = buildExpenseReply(buildExpenseFile(), mockCatalog)
+    const reply = buildExpenseReply(buildExpenseDraft(), mockCatalog)
 
     expect(reply.buttons?.flat().map((button) => button.label)).toEqual([
       '✅ Guardar',
@@ -48,14 +51,15 @@ describe('conversation messages', () => {
 
   it('should ask the pending field with quick replies from the catalog', () => {
     const reply = buildExpenseReply(
-      buildExpenseFile({ status: ExpenseFileStatus.DRAFT, pendingField: ExpenseField.PAYMENT_METHOD }),
+      buildExpenseDraft({ status: ExpenseDraftStatus.DRAFT, pendingField: ExpenseField.PAYMENT_METHOD }),
       mockCatalog,
     )
     const buttons = reply.buttons?.flat() ?? []
 
     expect(reply.text).toContain('¿Con qué pagaste?')
-    expect(buttons.map((button) => button.label)).toEqual(['Yape', 'OhPay', '❌ Descartar'])
-    expect(decodeBotAction(buttons[1].data)).toMatchObject({
+    // Every payment method marked to show in the bot, cards included; "Tarjeta Oculta" is hidden
+    expect(buttons.map((button) => button.label)).toEqual(['OhPay', 'Yape', '❌ Descartar'])
+    expect(decodeBotAction(buttons[0].data)).toMatchObject({
       field: ExpenseField.PAYMENT_METHOD,
       value: 'method-ohpay',
     })
@@ -64,11 +68,16 @@ describe('conversation messages', () => {
 
   it('should offer every destination but "discard" when asking the type', () => {
     const reply = buildExpenseReply(
-      buildExpenseFile({ status: ExpenseFileStatus.DRAFT, pendingField: ExpenseField.DESTINATION, destination: null }),
+      buildExpenseDraft({
+        status: ExpenseDraftStatus.DRAFT,
+        pendingField: ExpenseField.DESTINATION,
+        destination: null,
+      }),
       mockCatalog,
     )
 
     expect(reply.buttons?.flat().map((button) => button.label)).toEqual([
+      'Día a día',
       'Costo fijo',
       'Plataforma',
       'Tarjeta',
@@ -78,7 +87,7 @@ describe('conversation messages', () => {
   })
 
   it('should list recent expenses', () => {
-    expect(formatRecent([buildExpenseFile()])).toContain('• 22/09/2026 Almuerzo — S/ 25.00 (Costo fijo)')
+    expect(formatRecent([buildExpenseDraft()])).toContain('• 22/09/2026 Almuerzo — S/ 25.00 (Costo fijo)')
     expect(formatRecent([])).toBe('Todavía no guardaste gastos desde aquí.')
   })
 
@@ -111,5 +120,45 @@ describe('conversation messages', () => {
     expect(text).toContain('• Me deben (pendiente): S/ 50.00')
     expect(text).toContain('• Brando: S/ 100.00 + US$ 10.00')
     expect(text).not.toContain('• Danery')
+  })
+
+  it('should list the inbox with Retomar and Descartar, showing the raw text of failed ones', () => {
+    const replies = buildInboxReplies(
+      [
+        buildExpenseDraft({ status: ExpenseDraftStatus.INBOX }),
+        buildExpenseDraft({ id: 'failed-1', status: ExpenseDraftStatus.FAILED, rawText: 'algo raro <b>' }),
+      ],
+      7,
+      mockCatalog,
+    )
+
+    expect(replies[0].text).toContain('Bandeja</b> (7) · mostrando los 2 más recientes')
+    expect(replies[1].text).toContain('Almuerzo')
+    expect(replies[1].buttons?.[0].map((button) => button.label)).toEqual(['↩️ Retomar', '❌ Descartar'])
+    expect(decodeBotAction(replies[1].buttons?.[0][0].data ?? '')).toEqual({ name: 're', draftId: FILE_ID })
+    expect(replies[2].text).toContain('algo raro &lt;b&gt;')
+    expect(buildInboxReplies([], 0, mockCatalog)).toEqual([{ text: '📥 La bandeja está vacía.' }])
+  })
+
+  it('should offer to create an unknown payment method, one button per type, under 64 bytes', () => {
+    const reply = buildNewPaymentMethodReply(FILE_ID, toNewPaymentMethodName('Tarjeta Ripley: la dorada con puntos'))
+    const buttons = reply.buttons?.flat() ?? []
+
+    expect(reply.text).toContain('No conozco <b>Tarjeta Ripley la do</b>')
+    expect(buttons.map((button) => button.label)).toEqual([
+      'Débito',
+      'Billetera',
+      'Tarjeta de crédito',
+      'Efectivo',
+      'No',
+    ])
+    expect(decodeBotAction(buttons[2].data)).toEqual({
+      name: 'new',
+      draftId: FILE_ID,
+      field: 'credit_card',
+      value: 'Tarjeta Ripley la do',
+    })
+    expect(decodeBotAction(buttons[4].data)).toEqual({ name: 'new', draftId: FILE_ID })
+    expect(buttons.every((button) => Buffer.byteLength(button.data) <= 64)).toBe(true)
   })
 })

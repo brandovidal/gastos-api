@@ -21,7 +21,6 @@ import { AiInputPart, GenerateJsonResponse } from '@/providers/ai/dto/ai-extract
 import { AiRequestLogDBRepository } from '@/db/models/ai-request-log/aiRequestLogDB.repository'
 import { PersonDBRepository } from '@/db/models/person/personDB.repository'
 import { PaymentMethodDBRepository } from '@/db/models/payment-method/paymentMethodDB.repository'
-import { CreditCardDBRepository } from '@/db/models/credit-card/creditCardDB.repository'
 import { CategoryDBRepository } from '@/db/models/category/categoryDB.repository'
 
 import { buildExtractionCatalog } from './expense-extraction.catalog'
@@ -56,19 +55,17 @@ export class ExpenseExtractionService {
     private readonly aiRequestLogDBRepository: AiRequestLogDBRepository,
     private readonly personDBRepository: PersonDBRepository,
     private readonly paymentMethodDBRepository: PaymentMethodDBRepository,
-    private readonly creditCardDBRepository: CreditCardDBRepository,
     private readonly categoryDBRepository: CategoryDBRepository,
   ) {}
 
   async loadCatalog(): Promise<ExtractionCatalog> {
-    const [people, paymentMethods, creditCards, categories] = await Promise.all([
+    const [people, paymentMethods, categories] = await Promise.all([
       this.personDBRepository.findActive(),
       this.paymentMethodDBRepository.findActive(),
-      this.creditCardDBRepository.findAll(),
       this.categoryDBRepository.findAll(),
     ])
 
-    return buildExtractionCatalog({ people, paymentMethods, creditCards, categories })
+    return buildExtractionCatalog({ people, paymentMethods, categories })
   }
 
   // Corrections the bot understands without calling the AI; null means "ask the AI"
@@ -93,7 +90,7 @@ export class ExpenseExtractionService {
         continue
       }
 
-      const output = await this.tryCandidate(candidate, instructions, parts, input.expenseFileId)
+      const output = await this.tryCandidate(candidate, instructions, parts, input.draftId)
 
       if (output) {
         return {
@@ -104,7 +101,7 @@ export class ExpenseExtractionService {
       }
     }
 
-    throw new ExpenseExtractionFailedException({ expenseFileId: input.expenseFileId })
+    throw new ExpenseExtractionFailedException({ draftId: input.draftId })
   }
 
   // Text: Flash-Lite, then Groq. Images: Flash-Lite, then Flash (Groq is text-only).
@@ -129,7 +126,7 @@ export class ExpenseExtractionService {
     candidate: ModelCandidate,
     instructions: string,
     parts: AiInputPart[],
-    expenseFileId?: string,
+    draftId?: string,
   ): Promise<ExtractionOutput | null> {
     const provider = this.aiExtractorProviderStrategy.getProvider(candidate.provider)
     const { timeoutMs } = this.configService.getOrThrow<AiConfig>('ai')
@@ -149,14 +146,14 @@ export class ExpenseExtractionService {
         })
       } catch (error) {
         this.logger.warn(`[tryCandidate] ${candidate.provider}/${candidate.model} failed: ${(error as Error).message}`)
-        await this.logRequest(candidate, expenseFileId, Date.now() - startedAt, AiErrorCode.PROVIDER_ERROR)
+        await this.logRequest(candidate, draftId, Date.now() - startedAt, AiErrorCode.PROVIDER_ERROR)
         return null
       }
 
       const parsed = this.parseOutput(response.text)
       await this.logRequest(
         candidate,
-        expenseFileId,
+        draftId,
         Date.now() - startedAt,
         parsed.success ? undefined : AiErrorCode.INVALID_OUTPUT,
         response,
@@ -207,7 +204,7 @@ export class ExpenseExtractionService {
 
   private async logRequest(
     { provider, model }: ModelCandidate,
-    expenseFileId: string | undefined,
+    draftId: string | undefined,
     latencyMs: number,
     errorCode?: AiErrorCode,
     response?: GenerateJsonResponse,
@@ -217,7 +214,7 @@ export class ExpenseExtractionService {
         provider,
         model,
         operation: AiOperation.EXTRACT,
-        expenseFileId: expenseFileId ?? null,
+        draftId: draftId ?? null,
         success: !errorCode,
         errorCode: errorCode ?? null,
         inputTokens: response?.inputTokens ?? null,

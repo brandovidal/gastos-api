@@ -4,6 +4,7 @@ export enum Currency {
 }
 
 export enum ExpenseDestination {
+  DAILY = 'daily', // day-to-day expenses ("gastos sin culpa"), saved in exp_daily_expenses
   FIXED_COST = 'fixed_cost',
   SUBSCRIPTION = 'subscription',
   CREDIT_CARD = 'credit_card',

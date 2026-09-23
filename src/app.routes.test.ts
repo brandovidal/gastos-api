@@ -8,7 +8,7 @@ import { VERSIONING_OPTIONS } from '@/commons/constants/versioning.constant'
 import { PrismaService } from '@/db/prisma/prisma.service'
 import { HealthController } from '@/modules/health/health.controller'
 
-// gastos-app and the Telegram webhook call these URLs by hand, so a route that moves out of /v1 is an outage.
+// kogane-app and the Telegram webhook call these URLs by hand, so a route that moves out of /v1 is an outage.
 describe('Route table', () => {
   let app: INestApplication
 

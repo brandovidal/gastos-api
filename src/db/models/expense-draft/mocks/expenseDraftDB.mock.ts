@@ -1,28 +1,32 @@
-import { ExpenseFile } from '@/generated/prisma/client'
+import { ExpenseDraft } from '@/generated/prisma/client'
 
-import { ExpenseFileChannel, ExpenseFileInputType, ExpenseFileStatus } from '@/commons/constants/expense-file.constant'
+import {
+  ExpenseDraftChannel,
+  ExpenseDraftInputType,
+  ExpenseDraftStatus,
+} from '@/commons/constants/expense-draft.constant'
 
-import { CreateExpenseFileDbDto } from '../expenseFileDB.dto'
+import { CreateExpenseDraftDbDto } from '../expenseDraftDB.dto'
 
-export const mockCreateExpenseFile: CreateExpenseFileDbDto = {
-  channel: ExpenseFileChannel.TELEGRAM,
+export const mockCreateExpenseDraft: CreateExpenseDraftDbDto = {
+  channel: ExpenseDraftChannel.TELEGRAM,
   chatId: '123456',
   messageId: '42',
-  inputType: ExpenseFileInputType.TEXT,
+  inputType: ExpenseDraftInputType.TEXT,
   rawText: 'almuerzo 25 soles yape',
 }
 
-export const mockExpenseFileRow: ExpenseFile = {
+export const mockExpenseDraftRow: ExpenseDraft = {
   id: 'file-1',
-  channel: ExpenseFileChannel.TELEGRAM,
+  channel: ExpenseDraftChannel.TELEGRAM,
   chatId: '123456',
   messageId: '42',
   itemIndex: 0,
-  inputType: ExpenseFileInputType.TEXT,
+  inputType: ExpenseDraftInputType.TEXT,
   documentType: null,
   rawText: 'almuerzo 25 soles yape',
   mediaFileId: null,
-  status: ExpenseFileStatus.DRAFT,
+  status: ExpenseDraftStatus.DRAFT,
   pendingField: null,
   destination: null,
   description: 'almuerzo',

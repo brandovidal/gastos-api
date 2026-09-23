@@ -6,16 +6,16 @@ import { FILE_ID } from './mocks/conversation.mock'
 
 describe('bot action codec', () => {
   it('should round-trip simple actions', () => {
-    const data = encodeBotAction({ name: BotAction.SAVE, expenseFileId: FILE_ID })
+    const data = encodeBotAction({ name: BotAction.SAVE, draftId: FILE_ID })
 
     expect(data).toBe(`ok:${FILE_ID}`)
-    expect(decodeBotAction(data)).toEqual({ name: BotAction.SAVE, expenseFileId: FILE_ID })
+    expect(decodeBotAction(data)).toEqual({ name: BotAction.SAVE, draftId: FILE_ID })
   })
 
   it('should round-trip field values with a short field code and stay under 64 bytes', () => {
     const payload = {
       name: BotAction.SET_FIELD,
-      expenseFileId: FILE_ID,
+      draftId: FILE_ID,
       field: ExpenseField.PAYMENT_METHOD,
       value: 'ckpaymentmethod00000000001',
     }

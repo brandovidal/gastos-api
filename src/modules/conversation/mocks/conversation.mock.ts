@@ -1,7 +1,11 @@
 import { ExpenseDestination, ExpenseType } from '@/commons/constants/expense.constant'
-import { ExpenseFileChannel, ExpenseFileInputType, ExpenseFileStatus } from '@/commons/constants/expense-file.constant'
+import {
+  ExpenseDraftChannel,
+  ExpenseDraftInputType,
+  ExpenseDraftStatus,
+} from '@/commons/constants/expense-draft.constant'
 import { ChannelMessageType } from '@/commons/constants/conversation.constant'
-import { ExpenseFileDbDto } from '@/db/models/expense-file/expenseFileDB.dto'
+import { ExpenseDraftDbDto } from '@/db/models/expense-draft/expenseDraftDB.dto'
 import { buildExtractionCatalog } from '@/modules/expense-extraction/expense-extraction.catalog'
 import { mockCatalogSource } from '@/modules/expense-extraction/mocks/expense-extraction.mock'
 import { ResolvedExpense } from '@/modules/expense-extraction/dto/expense-extraction.types'
@@ -9,21 +13,21 @@ import { ResolvedExpense } from '@/modules/expense-extraction/dto/expense-extrac
 import { ChannelMessage } from '../dto/conversation.types'
 
 export const CHAT_ID = '555'
-export const FILE_ID = 'ckexpensefile0000000000001' // cuid-like: 25+ chars
+export const FILE_ID = 'ckdailyexpense000000000001' // cuid-like: 25+ chars
 
 export const mockCatalog = buildExtractionCatalog(mockCatalogSource)
 
-export const buildExpenseFile = (overrides: Partial<ExpenseFileDbDto> = {}): ExpenseFileDbDto => ({
+export const buildExpenseDraft = (overrides: Partial<ExpenseDraftDbDto> = {}): ExpenseDraftDbDto => ({
   id: FILE_ID,
-  channel: ExpenseFileChannel.TELEGRAM,
+  channel: ExpenseDraftChannel.TELEGRAM,
   chatId: CHAT_ID,
   messageId: '10',
   itemIndex: 0,
-  inputType: ExpenseFileInputType.TEXT,
+  inputType: ExpenseDraftInputType.TEXT,
   documentType: null,
   rawText: 'almuerzo 25 soles con yape',
   mediaFileId: null,
-  status: ExpenseFileStatus.AWAITING_CONFIRMATION,
+  status: ExpenseDraftStatus.AWAITING_CONFIRMATION,
   pendingField: null,
   destination: ExpenseDestination.FIXED_COST,
   description: 'Almuerzo',
@@ -39,7 +43,6 @@ export const buildExpenseFile = (overrides: Partial<ExpenseFileDbDto> = {}): Exp
   notes: null,
   personId: 'person-danery',
   paymentMethodId: 'method-yape',
-  creditCardId: null,
   categoryId: 'category-food',
   confidence: {},
   missingFields: [],
@@ -60,7 +63,6 @@ export const buildResolvedExpense = (overrides: Partial<ResolvedExpense> = {}): 
   period: null,
   personId: 'person-danery',
   paymentMethodId: 'method-yape',
-  creditCardId: null,
   categoryId: 'category-food',
   merchant: null,
   operationNumber: null,
@@ -72,7 +74,7 @@ export const buildResolvedExpense = (overrides: Partial<ResolvedExpense> = {}): 
 })
 
 export const textMessage = (text: string, messageId = '11'): ChannelMessage => ({
-  channel: ExpenseFileChannel.TELEGRAM,
+  channel: ExpenseDraftChannel.TELEGRAM,
   chatId: CHAT_ID,
   messageId,
   type: ChannelMessageType.TEXT,

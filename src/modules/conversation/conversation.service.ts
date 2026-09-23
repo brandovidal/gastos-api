@@ -4,23 +4,27 @@ import { APP_TIME_ZONE } from '@/commons/constants/app.constant'
 import {
   BotAction,
   BotCommand,
+  CARD_DAYS_FIELD_PREFIX,
   ChannelMessageType,
   FREE_CORRECTION_FIELD,
+  INBOX_LIMIT,
   RECENT_EXPENSES_LIMIT,
 } from '@/commons/constants/conversation.constant'
+import { PaymentMethodType } from '@/commons/constants/catalog.constant'
 import { ExpenseDestination, SubscriptionPeriod } from '@/commons/constants/expense.constant'
 import {
-  EXPENSE_FILE_EXPIRATION_MINUTES,
-  ExpenseFileInputType,
-  ExpenseFileStatus,
-  OPEN_EXPENSE_FILE_STATUSES,
-} from '@/commons/constants/expense-file.constant'
+  EXPENSE_DRAFT_EXPIRATION_MINUTES,
+  ExpenseDraftInputType,
+  ExpenseDraftStatus,
+  OPEN_EXPENSE_DRAFT_STATUSES,
+} from '@/commons/constants/expense-draft.constant'
 import { ExpenseField } from '@/commons/constants/expense-extraction.constant'
 import { DateHelper } from '@/commons/helpers/date.helper'
-import { DuplicateExpenseFileException } from '@/commons/exceptions/expense-file/duplicate-expense-file.exception'
-import { ExpenseFileDBRepository } from '@/db/models/expense-file/expenseFileDB.repository'
-import { ExpenseFileDbDto } from '@/db/models/expense-file/expenseFileDB.dto'
+import { DuplicateExpenseDraftException } from '@/commons/exceptions/expense-draft/duplicate-expense-draft.exception'
+import { ExpenseDraftDBRepository } from '@/db/models/expense-draft/expenseDraftDB.repository'
+import { ExpenseDraftDbDto } from '@/db/models/expense-draft/expenseDraftDB.dto'
 import { ExpenseDBRepository } from '@/db/models/expense/expenseDB.repository'
+import { PaymentMethodDBRepository } from '@/db/models/payment-method/paymentMethodDB.repository'
 import { ExpenseExtractionService } from '@/modules/expense-extraction/expense-extraction.service'
 import { completeExpense } from '@/modules/expense-extraction/expense-extraction.resolver'
 import { findCatalogEntryById } from '@/modules/expense-extraction/expense-extraction.catalog'
@@ -31,14 +35,17 @@ import {
 } from '@/modules/expense-extraction/dto/expense-extraction.types'
 
 import { ExpenseSaverService } from './expense-saver.service'
-import { toExpenseFields, toExpenseFileUpdate } from './expense-file.mapper'
+import { toExpenseFields, toExpenseDraftUpdate } from './expense-draft.mapper'
 import {
   DESTINATION_LABELS,
   TEXTS,
   buildClosedReply,
   buildExpenseReply,
+  buildInboxReplies,
+  buildNewPaymentMethodReply,
   formatMonthlyTotals,
   formatRecent,
+  toNewPaymentMethodName,
 } from './conversation.messages'
 import { BotActionPayload, BotReply, ChannelMessage, ConversationResult } from './dto/conversation.types'
 
@@ -57,14 +64,21 @@ const MONTH_NAMES = [
   'diciembre',
 ]
 
-// Channel-agnostic conversation: one ExpenseFile per expense, one question at a time, confirm with buttons
+// Expenses that /bandeja lists and that can be resumed
+const INBOX_STATUSES = [ExpenseDraftStatus.INBOX, ExpenseDraftStatus.FAILED]
+
+// "cierre 15, pago 5" or "15 5"
+const CARD_DAYS_REGEX = /(\d{1,2})\D+(\d{1,2})/
+
+// Channel-agnostic conversation: one ExpenseDraft per expense, one question at a time, confirm with buttons
 @Injectable()
 export class ConversationService {
   private readonly logger = new Logger(ConversationService.name)
 
   constructor(
-    private readonly expenseFileDBRepository: ExpenseFileDBRepository,
+    private readonly expenseDraftDBRepository: ExpenseDraftDBRepository,
     private readonly expenseDBRepository: ExpenseDBRepository,
+    private readonly paymentMethodDBRepository: PaymentMethodDBRepository,
     private readonly expenseExtractionService: ExpenseExtractionService,
     private readonly expenseSaverService: ExpenseSaverService,
   ) {}
@@ -91,6 +105,10 @@ export class ConversationService {
         return [await this.correctWithAi(active, text)]
       }
 
+      if (active.pendingField?.startsWith(CARD_DAYS_FIELD_PREFIX)) {
+        return this.saveCardDays(active, text)
+      }
+
       // Answer to the pending question, or a correction that starts with a keyword ("monto 30")
       const correction = await this.expenseExtractionService.parseLocalCorrection(
         text,
@@ -100,41 +118,51 @@ export class ConversationService {
       if (correction) {
         return [await this.applyCorrection(active, correction)]
       }
+
+      // Asked for the payment method and got a name we do not know: offer to add it
+      if (active.pendingField === ExpenseField.PAYMENT_METHOD && this.looksLikeName(text)) {
+        return [buildNewPaymentMethodReply(active.id, toNewPaymentMethodName(text))]
+      }
     }
 
     return this.registerNewExpenses(message, text)
   }
 
   private async registerNewExpenses(message: ChannelMessage, text: string): Promise<BotReply[]> {
-    let expenseFile: ExpenseFileDbDto
+    let expenseDraft: ExpenseDraftDbDto
 
     try {
-      expenseFile = await this.expenseFileDBRepository.create({
+      expenseDraft = await this.expenseDraftDBRepository.create({
         channel: message.channel,
         chatId: message.chatId,
         messageId: message.messageId,
-        inputType: ExpenseFileInputType.TEXT,
+        inputType: ExpenseDraftInputType.TEXT,
         rawText: text,
       })
     } catch (error) {
       // Webhook retry of a message already handled
-      if (error instanceof DuplicateExpenseFileException) return []
+      if (error instanceof DuplicateExpenseDraftException) return []
       throw error
     }
 
+    return this.extractInto(expenseDraft, text)
+  }
+
+  // Runs the AI on a row (new message or a failed one resumed from /bandeja) and shows one summary per expense
+  private async extractInto(expenseDraft: ExpenseDraftDbDto, text: string, edit = false): Promise<BotReply[]> {
     let expenses: ResolvedExpense[]
 
     try {
-      ;({ expenses } = await this.expenseExtractionService.extract({ text, expenseFileId: expenseFile.id }))
+      ;({ expenses } = await this.expenseExtractionService.extract({ text, draftId: expenseDraft.id }))
     } catch (error) {
-      this.logger.warn(`[registerNewExpenses] extraction failed: ${(error as Error).message}`)
-      await this.expenseFileDBRepository.update(expenseFile.id, { status: ExpenseFileStatus.FAILED })
-      return [{ text: TEXTS.failed }]
+      this.logger.warn(`[extractInto] extraction failed: ${(error as Error).message}`)
+      await this.expenseDraftDBRepository.update(expenseDraft.id, { status: ExpenseDraftStatus.FAILED })
+      return [{ text: TEXTS.failed, edit }]
     }
 
     if (!expenses.length) {
-      await this.expenseFileDBRepository.update(expenseFile.id, { status: ExpenseFileStatus.DISCARDED })
-      return [{ text: TEXTS.notAnExpense }]
+      await this.expenseDraftDBRepository.update(expenseDraft.id, { status: ExpenseDraftStatus.DISCARDED })
+      return [{ text: TEXTS.notAnExpense, edit }]
     }
 
     const catalog = await this.expenseExtractionService.loadCatalog()
@@ -143,48 +171,49 @@ export class ConversationService {
     for (const [index, expense] of expenses.entries()) {
       const target =
         index === 0
-          ? expenseFile
-          : await this.expenseFileDBRepository.create({
-              channel: message.channel,
-              chatId: message.chatId,
-              messageId: message.messageId,
-              itemIndex: index,
-              inputType: ExpenseFileInputType.TEXT,
+          ? expenseDraft
+          : await this.expenseDraftDBRepository.create({
+              channel: expenseDraft.channel,
+              chatId: expenseDraft.chatId,
+              messageId: expenseDraft.messageId,
+              itemIndex: expenseDraft.itemIndex + index,
+              inputType: ExpenseDraftInputType.TEXT,
               rawText: text,
             })
 
-      const updated = await this.expenseFileDBRepository.update(target.id, toExpenseFileUpdate(expense))
-      replies.push(this.replyFor(updated, catalog))
+      const updated = await this.expenseDraftDBRepository.update(target.id, toExpenseDraftUpdate(expense))
+      replies.push(this.replyFor(updated, catalog, edit && index === 0))
     }
 
     return replies
   }
 
   private async applyCorrection(
-    expenseFile: ExpenseFileDbDto,
+    expenseDraft: ExpenseDraftDbDto,
     correction: Partial<ResolvedExpenseFields>,
     edit = false,
   ): Promise<BotReply> {
     // What the user says is certain: corrected fields lose their ❓
-    const confidence = { ...expenseFile.confidence }
+    const confidence = { ...expenseDraft.confidence }
     for (const field of Object.keys(correction)) confidence[field] = 1
 
-    const expense = completeExpense({ ...toExpenseFields(expenseFile), ...correction }, confidence)
-    const updated = await this.expenseFileDBRepository.update(expenseFile.id, toExpenseFileUpdate(expense))
+    const catalog = await this.expenseExtractionService.loadCatalog()
+    const expense = completeExpense({ ...toExpenseFields(expenseDraft), ...correction }, confidence, catalog)
+    const updated = await this.expenseDraftDBRepository.update(expenseDraft.id, toExpenseDraftUpdate(expense))
 
-    return this.replyFor(updated, await this.expenseExtractionService.loadCatalog(), edit)
+    return this.replyFor(updated, catalog, edit)
   }
 
-  private async correctWithAi(expenseFile: ExpenseFileDbDto, text: string): Promise<BotReply> {
+  private async correctWithAi(expenseDraft: ExpenseDraftDbDto, text: string): Promise<BotReply> {
     try {
       const { expenses } = await this.expenseExtractionService.extract({
         text,
-        draft: toExpenseFields(expenseFile),
-        expenseFileId: expenseFile.id,
+        draft: toExpenseFields(expenseDraft),
+        draftId: expenseDraft.id,
       })
 
       if (expenses[0]) {
-        const updated = await this.expenseFileDBRepository.update(expenseFile.id, toExpenseFileUpdate(expenses[0]))
+        const updated = await this.expenseDraftDBRepository.update(expenseDraft.id, toExpenseDraftUpdate(expenses[0]))
         return this.replyFor(updated, await this.expenseExtractionService.loadCatalog())
       }
     } catch (error) {
@@ -192,20 +221,23 @@ export class ConversationService {
     }
 
     // Leave correction mode so the next message is handled normally
-    await this.expenseFileDBRepository.update(expenseFile.id, { pendingField: expenseFile.missingFields[0] ?? null })
+    await this.expenseDraftDBRepository.update(expenseDraft.id, { pendingField: expenseDraft.missingFields[0] ?? null })
     return { text: TEXTS.correctionFailed }
   }
 
   private async handleAction(message: ChannelMessage): Promise<ConversationResult> {
     const action = message.action as BotActionPayload
-    const expenseFile = await this.expenseFileDBRepository.findById(action.expenseFileId)
+    const expenseDraft = await this.expenseDraftDBRepository.findById(action.draftId)
+    const status = expenseDraft?.status as ExpenseDraftStatus | undefined
 
-    const isOwnOpenFile =
-      expenseFile &&
-      expenseFile.chatId === message.chatId &&
-      OPEN_EXPENSE_FILE_STATUSES.includes(expenseFile.status as ExpenseFileStatus)
+    // Open expenses accept every button; inbox and failed ones only Retomar and Descartar (from /bandeja)
+    const isOwn = expenseDraft?.chatId === message.chatId
+    const isOpen = status !== undefined && OPEN_EXPENSE_DRAFT_STATUSES.includes(status)
+    const isInInbox = status !== undefined && INBOX_STATUSES.includes(status)
+    const allowed =
+      isOwn && (isOpen || (isInInbox && (action.name === BotAction.RESUME || action.name === BotAction.DISCARD)))
 
-    if (!expenseFile || !isOwnOpenFile) {
+    if (!expenseDraft || !allowed) {
       return { replies: [], notice: TEXTS.alreadyProcessed }
     }
 
@@ -213,39 +245,93 @@ export class ConversationService {
 
     switch (action.name) {
       case BotAction.SAVE: {
-        if (expenseFile.missingFields.length) {
-          return { replies: [this.replyFor(expenseFile, catalog, true)] }
+        if (expenseDraft.missingFields.length) {
+          return { replies: [this.replyFor(expenseDraft, catalog, true)] }
         }
-        await this.expenseSaverService.save(expenseFile)
-        const saved = { ...expenseFile, status: ExpenseFileStatus.SAVED }
-        const label = DESTINATION_LABELS[expenseFile.destination as ExpenseDestination]
+        await this.expenseSaverService.save(expenseDraft)
+        const saved = { ...expenseDraft, status: ExpenseDraftStatus.SAVED }
+        const label = DESTINATION_LABELS[expenseDraft.destination as ExpenseDestination]
         return { replies: [buildClosedReply(`✅ <b>Guardado en ${label}</b>`, saved, catalog)], notice: TEXTS.saved }
       }
       case BotAction.EDIT:
-        await this.expenseFileDBRepository.update(expenseFile.id, { pendingField: FREE_CORRECTION_FIELD })
+        await this.expenseDraftDBRepository.update(expenseDraft.id, { pendingField: FREE_CORRECTION_FIELD })
         return { replies: [{ text: TEXTS.askCorrection }] }
       case BotAction.INBOX: {
-        const updated = await this.expenseFileDBRepository.update(expenseFile.id, {
-          status: ExpenseFileStatus.INBOX,
+        const updated = await this.expenseDraftDBRepository.update(expenseDraft.id, {
+          status: ExpenseDraftStatus.INBOX,
           pendingField: null,
         })
         return { replies: [buildClosedReply('📥 <b>En la bandeja</b>', updated, catalog)] }
       }
       case BotAction.DISCARD: {
-        const updated = await this.expenseFileDBRepository.update(expenseFile.id, {
-          status: ExpenseFileStatus.DISCARDED,
+        const updated = await this.expenseDraftDBRepository.update(expenseDraft.id, {
+          status: ExpenseDraftStatus.DISCARDED,
           pendingField: null,
         })
         return { replies: [buildClosedReply('❌ <b>Descartado</b>', updated, catalog)] }
       }
+      case BotAction.RESUME:
+        return { replies: await this.resume(expenseDraft, catalog), notice: TEXTS.resumed }
+      case BotAction.NEW_PAYMENT_METHOD:
+        return { replies: await this.createPaymentMethod(expenseDraft, action) }
       case BotAction.SET_FIELD: {
         const correction = this.toFieldCorrection(action, catalog)
         if (!correction) return { replies: [], notice: TEXTS.alreadyProcessed }
-        return { replies: [await this.applyCorrection(expenseFile, correction, true)] }
+        return { replies: [await this.applyCorrection(expenseDraft, correction, true)] }
       }
       default:
         return { replies: [] }
     }
+  }
+
+  // Reopens an inbox expense (or retries the AI on a failed one) and shows it with its buttons again
+  private async resume(expenseDraft: ExpenseDraftDbDto, catalog: ExtractionCatalog): Promise<BotReply[]> {
+    if (expenseDraft.status === ExpenseDraftStatus.FAILED) {
+      return this.extractInto(expenseDraft, expenseDraft.rawText ?? '', true)
+    }
+
+    const expense = completeExpense(toExpenseFields(expenseDraft), expenseDraft.confidence, catalog)
+    const updated = await this.expenseDraftDBRepository.update(expenseDraft.id, toExpenseDraftUpdate(expense))
+    return [this.replyFor(updated, catalog, true)]
+  }
+
+  // "No conozco bbva": the user picked a type (create it and use it) or "No"
+  private async createPaymentMethod(expenseDraft: ExpenseDraftDbDto, { field, value }: BotActionPayload) {
+    const type = field as PaymentMethodType | undefined
+
+    if (!type || !value || !(Object.values(PaymentMethodType) as string[]).includes(type)) {
+      return [{ text: TEXTS.paymentMethodNotAdded, edit: true }]
+    }
+
+    const paymentMethod = await this.paymentMethodDBRepository.create(value, type)
+    const created: BotReply = { text: TEXTS.paymentMethodCreated(paymentMethod.name), edit: true }
+    const next = await this.applyCorrection(expenseDraft, { paymentMethodId: paymentMethod.id })
+
+    // A new credit card needs its billing days to know the payment month
+    if (type === PaymentMethodType.CREDIT_CARD) {
+      await this.expenseDraftDBRepository.update(expenseDraft.id, {
+        pendingField: `${CARD_DAYS_FIELD_PREFIX}${paymentMethod.id}`,
+      })
+      return [created, { text: TEXTS.askCardDays }]
+    }
+
+    return [created, next]
+  }
+
+  private async saveCardDays(expenseDraft: ExpenseDraftDbDto, text: string): Promise<BotReply[]> {
+    const paymentMethodId = (expenseDraft.pendingField as string).slice(CARD_DAYS_FIELD_PREFIX.length)
+    const match = text.match(CARD_DAYS_REGEX)
+    const [closeDay, dueDay] = match ? [Number(match[1]), Number(match[2])] : [0, 0]
+
+    if (!match || closeDay < 1 || closeDay > 31 || dueDay < 1 || dueDay > 31) {
+      return [{ text: TEXTS.cardDaysInvalid }]
+    }
+
+    const card = await this.paymentMethodDBRepository.updateBillingDays(paymentMethodId, closeDay, dueDay)
+    // Back to the normal flow: next missing field or the confirmation buttons
+    const next = await this.applyCorrection(expenseDraft, { paymentMethodId })
+
+    return [{ text: TEXTS.cardDaysSaved(card.name) }, next]
   }
 
   // Values from quick reply buttons are checked again: the button may be older than the catalog
@@ -260,13 +346,7 @@ export class ConversationService {
         return (Object.values(ExpenseDestination) as string[]).includes(value) ? { destination: value } : null
       case ExpenseField.PERIOD:
         return (Object.values(SubscriptionPeriod) as string[]).includes(value) ? { period: value } : null
-      case ExpenseField.PAYMENT_METHOD: {
-        const method = findCatalogEntryById(catalog, value)
-        return method
-          ? { paymentMethodId: method.id, ...(method.creditCardId && { creditCardId: method.creditCardId }) }
-          : null
-      }
-      case ExpenseField.CREDIT_CARD:
+      case ExpenseField.PAYMENT_METHOD:
       case ExpenseField.CATEGORY:
       case ExpenseField.PERSON:
         return findCatalogEntryById(catalog, value) ? { [field]: value } : null
@@ -278,16 +358,23 @@ export class ConversationService {
   private async handleCommand(message: ChannelMessage): Promise<BotReply[]> {
     switch (message.command) {
       case BotCommand.CANCEL: {
-        const count = await this.expenseFileDBRepository.discardOpenByChat(message.channel, message.chatId)
+        const count = await this.expenseDraftDBRepository.discardOpenByChat(message.channel, message.chatId)
         return [{ text: TEXTS.cancelled(count) }]
       }
       case BotCommand.RECENT: {
-        const recent = await this.expenseFileDBRepository.findRecentSaved(
+        const recent = await this.expenseDraftDBRepository.findRecentSaved(
           message.channel,
           message.chatId,
           RECENT_EXPENSES_LIMIT,
         )
         return [{ text: formatRecent(recent) }]
+      }
+      case BotCommand.INBOX: {
+        const [{ items, total }, catalog] = await Promise.all([
+          this.expenseDraftDBRepository.findByStatuses(message.channel, message.chatId, INBOX_STATUSES, INBOX_LIMIT),
+          this.expenseExtractionService.loadCatalog(),
+        ])
+        return buildInboxReplies(items, total, catalog)
       }
       case BotCommand.SUMMARY: {
         const today = DateHelper.todayIn(APP_TIME_ZONE)
@@ -304,17 +391,22 @@ export class ConversationService {
     }
   }
 
-  // The latest open expense file is the one text corrections apply to; stale ones are discarded first
-  private async findActive(message: ChannelMessage): Promise<ExpenseFileDbDto | null> {
-    const cutoff = new Date(Date.now() - EXPENSE_FILE_EXPIRATION_MINUTES * 60_000)
-    await this.expenseFileDBRepository.discardOpenUpdatedBefore(message.channel, message.chatId, cutoff)
-    return this.expenseFileDBRepository.findOpenByChat(message.channel, message.chatId, cutoff)
+  // A short text without digits ("bbva", "tarjeta ripley"); anything with an amount is a new expense
+  private looksLikeName(text: string): boolean {
+    return !/\d/.test(text) && text.split(/\s+/).length <= 3
   }
 
-  private replyFor(expenseFile: ExpenseFileDbDto, catalog: ExtractionCatalog, edit = false): BotReply {
-    if (expenseFile.status === ExpenseFileStatus.DISCARDED) {
+  // The latest open expense draft is the one text corrections apply to; stale ones are discarded first
+  private async findActive(message: ChannelMessage): Promise<ExpenseDraftDbDto | null> {
+    const cutoff = new Date(Date.now() - EXPENSE_DRAFT_EXPIRATION_MINUTES * 60_000)
+    await this.expenseDraftDBRepository.discardOpenUpdatedBefore(message.channel, message.chatId, cutoff)
+    return this.expenseDraftDBRepository.findOpenByChat(message.channel, message.chatId, cutoff)
+  }
+
+  private replyFor(expenseDraft: ExpenseDraftDbDto, catalog: ExtractionCatalog, edit = false): BotReply {
+    if (expenseDraft.status === ExpenseDraftStatus.DISCARDED) {
       return { text: TEXTS.notAnExpense, edit }
     }
-    return buildExpenseReply(expenseFile, catalog, edit)
+    return buildExpenseReply(expenseDraft, catalog, edit)
   }
 }

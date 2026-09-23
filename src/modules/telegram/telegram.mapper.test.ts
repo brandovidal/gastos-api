@@ -1,5 +1,5 @@
 import { BotAction, ChannelMessageType } from '@/commons/constants/conversation.constant'
-import { ExpenseFileChannel } from '@/commons/constants/expense-file.constant'
+import { ExpenseDraftChannel } from '@/commons/constants/expense-draft.constant'
 import { FILE_ID } from '@/modules/conversation/mocks/conversation.mock'
 
 import { mapTelegramUpdate, toReplyMarkup } from './telegram.mapper'
@@ -12,7 +12,7 @@ describe('telegram mapper', () => {
       mapTelegramUpdate({ update_id: 1, message: { message_id: 10, chat, date: 0, text: 'almuerzo 25' } }),
     ).toEqual({
       message: {
-        channel: ExpenseFileChannel.TELEGRAM,
+        channel: ExpenseDraftChannel.TELEGRAM,
         chatId: '555',
         messageId: '10',
         type: ChannelMessageType.TEXT,
@@ -38,11 +38,11 @@ describe('telegram mapper', () => {
 
     expect(mapped).toEqual({
       message: {
-        channel: ExpenseFileChannel.TELEGRAM,
+        channel: ExpenseDraftChannel.TELEGRAM,
         chatId: '555',
         messageId: 'callback:cb-1',
         type: ChannelMessageType.ACTION,
-        action: { name: BotAction.SAVE, expenseFileId: FILE_ID },
+        action: { name: BotAction.SAVE, draftId: FILE_ID },
       },
       callbackQueryId: 'cb-1',
       sourceMessageId: 20,

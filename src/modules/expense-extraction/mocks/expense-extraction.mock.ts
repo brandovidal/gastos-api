@@ -1,4 +1,4 @@
-import { Category, CreditCard } from '@/generated/prisma/client'
+import { Category } from '@/generated/prisma/client'
 import { PaymentMethodType } from '@/commons/constants/catalog.constant'
 import { PersonDbDto } from '@/db/models/person/personDB.dto'
 import { PaymentMethodDbDto } from '@/db/models/payment-method/paymentMethodDB.dto'
@@ -19,29 +19,40 @@ export const mockPeople: PersonDbDto[] = [
   },
 ]
 
-export const mockCreditCards: CreditCard[] = [
-  { id: 'card-oh', code: 'OH', name: 'Oh Visa', billingCloseDay: 20, paymentDueDay: 5, color: null, ...timestamps },
-]
+const paymentMethod = (overrides: Partial<PaymentMethodDbDto>): PaymentMethodDbDto => ({
+  id: 'method',
+  name: 'Method',
+  type: PaymentMethodType.WALLET,
+  code: null,
+  aliases: [],
+  isActive: true,
+  showInBot: true,
+  billingCloseDay: null,
+  paymentDueDay: null,
+  color: null,
+  ...timestamps,
+  ...overrides,
+})
 
+// Sorted by name like the repository: pm1 OhPay (card), pm2 Tarjeta Oculta (card, hidden in the bot), pm3 Yape
 export const mockPaymentMethods: PaymentMethodDbDto[] = [
-  {
-    id: 'method-yape',
-    name: 'Yape',
-    type: PaymentMethodType.WALLET,
-    aliases: ['yapee'],
-    isActive: true,
-    creditCardId: null,
-    ...timestamps,
-  },
-  {
+  paymentMethod({
     id: 'method-ohpay',
     name: 'OhPay',
     type: PaymentMethodType.CREDIT_CARD,
+    code: 'OH',
     aliases: ['la oh'],
-    isActive: true,
-    creditCardId: 'card-oh',
-    ...timestamps,
-  },
+    billingCloseDay: 10,
+    paymentDueDay: 3,
+  }),
+  paymentMethod({
+    id: 'method-hidden',
+    name: 'Tarjeta Oculta',
+    type: PaymentMethodType.CREDIT_CARD,
+    code: 'HID',
+    showInBot: false,
+  }),
+  paymentMethod({ id: 'method-yape', name: 'Yape', type: PaymentMethodType.WALLET, aliases: ['yape'] }),
 ]
 
 export const mockCategories: Category[] = [
@@ -59,7 +70,6 @@ export const mockCategories: Category[] = [
 export const mockCatalogSource = {
   people: mockPeople,
   paymentMethods: mockPaymentMethods,
-  creditCards: mockCreditCards,
   categories: mockCategories,
 }
 
@@ -73,8 +83,7 @@ export const mockExtractedExpense: ExtractedExpense = {
   installment: null,
   period: null,
   personRef: 'p2',
-  paymentMethodRef: 'pm1',
-  creditCardRef: null,
+  paymentMethodRef: 'pm3',
   categoryRef: 'cat1',
   merchant: null,
   operationNumber: null,

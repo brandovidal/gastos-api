@@ -15,13 +15,14 @@ describe('parseCorrection', () => {
     it.each([
       [ExpenseField.PERSON, 'dany', { personId: 'person-danery' }],
       [ExpenseField.PAYMENT_METHOD, 'Yape', { paymentMethodId: 'method-yape' }],
-      [ExpenseField.PAYMENT_METHOD, 'la oh', { paymentMethodId: 'method-ohpay', creditCardId: 'card-oh' }],
-      [ExpenseField.CREDIT_CARD, 'oh', { creditCardId: 'card-oh' }],
+      [ExpenseField.PAYMENT_METHOD, 'la oh', { paymentMethodId: 'method-ohpay' }],
+      [ExpenseField.PAYMENT_METHOD, 'oh', { paymentMethodId: 'method-ohpay' }],
       [ExpenseField.CATEGORY, 'comida', { categoryId: 'category-food' }],
       [ExpenseField.AMOUNT, '30.50', { amount: 30.5 }],
       [ExpenseField.INSTALLMENT, '2 de 6', { installment: '2/6' }],
       [ExpenseField.PERIOD, 'mensual', { period: SubscriptionPeriod.MONTHLY }],
       [ExpenseField.DESTINATION, 'me debe', { destination: ExpenseDestination.RECEIVABLE }],
+      [ExpenseField.DESTINATION, 'día a día', { destination: ExpenseDestination.DAILY }],
       [ExpenseField.SPENT_AT, 'ayer', { spentAt: '2026-09-21' }],
       [ExpenseField.DESCRIPTION, 'Menú del día', { description: 'Menú del día' }],
     ])('should read %s from "%s"', (field, text, expected) => {

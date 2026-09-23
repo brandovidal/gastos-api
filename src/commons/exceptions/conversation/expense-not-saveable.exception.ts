@@ -7,7 +7,7 @@ export class ExpenseNotSaveableException extends AppException {
     super(
       HttpStatus.UNPROCESSABLE_ENTITY,
       'EXPENSE_NOT_SAVEABLE',
-      'Expense file is missing fields or has no destination',
+      'Expense draft is missing fields or has no destination',
       details,
     )
   }

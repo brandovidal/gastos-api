@@ -10,17 +10,10 @@ import { AiExtractorProviderStrategy } from '@/providers/ai/ai-extractor-provide
 import { AiRequestLogDBRepository } from '@/db/models/ai-request-log/aiRequestLogDB.repository'
 import { PersonDBRepository } from '@/db/models/person/personDB.repository'
 import { PaymentMethodDBRepository } from '@/db/models/payment-method/paymentMethodDB.repository'
-import { CreditCardDBRepository } from '@/db/models/credit-card/creditCardDB.repository'
 import { CategoryDBRepository } from '@/db/models/category/categoryDB.repository'
 
 import { ExpenseExtractionService } from './expense-extraction.service'
-import {
-  mockCategories,
-  mockCreditCards,
-  mockExtractedExpense,
-  mockPaymentMethods,
-  mockPeople,
-} from './mocks/expense-extraction.mock'
+import { mockCategories, mockExtractedExpense, mockPaymentMethods, mockPeople } from './mocks/expense-extraction.mock'
 
 const config = {
   ai: { timeoutMs: 1000 },
@@ -50,7 +43,6 @@ describe('ExpenseExtractionService', () => {
         { provide: AiRequestLogDBRepository, useValue: mockAiRequestLog },
         { provide: PersonDBRepository, useValue: { findActive: vi.fn().mockResolvedValue(mockPeople) } },
         { provide: PaymentMethodDBRepository, useValue: { findActive: vi.fn().mockResolvedValue(mockPaymentMethods) } },
-        { provide: CreditCardDBRepository, useValue: { findAll: vi.fn().mockResolvedValue(mockCreditCards) } },
         { provide: CategoryDBRepository, useValue: { findAll: vi.fn().mockResolvedValue(mockCategories) } },
       ],
     }).compile()
@@ -70,7 +62,7 @@ describe('ExpenseExtractionService', () => {
   it('should extract text with Gemini Flash-Lite and resolve catalog refs', async () => {
     mockGemini.generateJson.mockResolvedValue({ text: validOutput, inputTokens: 900, outputTokens: 120 })
 
-    const result = await service.extract({ text: 'almuerzo 25 soles yape para dany', expenseFileId: 'file-1' })
+    const result = await service.extract({ text: 'almuerzo 25 soles yape para dany', draftId: 'file-1' })
 
     expect(result.provider).toBe(AiProvider.GEMINI)
     expect(result.model).toBe('gemini-lite')
@@ -87,7 +79,7 @@ describe('ExpenseExtractionService', () => {
       expect.objectContaining({
         provider: AiProvider.GEMINI,
         success: true,
-        expenseFileId: 'file-1',
+        draftId: 'file-1',
         inputTokens: 900,
       }),
     )

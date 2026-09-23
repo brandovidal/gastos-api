@@ -1,17 +1,25 @@
 // User-facing texts are in Spanish (D11): everything else in this file is English.
-import { BotAction, MAX_QUICK_REPLIES, QUICK_REPLIES_PER_ROW } from '@/commons/constants/conversation.constant'
+import {
+  BotAction,
+  MAX_NEW_PAYMENT_METHOD_NAME_BYTES,
+  MAX_QUICK_REPLIES,
+  QUICK_REPLIES_PER_ROW,
+} from '@/commons/constants/conversation.constant'
+import { PaymentMethodType } from '@/commons/constants/catalog.constant'
+import { ExpenseDraftStatus } from '@/commons/constants/expense-draft.constant'
 import { Currency, ExpenseDestination, ExpenseType, SubscriptionPeriod } from '@/commons/constants/expense.constant'
 import { CatalogKind, ExpenseField } from '@/commons/constants/expense-extraction.constant'
-import { ExpenseFileDbDto } from '@/db/models/expense-file/expenseFileDB.dto'
+import { ExpenseDraftDbDto } from '@/db/models/expense-draft/expenseDraftDB.dto'
 import { MonthlyTotalDbDto } from '@/db/models/expense/expenseDB.dto'
-import { findCatalogEntryById } from '@/modules/expense-extraction/expense-extraction.catalog'
+import { botPaymentMethods, findCatalogEntryById } from '@/modules/expense-extraction/expense-extraction.catalog'
 import { ExtractionCatalog } from '@/modules/expense-extraction/dto/expense-extraction.types'
 
 import { encodeBotAction } from './bot-action.codec'
-import { lowConfidenceFieldsOf } from './expense-file.mapper'
+import { lowConfidenceFieldsOf } from './expense-draft.mapper'
 import { BotButton, BotReply } from './dto/conversation.types'
 
 export const DESTINATION_LABELS: Record<ExpenseDestination, string> = {
+  [ExpenseDestination.DAILY]: 'Día a día',
   [ExpenseDestination.FIXED_COST]: 'Costo fijo',
   [ExpenseDestination.SUBSCRIPTION]: 'Plataforma',
   [ExpenseDestination.CREDIT_CARD]: 'Tarjeta',
@@ -22,6 +30,14 @@ export const DESTINATION_LABELS: Record<ExpenseDestination, string> = {
 const EXPENSE_TYPE_LABELS: Record<ExpenseType, string> = {
   [ExpenseType.ESSENTIAL]: 'Esencial',
   [ExpenseType.GUILTY_PLEASURE]: 'Con culpa',
+}
+
+const PAYMENT_TYPE_LABELS: Record<PaymentMethodType, string> = {
+  [PaymentMethodType.DEBIT_CARD]: 'Débito',
+  [PaymentMethodType.WALLET]: 'Billetera',
+  [PaymentMethodType.CREDIT_CARD]: 'Tarjeta de crédito',
+  [PaymentMethodType.CASH]: 'Efectivo',
+  [PaymentMethodType.BANK_TRANSFER]: 'Transferencia',
 }
 
 const PERIOD_LABELS: Record<SubscriptionPeriod, string> = {
@@ -38,13 +54,14 @@ export const TEXTS = {
     '',
     '<b>Ejemplos</b>',
     '• almuerzo 25 soles con yape',
+    '• uber 18.50 ayer en efectivo',
     '• netflix 45 mensual con la oh',
+    '• zapatillas 300 con io en 3 cuotas',
     '• le presté 100 a dany',
-    '• uber 18.50 ayer, cuota 1/3 con io',
     '',
     '<b>Para corregir</b> un gasto que acabo de leer, empieza con la palabra: <i>monto 30</i>, <i>persona dany</i>, <i>cuota 2/6</i>, <i>tarjeta oh</i>, <i>categoría comida</i>, <i>con culpa</i>, <i>ayer</i>. Si no, toca ✏️ Corregir y escríbelo como quieras.',
     '',
-    '/ultimos · /resumen · /cancelar',
+    '/bandeja · /ultimos · /resumen · /cancelar',
   ].join('\n'),
   failed: '⚠️ No pude procesar el mensaje ahora. Lo dejé en la bandeja para revisarlo en la web.',
   notAnExpense: '🤔 No encontré un gasto en tu mensaje. Prueba con algo como <i>almuerzo 25 soles con yape</i>.',
@@ -55,6 +72,17 @@ export const TEXTS = {
   cancelled: (count: number) => (count ? '🗑️ Descarté el borrador abierto.' : 'No hay ningún borrador abierto.'),
   noRecent: 'Todavía no guardaste gastos desde aquí.',
   noTotals: 'No hay gastos registrados este mes.',
+  emptyInbox: '📥 La bandeja está vacía.',
+  inboxHeader: (shown: number, total: number) =>
+    `📥 <b>Bandeja</b> (${total})${total > shown ? ` · mostrando los ${shown} más recientes` : ''}`,
+  resumed: 'Retomado',
+  failedExtraction: '(la AI no pudo leerlo)',
+  askCardDays:
+    '💳 ¿Qué día cierra la facturación y qué día vence el pago? (ej: <i>cierre 15, pago 5</i> o <i>15 5</i>)',
+  cardDaysSaved: (name: string) => `✅ Guardé los días de <b>${escapeHtml(name)}</b>.`,
+  cardDaysInvalid: 'No entendí los días. Escribe dos números del 1 al 31, por ejemplo <i>cierre 15, pago 5</i>.',
+  paymentMethodCreated: (name: string) => `✅ Agregué <b>${escapeHtml(name)}</b> a tus medios de pago.`,
+  paymentMethodNotAdded: 'Listo, no lo agregué. Elige uno de la lista o escríbelo de nuevo.',
 }
 
 const QUESTIONS: Partial<Record<ExpenseField, string>> = {
@@ -62,8 +90,7 @@ const QUESTIONS: Partial<Record<ExpenseField, string>> = {
   [ExpenseField.DESCRIPTION]: '¿Cuál es el concepto? (ej: <i>Almuerzo</i>, <i>Netflix</i>)',
   [ExpenseField.AMOUNT]: '¿Cuánto fue? (ej: <i>25.50</i>)',
   [ExpenseField.CATEGORY]: '¿Qué categoría?',
-  [ExpenseField.PAYMENT_METHOD]: '¿Con qué pagaste?',
-  [ExpenseField.CREDIT_CARD]: '¿Con qué tarjeta?',
+  [ExpenseField.PAYMENT_METHOD]: '¿Con qué pagaste? (elige o escríbelo)',
   [ExpenseField.PERIOD]: '¿Cada cuánto se paga?',
 }
 
@@ -80,32 +107,30 @@ const formatDate = (date: Date | null) => (date ? date.toISOString().slice(0, 10
 const nameOf = (catalog: ExtractionCatalog, id: string | null) =>
   escapeHtml(findCatalogEntryById(catalog, id)?.name ?? '—')
 
-export function formatSummary(expenseFile: ExpenseFileDbDto, catalog: ExtractionCatalog): string {
-  const doubtful = new Set(lowConfidenceFieldsOf(expenseFile))
+export function formatSummary(expenseDraft: ExpenseDraftDbDto, catalog: ExtractionCatalog): string {
+  const doubtful = new Set(lowConfidenceFieldsOf(expenseDraft))
   const mark = (field: ExpenseField) => (doubtful.has(field) ? ' ❓' : '')
 
-  const payment = expenseFile.creditCardId
-    ? `💳 ${nameOf(catalog, expenseFile.creditCardId)}${mark(ExpenseField.CREDIT_CARD)}`
-    : `💳 ${nameOf(catalog, expenseFile.paymentMethodId)}${mark(ExpenseField.PAYMENT_METHOD)}`
+  const payment = `💳 ${nameOf(catalog, expenseDraft.paymentMethodId)}${mark(ExpenseField.PAYMENT_METHOD)}`
 
   const details = [
-    formatDate(expenseFile.spentAt),
-    expenseFile.destination ? DESTINATION_LABELS[expenseFile.destination as ExpenseDestination] : null,
-    expenseFile.expenseType ? EXPENSE_TYPE_LABELS[expenseFile.expenseType as ExpenseType] : null,
-    expenseFile.period ? PERIOD_LABELS[expenseFile.period as SubscriptionPeriod] : null,
-    expenseFile.installment ? `Cuota ${expenseFile.installment}` : null,
+    formatDate(expenseDraft.spentAt),
+    expenseDraft.destination ? DESTINATION_LABELS[expenseDraft.destination as ExpenseDestination] : null,
+    expenseDraft.expenseType ? EXPENSE_TYPE_LABELS[expenseDraft.expenseType as ExpenseType] : null,
+    expenseDraft.period ? PERIOD_LABELS[expenseDraft.period as SubscriptionPeriod] : null,
+    expenseDraft.installment ? `Cuota ${expenseDraft.installment}` : null,
   ].filter(Boolean)
 
   return [
-    `🧾 <b>${escapeHtml(expenseFile.description ?? 'Sin concepto')}</b>${mark(ExpenseField.DESCRIPTION)} — ${formatAmount(expenseFile.amount, expenseFile.currency)}${mark(ExpenseField.AMOUNT)}`,
-    `👤 ${nameOf(catalog, expenseFile.personId)}${mark(ExpenseField.PERSON)}   ${payment}   📂 ${nameOf(catalog, expenseFile.categoryId)}${mark(ExpenseField.CATEGORY)}`,
+    `🧾 <b>${escapeHtml(expenseDraft.description ?? 'Sin concepto')}</b>${mark(ExpenseField.DESCRIPTION)} — ${formatAmount(expenseDraft.amount, expenseDraft.currency)}${mark(ExpenseField.AMOUNT)}`,
+    `👤 ${nameOf(catalog, expenseDraft.personId)}${mark(ExpenseField.PERSON)}   ${payment}   📂 ${nameOf(catalog, expenseDraft.categoryId)}${mark(ExpenseField.CATEGORY)}`,
     `📅 ${details.join(' · ')}`,
   ].join('\n')
 }
 
-const button = (label: string, name: BotAction, expenseFileId: string, field?: string, value?: string): BotButton => ({
+const button = (label: string, name: BotAction, draftId: string, field?: string, value?: string): BotButton => ({
   label,
-  data: encodeBotAction({ name, expenseFileId, field, value }),
+  data: encodeBotAction({ name, draftId, field, value }),
 })
 
 const toRows = (buttons: BotButton[]) =>
@@ -115,8 +140,8 @@ const toRows = (buttons: BotButton[]) =>
     return rows
   }, [])
 
-function quickReplies(field: ExpenseField, expenseFileId: string, catalog: ExtractionCatalog): BotButton[] {
-  const set = (label: string, value: string) => button(label, BotAction.SET_FIELD, expenseFileId, field, value)
+function quickReplies(field: ExpenseField, draftId: string, catalog: ExtractionCatalog): BotButton[] {
+  const set = (label: string, value: string) => button(label, BotAction.SET_FIELD, draftId, field, value)
   const fromCatalog = (kind: CatalogKind) =>
     catalog.entries
       .filter((entry) => entry.kind === kind)
@@ -131,9 +156,9 @@ function quickReplies(field: ExpenseField, expenseFileId: string, catalog: Extra
     case ExpenseField.PERIOD:
       return Object.values(SubscriptionPeriod).map((period) => set(PERIOD_LABELS[period], period))
     case ExpenseField.PAYMENT_METHOD:
-      return fromCatalog(CatalogKind.PAYMENT_METHOD)
-    case ExpenseField.CREDIT_CARD:
-      return fromCatalog(CatalogKind.CREDIT_CARD)
+      return botPaymentMethods(catalog)
+        .slice(0, MAX_QUICK_REPLIES)
+        .map((entry) => set(entry.name, entry.id))
     case ExpenseField.CATEGORY:
       return fromCatalog(CatalogKind.CATEGORY)
     default:
@@ -142,15 +167,15 @@ function quickReplies(field: ExpenseField, expenseFileId: string, catalog: Extra
 }
 
 // Summary plus the next question (draft) or the confirmation buttons (awaiting_confirmation)
-export function buildExpenseReply(expenseFile: ExpenseFileDbDto, catalog: ExtractionCatalog, edit = false): BotReply {
-  const summary = formatSummary(expenseFile, catalog)
-  const field = expenseFile.pendingField as ExpenseField | null
+export function buildExpenseReply(expenseDraft: ExpenseDraftDbDto, catalog: ExtractionCatalog, edit = false): BotReply {
+  const summary = formatSummary(expenseDraft, catalog)
+  const field = expenseDraft.pendingField as ExpenseField | null
 
   if (field && QUESTIONS[field]) {
-    const replies = quickReplies(field, expenseFile.id, catalog)
+    const replies = quickReplies(field, expenseDraft.id, catalog)
     return {
       text: `${summary}\n\n${QUESTIONS[field]}`,
-      buttons: [...toRows(replies), [button('❌ Descartar', BotAction.DISCARD, expenseFile.id)]],
+      buttons: [...toRows(replies), [button('❌ Descartar', BotAction.DISCARD, expenseDraft.id)]],
       edit,
     }
   }
@@ -158,10 +183,10 @@ export function buildExpenseReply(expenseFile: ExpenseFileDbDto, catalog: Extrac
   return {
     text: summary,
     buttons: [
-      [button('✅ Guardar', BotAction.SAVE, expenseFile.id), button('✏️ Corregir', BotAction.EDIT, expenseFile.id)],
+      [button('✅ Guardar', BotAction.SAVE, expenseDraft.id), button('✏️ Corregir', BotAction.EDIT, expenseDraft.id)],
       [
-        button('📥 Bandeja', BotAction.INBOX, expenseFile.id),
-        button('❌ Descartar', BotAction.DISCARD, expenseFile.id),
+        button('📥 Bandeja', BotAction.INBOX, expenseDraft.id),
+        button('❌ Descartar', BotAction.DISCARD, expenseDraft.id),
       ],
     ],
     edit,
@@ -169,18 +194,22 @@ export function buildExpenseReply(expenseFile: ExpenseFileDbDto, catalog: Extrac
 }
 
 // Final state of an expense: same summary, no buttons
-export function buildClosedReply(prefix: string, expenseFile: ExpenseFileDbDto, catalog: ExtractionCatalog): BotReply {
-  return { text: `${prefix}\n${formatSummary(expenseFile, catalog)}`, edit: true }
+export function buildClosedReply(
+  prefix: string,
+  expenseDraft: ExpenseDraftDbDto,
+  catalog: ExtractionCatalog,
+): BotReply {
+  return { text: `${prefix}\n${formatSummary(expenseDraft, catalog)}`, edit: true }
 }
 
-export function formatRecent(expenseFiles: ExpenseFileDbDto[]): string {
-  if (!expenseFiles.length) return TEXTS.noRecent
+export function formatRecent(expenseDrafts: ExpenseDraftDbDto[]): string {
+  if (!expenseDrafts.length) return TEXTS.noRecent
 
   return [
     '<b>Últimos gastos</b>',
-    ...expenseFiles.map(
-      (expenseFile) =>
-        `• ${formatDate(expenseFile.spentAt)} ${escapeHtml(expenseFile.description ?? '—')} — ${formatAmount(expenseFile.amount, expenseFile.currency)} (${DESTINATION_LABELS[expenseFile.destination as ExpenseDestination] ?? '—'})`,
+    ...expenseDrafts.map(
+      (expenseDraft) =>
+        `• ${formatDate(expenseDraft.spentAt)} ${escapeHtml(expenseDraft.description ?? '—')} — ${formatAmount(expenseDraft.amount, expenseDraft.currency)} (${DESTINATION_LABELS[expenseDraft.destination as ExpenseDestination] ?? '—'})`,
     ),
   ].join('\n')
 }
@@ -221,4 +250,54 @@ export function formatMonthlyTotals(
         `• ${nameOf(catalog, personId)}: ${sum(totals.filter((row) => row.personId === personId && row.destination !== ExpenseDestination.RECEIVABLE))}`,
     ),
   ].join('\n')
+}
+
+// /bandeja: one message per expense with Retomar / Descartar
+export function buildInboxReplies(items: ExpenseDraftDbDto[], total: number, catalog: ExtractionCatalog): BotReply[] {
+  if (!items.length) return [{ text: TEXTS.emptyInbox }]
+
+  return [
+    { text: TEXTS.inboxHeader(items.length, total) },
+    ...items.map((expenseDraft) => ({
+      text:
+        expenseDraft.status === ExpenseDraftStatus.FAILED
+          ? `⚠️ ${TEXTS.failedExtraction}\n<i>${escapeHtml(expenseDraft.rawText ?? '')}</i>`
+          : formatSummary(expenseDraft, catalog),
+      buttons: [
+        [
+          button('↩️ Retomar', BotAction.RESUME, expenseDraft.id),
+          button('❌ Descartar', BotAction.DISCARD, expenseDraft.id),
+        ],
+      ],
+    })),
+  ]
+}
+
+// Keeps the typed name short enough for callback_data (64 bytes in total)
+export function toNewPaymentMethodName(text: string): string {
+  let name = text.replace(/[:\n]/g, ' ').replace(/\s+/g, ' ').trim()
+  while (Buffer.byteLength(name) > MAX_NEW_PAYMENT_METHOD_NAME_BYTES) name = name.slice(0, -1)
+  return name.trim()
+}
+
+// "No conozco bbva. ¿Lo agrego?" with one button per payment method type
+export function buildNewPaymentMethodReply(draftId: string, name: string): BotReply {
+  const types = [
+    PaymentMethodType.DEBIT_CARD,
+    PaymentMethodType.WALLET,
+    PaymentMethodType.CREDIT_CARD,
+    PaymentMethodType.CASH,
+  ]
+  const create = (type: PaymentMethodType) => ({
+    label: PAYMENT_TYPE_LABELS[type],
+    data: encodeBotAction({ name: BotAction.NEW_PAYMENT_METHOD, draftId, field: type, value: name }),
+  })
+
+  return {
+    text: `No conozco <b>${escapeHtml(name)}</b>. ¿Lo agrego como medio de pago? Elige el tipo:`,
+    buttons: [
+      ...toRows(types.map(create)),
+      [{ label: 'No', data: encodeBotAction({ name: BotAction.NEW_PAYMENT_METHOD, draftId }) }],
+    ],
+  }
 }

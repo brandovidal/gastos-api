@@ -2,7 +2,7 @@ import { Injectable } from '@nestjs/common'
 
 import { PrismaService } from '@/db/prisma/prisma.service'
 import { ExpenseDestination, ReceivableStatus } from '@/commons/constants/expense.constant'
-import { ExpenseFileStatus } from '@/commons/constants/expense-file.constant'
+import { ExpenseDraftStatus } from '@/commons/constants/expense-draft.constant'
 
 import { MonthlyTotalDbDto, SaveExpenseDbDto } from './expenseDB.dto'
 
@@ -12,14 +12,14 @@ type Transaction = Parameters<Parameters<PrismaService['$transaction']>[0]>[0]
 export class ExpenseDBRepository {
   constructor(private readonly prisma: PrismaService) {}
 
-  // Creates the expense and marks its ExpenseFile as saved in one transaction
-  async saveFromExpenseFile(expenseFileId: string, input: SaveExpenseDbDto): Promise<{ id: string }> {
+  // Creates the expense and marks its ExpenseDraft as saved in one transaction
+  async saveFromExpenseDraft(draftId: string, input: SaveExpenseDbDto): Promise<{ id: string }> {
     return this.prisma.$transaction(async (tx) => {
-      const record = await this.createRecord(tx, expenseFileId, input)
+      const record = await this.createRecord(tx, draftId, input)
 
-      await tx.expenseFile.update({
-        where: { id: expenseFileId },
-        data: { status: ExpenseFileStatus.SAVED, pendingField: null, confirmedAt: new Date() },
+      await tx.expenseDraft.update({
+        where: { id: draftId },
+        data: { status: ExpenseDraftStatus.SAVED, pendingField: null, confirmedAt: new Date() },
       })
 
       return { id: record.id }
@@ -29,26 +29,40 @@ export class ExpenseDBRepository {
   // Totals of the month per destination, currency and person (receivables: everything not paid yet)
   async findMonthlyTotals(month: number, year: number): Promise<MonthlyTotalDbDto[]> {
     const where = { paymentMonth: month, paymentYear: year }
+    const monthStart = new Date(Date.UTC(year, month - 1, 1))
+    const nextMonthStart = new Date(Date.UTC(year, month, 1))
     const by: ['currency', 'personId'] = ['currency', 'personId']
     const aggregate = { _sum: { amount: true }, _count: { _all: true } } as const
 
-    const [fixedCosts, subscriptions, creditCards, receivables] = await Promise.all([
+    const [daily, fixedCosts, subscriptions, creditCards, receivables] = await Promise.all([
+      this.prisma.dailyExpense.groupBy({
+        by,
+        where: { spentAt: { gte: monthStart, lt: nextMonthStart } },
+        ...aggregate,
+      }),
       this.prisma.fixedCost.groupBy({ by, where, ...aggregate }),
       this.prisma.subscription.groupBy({ by, where, ...aggregate }),
       this.prisma.creditCardExpense.groupBy({ by, where, ...aggregate }),
       this.prisma.accountReceivable.groupBy({ by, where: { status: { not: ReceivableStatus.PAID } }, ...aggregate }),
     ])
 
-    const toTotals = (destination: ExpenseDestination, rows: typeof fixedCosts) =>
+    type Row = {
+      currency: string | null
+      personId: string | null
+      _sum: { amount: number | null }
+      _count: { _all: number }
+    }
+    const toTotals = (destination: ExpenseDestination, rows: Row[]) =>
       rows.map((row) => ({
         destination,
-        currency: row.currency,
-        personId: row.personId,
+        currency: row.currency ?? 'PEN',
+        personId: row.personId ?? '',
         total: row._sum.amount ?? 0,
         count: row._count._all,
       }))
 
     return [
+      ...toTotals(ExpenseDestination.DAILY, daily),
       ...toTotals(ExpenseDestination.FIXED_COST, fixedCosts),
       ...toTotals(ExpenseDestination.SUBSCRIPTION, subscriptions),
       ...toTotals(ExpenseDestination.CREDIT_CARD, creditCards),
@@ -56,16 +70,18 @@ export class ExpenseDBRepository {
     ]
   }
 
-  private createRecord(tx: Transaction, expenseFileId: string, { destination, data }: SaveExpenseDbDto) {
+  private createRecord(tx: Transaction, draftId: string, { destination, data }: SaveExpenseDbDto) {
     switch (destination) {
+      case ExpenseDestination.DAILY:
+        return tx.dailyExpense.create({ data: { ...data, draftId } })
       case ExpenseDestination.FIXED_COST:
-        return tx.fixedCost.create({ data: { ...data, expenseFileId } })
+        return tx.fixedCost.create({ data: { ...data, draftId } })
       case ExpenseDestination.SUBSCRIPTION:
-        return tx.subscription.create({ data: { ...data, expenseFileId } })
+        return tx.subscription.create({ data: { ...data, draftId } })
       case ExpenseDestination.CREDIT_CARD:
-        return tx.creditCardExpense.create({ data: { ...data, expenseFileId } })
+        return tx.creditCardExpense.create({ data: { ...data, draftId } })
       case ExpenseDestination.RECEIVABLE:
-        return tx.accountReceivable.create({ data: { ...data, expenseFileId } })
+        return tx.accountReceivable.create({ data: { ...data, draftId } })
     }
   }
 }

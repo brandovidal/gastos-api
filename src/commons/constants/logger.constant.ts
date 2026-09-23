@@ -1,4 +1,4 @@
-export const LOGGER_NAMESPACE = 'GASTOS-API'
+export const LOGGER_NAMESPACE = 'KOGANE-API'
 export const LOGGER_TRANSPORT_OPTION_IGNORE = 'pid,hostname,err'
 
 export const LOG_CONTEXT_KEY = Symbol('logContext')

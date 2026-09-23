@@ -18,6 +18,9 @@ const PERIOD_WORDS: Record<string, SubscriptionPeriod> = {
 }
 
 const DESTINATION_WORDS: Record<string, ExpenseDestination> = {
+  'dia a dia': ExpenseDestination.DAILY,
+  diario: ExpenseDestination.DAILY,
+  'sin culpa': ExpenseDestination.DAILY,
   'costo fijo': ExpenseDestination.FIXED_COST,
   fijo: ExpenseDestination.FIXED_COST,
   plataforma: ExpenseDestination.SUBSCRIPTION,
@@ -88,10 +91,7 @@ function parseExpenseType(text: string): ExpenseType | null {
 
 function withPaymentMethod(catalog: ExtractionCatalog, text: string): Correction | null {
   const method = matchCatalogEntry(catalog, CatalogKind.PAYMENT_METHOD, text)
-  if (method) return { paymentMethodId: method.id, ...(method.creditCardId && { creditCardId: method.creditCardId }) }
-
-  const card = matchCatalogEntry(catalog, CatalogKind.CREDIT_CARD, text)
-  return card ? { creditCardId: card.id } : null
+  return method ? { paymentMethodId: method.id } : null
 }
 
 // Without a pending question, only messages that start with one of these words are corrections.
@@ -139,7 +139,6 @@ function parsePendingField(
       return person ? { personId: person.id } : null
     }
     case ExpenseField.PAYMENT_METHOD:
-    case ExpenseField.CREDIT_CARD:
       return withPaymentMethod(catalog, text)
     case ExpenseField.CATEGORY: {
       const category = matchCatalogEntry(catalog, CatalogKind.CATEGORY, text)

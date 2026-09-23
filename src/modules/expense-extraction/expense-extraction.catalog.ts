@@ -1,5 +1,6 @@
-import { Category, CreditCard } from '@/generated/prisma/client'
+import { Category } from '@/generated/prisma/client'
 import { CATALOG_REF_PREFIX, CatalogKind } from '@/commons/constants/expense-extraction.constant'
+import { PaymentMethodType } from '@/commons/constants/catalog.constant'
 import { PersonDbDto } from '@/db/models/person/personDB.dto'
 import { PaymentMethodDbDto } from '@/db/models/payment-method/paymentMethodDB.dto'
 
@@ -8,7 +9,6 @@ import { CatalogEntry, ExtractionCatalog } from './dto/expense-extraction.types'
 interface CatalogSource {
   people: PersonDbDto[]
   paymentMethods: PaymentMethodDbDto[]
-  creditCards: CreditCard[]
   categories: Category[]
 }
 
@@ -17,21 +17,7 @@ const ref = (kind: CatalogKind, index: number) => `${CATALOG_REF_PREFIX[kind]}${
 const aliasText = (aliases: string[]) => (aliases.length ? ` (aliases: ${aliases.join(', ')})` : '')
 
 // Builds the catalog the AI chooses from. Short refs keep the prompt small and make invented ids detectable.
-export function buildExtractionCatalog({
-  people,
-  paymentMethods,
-  creditCards,
-  categories,
-}: CatalogSource): ExtractionCatalog {
-  const cards: CatalogEntry[] = creditCards.map((card, index) => ({
-    ref: ref(CatalogKind.CREDIT_CARD, index),
-    kind: CatalogKind.CREDIT_CARD,
-    id: card.id,
-    name: card.name,
-    aliases: [card.code.toLowerCase()],
-  }))
-  const cardRefById = new Map(cards.map((card) => [card.id, card.ref]))
-
+export function buildExtractionCatalog({ people, paymentMethods, categories }: CatalogSource): ExtractionCatalog {
   const entries: CatalogEntry[] = [
     ...people.map((person, index) => ({
       ref: ref(CatalogKind.PERSON, index),
@@ -46,10 +32,12 @@ export function buildExtractionCatalog({
       kind: CatalogKind.PAYMENT_METHOD,
       id: method.id,
       name: method.name,
-      aliases: method.aliases,
-      creditCardId: method.creditCardId,
+      // The card code (CMR, OH…) is matched like an alias
+      aliases: method.code ? [...method.aliases, method.code.toLowerCase()] : method.aliases,
+      paymentType: method.type as PaymentMethodType,
+      showInBot: method.showInBot,
+      billingCloseDay: method.billingCloseDay,
     })),
-    ...cards,
     ...categories.map((category, index) => ({
       ref: ref(CatalogKind.CATEGORY, index),
       kind: CatalogKind.CATEGORY,
@@ -58,8 +46,6 @@ export function buildExtractionCatalog({
       aliases: [],
     })),
   ]
-
-  const typeByMethodId = new Map(paymentMethods.map((method) => [method.id, method.type]))
 
   const lines = (kind: CatalogKind, render: (entry: CatalogEntry) => string) =>
     entries
@@ -74,12 +60,10 @@ export function buildExtractionCatalog({
       (entry) => `${entry.ref} ${entry.name}${entry.isDefault ? ' [default]' : ''}${aliasText(entry.aliases)}`,
     ),
     'paymentMethods:',
-    lines(CatalogKind.PAYMENT_METHOD, (entry) => {
-      const cardRef = entry.creditCardId ? ` -> ${cardRefById.get(entry.creditCardId)}` : ''
-      return `${entry.ref} ${entry.name} [${typeByMethodId.get(entry.id)}${cardRef}]${aliasText(entry.aliases)}`
-    }),
-    'creditCards:',
-    lines(CatalogKind.CREDIT_CARD, (entry) => `${entry.ref} ${entry.name}${aliasText(entry.aliases)}`),
+    lines(
+      CatalogKind.PAYMENT_METHOD,
+      (entry) => `${entry.ref} ${entry.name} [${entry.paymentType}]${aliasText(entry.aliases)}`,
+    ),
     'categories:',
     lines(CatalogKind.CATEGORY, (entry) => `${entry.ref} ${entry.name}`),
   ].join('\n')
@@ -102,6 +86,11 @@ export function findCatalogEntry(
 ): CatalogEntry | null {
   if (!entryRef) return null
   return catalog.entries.find((entry) => entry.kind === kind && entry.ref === entryRef.trim().toLowerCase()) ?? null
+}
+
+// Payment methods offered as quick replies in the bot
+export function botPaymentMethods(catalog: ExtractionCatalog): CatalogEntry[] {
+  return catalog.entries.filter((entry) => entry.kind === CatalogKind.PAYMENT_METHOD && entry.showInBot)
 }
 
 export const normalizeText = (text: string) =>
