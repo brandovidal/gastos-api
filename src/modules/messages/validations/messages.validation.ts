@@ -12,3 +12,17 @@ export const messageActionSchema = z.object({
   // the "data" of a BotReply button, as the bot sends it
   data: z.string().min(1).max(64),
 })
+
+// ==================== Responses (Swagger / kogane-app types) ====================
+
+// The same replies the bot sends to Telegram (HTML text + inline buttons), drawn by the web chat
+export const botReplySchema = z.object({
+  text: z.string().describe('HTML: <b>, <i> and escaped user text'),
+  buttons: z.array(z.array(z.object({ label: z.string(), data: z.string() }))).optional(),
+  edit: z.boolean().optional().describe('Replace the message that had the pressed button'),
+})
+
+export const conversationResultSchema = z.object({
+  replies: z.array(botReplySchema),
+  notice: z.string().optional().describe('Short toast for the pressed button'),
+})

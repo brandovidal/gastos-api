@@ -1,7 +1,8 @@
 import { z } from 'zod'
 
-import { DebtDirection, DebtStatus } from '@/commons/constants/debt.constant'
+import { DebtDirection, DebtStatus, DebtTiming } from '@/commons/constants/debt.constant'
 import { Currency } from '@/commons/constants/expense.constant'
+import { dateTimeSchema } from '@/commons/helpers/api-response.helper'
 
 // YYYY-MM-DD from the web forms, stored as a date at 00:00 UTC
 const date = z.iso.date().transform((value) => new Date(`${value}T00:00:00.000Z`))
@@ -48,4 +49,59 @@ export const debtPaymentSchema = z.object({
   paidAt: date.optional(),
   paymentMethodId: z.string().min(1).nullable().optional(),
   notes: z.string().trim().nullable().optional(),
+})
+
+// ==================== Responses (Swagger / kogane-app types) ====================
+
+export const debtResponseSchema = z.object({
+  id: z.string(),
+  direction: z.enum(DebtDirection),
+  description: z.string(),
+  amount: z.number(),
+  currency: z.string(),
+  exchangeRate: z.number().nullable(),
+  amountInPen: z.number().nullable(),
+  installment: z.string().nullable(),
+  paymentMonth: z.number().int(),
+  paymentYear: z.number().int(),
+  dueDate: dateTimeSchema.nullable(),
+  status: z.enum(DebtStatus),
+  paidAmount: z.number(),
+  paidDate: dateTimeSchema.nullable(),
+  personId: z.string(),
+  notes: z.string().nullable(),
+  draftId: z.string().nullable(),
+  createdAt: dateTimeSchema,
+  updatedAt: dateTimeSchema,
+})
+
+// Listed with the person, the balance and the timing computed from today
+export const debtViewResponseSchema = debtResponseSchema.extend({
+  person: z.object({ id: z.string(), name: z.string() }),
+  balance: z.number(),
+  timing: z.enum(DebtTiming),
+})
+
+export const debtPaymentResponseSchema = z.object({
+  id: z.string(),
+  debtId: z.string(),
+  amount: z.number(),
+  paidAt: dateTimeSchema,
+  paymentMethodId: z.string().nullable(),
+  batchId: z.string().nullable(),
+  confirmedAt: dateTimeSchema.nullable(),
+  notes: z.string().nullable(),
+  createdAt: dateTimeSchema,
+})
+
+export const debtDetailResponseSchema = debtViewResponseSchema.extend({ payments: z.array(debtPaymentResponseSchema) })
+
+export const debtSummaryResponseSchema = z.object({
+  personId: z.string(),
+  name: z.string(),
+  owedToMe: z.number(),
+  iOwe: z.number(),
+  net: z.number().describe('Positive: the person owes the user'),
+  late: z.number(),
+  dueThisMonth: z.number(),
 })

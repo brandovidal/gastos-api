@@ -11,12 +11,17 @@ import {
   Post,
   Query,
 } from '@nestjs/common'
-import { ApiBody, ApiOperation, ApiParam } from '@nestjs/swagger'
+import { ApiBody, ApiOkResponse, ApiOperation, ApiParam } from '@nestjs/swagger'
 
 import { ApiRest } from '@/commons/decorators/api-rest.decorator'
 import { ResponseMessage } from '@/commons/decorators/response-message.decorator'
 import { ExpenseResource } from '@/db/models/expense-record/expenseRecordDB.repository'
 
+import {
+  ExpenseRecordListResponseDto,
+  ExpenseRecordResponseDto,
+  ExtractedExpensesResponseDto,
+} from './dto/response/expenses-response.dto'
 import { ExpenseListQueryDto, ExtractExpenseDto } from './dto/request/expenses.dto'
 import { ExpensesService } from './expenses.service'
 
@@ -33,6 +38,7 @@ export class ExpensesController {
   @Post('extract')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Nuevo gasto: read a typed or pasted text with the AI and return the fields to prefill' })
+  @ApiOkResponse({ type: ExtractedExpensesResponseDto })
   @ResponseMessage('EXPENSE_EXTRACTED', 'Expense extracted')
   extract(@Body() body: ExtractExpenseDto) {
     return this.expensesService.extract(body.text)
@@ -41,6 +47,7 @@ export class ExpensesController {
   @Get(':resource')
   @ApiParam(RESOURCE_DOC)
   @ApiOperation({ summary: 'List a table (month/year filter by payment month, or by spent date for daily expenses)' })
+  @ApiOkResponse({ type: ExpenseRecordListResponseDto })
   @ResponseMessage('EXPENSES_LISTED', 'Expenses listed')
   findMany(@Param('resource', resourceParam) resource: ExpenseResource, @Query() query: ExpenseListQueryDto) {
     return this.expensesService.findMany(resource, query)
@@ -48,6 +55,7 @@ export class ExpensesController {
 
   @Get(':resource/:id')
   @ApiParam(RESOURCE_DOC)
+  @ApiOkResponse({ type: ExpenseRecordResponseDto })
   @ResponseMessage('EXPENSE_FOUND', 'Expense found')
   findById(@Param('resource', resourceParam) resource: ExpenseResource, @Param('id') id: string) {
     return this.expensesService.findById(resource, id)
@@ -56,6 +64,7 @@ export class ExpensesController {
   @Post(':resource')
   @ApiParam(RESOURCE_DOC)
   @ApiBody(BODY_DOC)
+  @ApiOkResponse({ type: ExpenseRecordResponseDto })
   @ResponseMessage('EXPENSE_CREATED', 'Expense created')
   create(@Param('resource', resourceParam) resource: ExpenseResource, @Body() body: unknown) {
     return this.expensesService.create(resource, body)
@@ -64,6 +73,7 @@ export class ExpensesController {
   @Patch(':resource/:id')
   @ApiParam(RESOURCE_DOC)
   @ApiBody(BODY_DOC)
+  @ApiOkResponse({ type: ExpenseRecordResponseDto })
   @ResponseMessage('EXPENSE_UPDATED', 'Expense updated')
   update(@Param('resource', resourceParam) resource: ExpenseResource, @Param('id') id: string, @Body() body: unknown) {
     return this.expensesService.update(resource, id, body)

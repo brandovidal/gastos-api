@@ -7,6 +7,7 @@ import {
   INSTALLMENT_REGEX,
   SubscriptionPeriod,
 } from '@/commons/constants/expense.constant'
+import { dateTimeSchema } from '@/commons/helpers/api-response.helper'
 
 // Borrador tabs (D50, D57)
 export enum DraftTab {
@@ -39,4 +40,55 @@ export const draftListQuerySchema = z.object({
   tab: z.enum(DraftTab).default(DraftTab.REVIEW),
   limit: z.coerce.number().int().min(1).max(100).default(30),
   offset: z.coerce.number().int().min(0).default(0),
+})
+
+// ==================== Responses (Swagger / kogane-app types) ====================
+
+const nullableString = z.string().nullable()
+
+export const draftResponseSchema = z.object({
+  id: z.string(),
+  channel: z.string(),
+  chatId: z.string(),
+  messageId: z.string(),
+  itemIndex: z.number().int(),
+  inputType: z.string(),
+  documentType: nullableString,
+  rawText: nullableString,
+  mediaFileId: nullableString,
+  mediaUniqueId: nullableString,
+  fileId: nullableString,
+  status: z.string(),
+  pendingField: nullableString,
+  destination: nullableString,
+  description: nullableString,
+  amount: z.number().nullable(),
+  currency: nullableString,
+  exchangeRate: z.number().nullable(),
+  spentAt: dateTimeSchema.nullable(),
+  expenseType: nullableString,
+  installment: nullableString,
+  period: nullableString,
+  merchant: nullableString,
+  operationNumber: nullableString,
+  notes: nullableString,
+  personId: nullableString,
+  paymentMethodId: nullableString,
+  categoryId: nullableString,
+  confidence: z.record(z.string(), z.number()),
+  missingFields: z.array(z.string()),
+  confirmedAt: dateTimeSchema.nullable(),
+  createdAt: dateTimeSchema,
+  updatedAt: dateTimeSchema,
+})
+
+export const draftListResponseSchema = z.object({ items: z.array(draftResponseSchema), total: z.number().int() })
+
+// Signed link of 10 minutes to the screenshot or voice note (D58); null without file or once it expired
+export const draftDetailResponseSchema = draftResponseSchema.extend({ mediaUrl: z.string().nullable() })
+
+export const draftSavedResponseSchema = z.object({
+  draftId: z.string(),
+  destination: nullableString,
+  recordId: z.string(),
 })

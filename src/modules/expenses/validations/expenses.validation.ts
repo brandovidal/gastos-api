@@ -11,6 +11,7 @@ import {
   SUBSCRIPTION_STATUSES,
   SubscriptionPeriod,
 } from '@/commons/constants/expense.constant'
+import { dateTimeSchema } from '@/commons/helpers/api-response.helper'
 import { ExpenseResource } from '@/db/models/expense-record/expenseRecordDB.repository'
 
 // YYYY-MM-DD from the web forms, stored as a date at 00:00 UTC
@@ -95,4 +96,97 @@ export const expenseListQuerySchema = z.object({
 
 export const extractExpenseSchema = z.object({
   text: z.string().trim().min(1).max(1000),
+})
+
+// ==================== Responses (Swagger / kogane-app types) ====================
+
+const nullableDate = dateTimeSchema.nullable()
+const recordFields = {
+  id: z.string(),
+  description: z.string(),
+  amount: z.number(),
+  currency: z.string(),
+  expenseType: z.enum(ExpenseType),
+  personId: z.string(),
+  categoryId: z.string().nullable(),
+  createdAt: dateTimeSchema,
+  updatedAt: dateTimeSchema,
+}
+const expenseRecordFields = {
+  ...recordFields,
+  exchangeRate: z.number().nullable(),
+  amountInPen: z.number().nullable(),
+  notes: z.string().nullable(),
+  draftId: z.string().nullable(),
+}
+const paidInMonth = {
+  paymentStatus: z.enum(PaymentStatus),
+  installment: z.string().nullable(),
+  paymentMonth: z.number().int(),
+  paymentYear: z.number().int(),
+}
+
+export const EXPENSE_RESPONSE_SCHEMAS = {
+  [ExpenseResource.DAILY]: z.object({
+    ...expenseRecordFields,
+    spentAt: dateTimeSchema,
+    paymentMethodId: z.string(),
+    merchant: z.string().nullable(),
+    operationNumber: z.string().nullable(),
+  }),
+  [ExpenseResource.FIXED_COST]: z.object({
+    ...expenseRecordFields,
+    ...paidInMonth,
+    categoryId: z.string(),
+    paymentMethodId: z.string().nullable(),
+    paymentDate: nullableDate,
+    dueDate: nullableDate,
+    attentionDate: nullableDate,
+  }),
+  [ExpenseResource.SUBSCRIPTION]: z.object({
+    ...expenseRecordFields,
+    ...paidInMonth,
+    period: z.enum(SubscriptionPeriod),
+    paymentMethodId: z.string().nullable(),
+    paymentDate: nullableDate,
+    dueDate: nullableDate,
+  }),
+  [ExpenseResource.CREDIT_CARD]: z.object({
+    ...expenseRecordFields,
+    ...paidInMonth,
+    paymentMethodId: z.string(),
+    processDate: nullableDate,
+  }),
+  [ExpenseResource.RECURRING]: z.object({
+    ...recordFields,
+    targetType: z.enum(RecurringTargetType),
+    paymentMethodId: z.string().nullable(),
+    dayOfMonth: z.number().int(),
+    isActive: z.boolean(),
+    lastGeneratedAt: nullableDate,
+  }),
+} satisfies Record<ExpenseResource, z.ZodObject>
+
+// /v1/expenses/{resource}: the shape depends on the resource of the path
+export const expenseRecordResponseSchema = z.union(Object.values(EXPENSE_RESPONSE_SCHEMAS))
+
+// POST /v1/expenses/extract: fields to prefill "Nuevo gasto" (ids already resolved from the catalog)
+export const resolvedExpenseResponseSchema = z.object({
+  destination: z.string().nullable(),
+  description: z.string().nullable(),
+  amount: z.number().nullable(),
+  currency: z.string().nullable(),
+  spentAt: z.string().nullable().describe('YYYY-MM-DD'),
+  expenseType: z.string().nullable(),
+  installment: z.string().nullable(),
+  period: z.string().nullable(),
+  personId: z.string().nullable(),
+  paymentMethodId: z.string().nullable(),
+  categoryId: z.string().nullable(),
+  merchant: z.string().nullable(),
+  operationNumber: z.string().nullable(),
+  notes: z.string().nullable(),
+  confidence: z.record(z.string(), z.number()),
+  missingFields: z.array(z.string()),
+  lowConfidenceFields: z.array(z.string()),
 })

@@ -55,7 +55,7 @@ modules/<feature>/
 - Exceptions extend `AppException` with their own code: `commons/exceptions/<domain>/<name>.exception.ts` (e.g. `API_KEY_REQUIRED`).
 - Successful responses are wrapped by `ResponseInterceptor`; set the code and message with `@ResponseMessage('CODE', 'Message')`.
 - REST endpoints for kogane-app use `@UseGuards(ApiKeyGuard)` (header `x-api-key`).
-- Swagger (`/docs`, JSON at `/docs-json`): every endpoint has `@ApiTags`, `@ApiOperation` and `@ApiOkResponse` with a response DTO built with `successResponseSchema(schema)` (`commons/helpers/api-response.helper.ts`), the envelope added by `ResponseInterceptor`. `app.routes.test.ts` fails if a route is missing from the document.
+- Swagger (`/docs`, JSON at `/docs-json`): every endpoint has `@ApiTags`, `@ApiOperation` and `@ApiOkResponse` with a response DTO: `class XResponseDto extends responseDto(schema) {}` (`commons/helpers/api-response.helper.ts`, the envelope added by `ResponseInterceptor`; response schemas live in `validations/` next to the request ones and only document). kogane-app generates its types from `/docs-json` (D56), so `app.swagger.test.ts` fails if a REST endpoint has no response schema; `app.routes.test.ts` fails if a route is missing from the document.
 - Routes are versioned by URI with default version `1` (`VERSIONING_OPTIONS`): `@Controller('health')` is served at `/v1/health`. Use `@Version('2')` only for breaking changes. Swagger stays at `/docs`.
 
 ## Tests

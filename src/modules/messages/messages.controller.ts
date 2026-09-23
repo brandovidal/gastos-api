@@ -1,11 +1,12 @@
 import { Body, Controller, HttpCode, HttpStatus, Post, UploadedFile, UseInterceptors } from '@nestjs/common'
 import { FileInterceptor } from '@nestjs/platform-express'
-import { ApiBody, ApiConsumes, ApiOperation } from '@nestjs/swagger'
+import { ApiBody, ApiConsumes, ApiOkResponse, ApiOperation } from '@nestjs/swagger'
 
 import { MAX_IMAGE_BYTES } from '@/commons/constants/conversation.constant'
 import { ApiRest } from '@/commons/decorators/api-rest.decorator'
 import { ResponseMessage } from '@/commons/decorators/response-message.decorator'
 
+import { ConversationResultResponseDto } from './dto/response/messages-response.dto'
 import { MessageActionDto, SendMessageDto } from './dto/request/messages.dto'
 import { MessagesService, UploadedMessageFile } from './messages.service'
 
@@ -31,6 +32,7 @@ export class MessagesController {
     },
   })
   @ApiOperation({ summary: 'Mensajes: send text, an image or a voice note to Kogane; returns the bot replies' })
+  @ApiOkResponse({ type: ConversationResultResponseDto })
   @ResponseMessage('MESSAGE_HANDLED', 'Message handled')
   send(@Body() body: SendMessageDto, @UploadedFile() file?: UploadedMessageFile) {
     return this.messagesService.send(body, file)
@@ -39,6 +41,7 @@ export class MessagesController {
   @Post('actions')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Press a button of a bot reply (its "data")' })
+  @ApiOkResponse({ type: ConversationResultResponseDto })
   @ResponseMessage('MESSAGE_ACTION_HANDLED', 'Message action handled')
   action(@Body() body: MessageActionDto) {
     return this.messagesService.action(body)

@@ -1,0 +1,68 @@
+import { INestApplication } from '@nestjs/common'
+import { Test } from '@nestjs/testing'
+import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger'
+import { cleanupOpenApiDoc } from 'nestjs-zod'
+
+import { VERSIONING_OPTIONS } from '@/commons/constants/versioning.constant'
+import {
+  BudgetGroupsController,
+  CategoriesController,
+  PaymentMethodsController,
+  PeopleController,
+} from '@/modules/catalogs/catalogs.controller'
+import { DebtsController } from '@/modules/debts/debts.controller'
+import { DraftsController } from '@/modules/drafts/drafts.controller'
+import { ExpensesController } from '@/modules/expenses/expenses.controller'
+import { MessagesController } from '@/modules/messages/messages.controller'
+import { SummaryController } from '@/modules/summary/summary.controller'
+
+type Operation = { responses?: Record<string, { content?: Record<string, { schema?: unknown }> }> }
+
+// kogane-app generates its types from /docs-json (D56): an endpoint without its response schema becomes `never` there
+describe('Swagger of the REST API for kogane-app', () => {
+  let app: INestApplication
+
+  beforeAll(async () => {
+    const moduleRef = await Test.createTestingModule({
+      controllers: [
+        PeopleController,
+        PaymentMethodsController,
+        CategoriesController,
+        BudgetGroupsController,
+        ExpensesController,
+        DraftsController,
+        MessagesController,
+        SummaryController,
+        DebtsController,
+      ],
+    })
+      .useMocker(() => ({}))
+      .compile()
+
+    app = moduleRef.createNestApplication()
+    app.enableVersioning(VERSIONING_OPTIONS)
+    await app.init()
+  })
+
+  afterAll(async () => {
+    await app.close()
+  })
+
+  it('should document the response of every endpoint (204 excepted) with the x-api-key security', () => {
+    const document = cleanupOpenApiDoc(SwaggerModule.createDocument(app, new DocumentBuilder().build()))
+    const undocumented: string[] = []
+
+    for (const [path, methods] of Object.entries(document.paths)) {
+      for (const [method, operation] of Object.entries(methods as Record<string, Operation & { security?: unknown }>)) {
+        const responses = operation.responses ?? {}
+        if (responses['204']) continue
+        const success = responses['200'] ?? responses['201']
+        if (!success?.content?.['application/json']?.schema) undocumented.push(`${method.toUpperCase()} ${path}`)
+        expect(operation.security, `${method} ${path}`).toBeDefined()
+      }
+    }
+
+    expect(undocumented).toEqual([])
+    expect(Object.keys(document.paths)).toEqual(expect.arrayContaining(['/v1/debts', '/v1/drafts', '/v1/messages']))
+  })
+})
