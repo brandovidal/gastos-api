@@ -1,5 +1,5 @@
 // Loads the catalogs the bot needs (people, cards, payment methods, budget groups, categories).
-// Usage: pnpm db:seed   (uses DATABASE_URL / DATABASE_AUTH_TOKEN from .env.dev; works for local SQLite and Turso)
+// Usage: make seed [ENV=prod]   (DATABASE_URL / DATABASE_AUTH_TOKEN from the env file or CI secrets; SQLite and Turso)
 import { PrismaLibSql } from '@prisma/adapter-libsql'
 
 import { PrismaClient } from '../src/generated/prisma/client'
@@ -9,7 +9,7 @@ async function main() {
   const url = process.env.DATABASE_URL
 
   if (!url) {
-    throw new Error('Set DATABASE_URL (e.g. file:./dev.db) in .env.dev')
+    throw new Error('Set DATABASE_URL (e.g. file:./dev.db) in .env.dev or .env.prod')
   }
 
   const prisma = new PrismaClient({

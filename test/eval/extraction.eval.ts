@@ -8,7 +8,7 @@
 // Images (P4): put real screenshots in test/golden/images/ (git-ignored: they carry personal data) with a cases.json
 // like [{ "file": "yape-1.jpg", "message": "persona dany", "expected": [{ "amount": 18, "paymentMethod": "Yape" }] }].
 // They are scored with the text cases; replay skips them.
-// Uses .env.local (catalogs from the local dev.db) and counts against the free daily quota (~1 call per case).
+// Uses .env.dev (catalogs from the local dev.db) and counts against the free daily quota (~1 call per case).
 import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 

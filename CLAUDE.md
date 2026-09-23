@@ -12,13 +12,13 @@ NestJS backend for expense intake from chat (Telegram first, WhatsApp later) wit
 
 ## Commands
 
-Tasks live in the `Makefile` (`make help`); `ENV=local` (default, `.env.local`, SQLite `dev.db`) or `ENV=dev` (`.env.dev`, Turso). `package.json` only keeps what Railway, CI and husky call.
+Tasks live in the `Makefile` + `makefiles/*.mk`, one file per group (`make help` lists them by group); `pnpm dev` = `make dev` with `.env.dev`; `ENV=dev` (default, `.env.dev`, SQLite `dev.db`) or `ENV=prod` (`.env.prod`, Turso `kogane-db`, production). `package.json` only keeps what Railway, CI and husky call.
 
 ```sh
-make deps [ENV=dev]     # after pulling: Prisma client + pending migrations + seed + bot command menu
-make dev [ENV=dev]      # watch mode
+make deps [ENV=prod]     # after pulling: Prisma client + pending migrations + seed + bot command menu
+make dev [ENV=prod]      # watch mode
 make migrate NAME=x     # new migration on local dev.db + prisma generate
-make db-deploy / seed / studio [ENV=dev]
+make db-deploy / seed / studio [ENV=prod]
 make telegram URL=https://…   # webhook + command menu
 make lint / format / build / test / test-integration
 make check              # lint + build + unit + integration (what CI runs)
@@ -99,14 +99,19 @@ modules/<feature>/
 - Errors (P8): `TelegramClient` retries 429 (waits `retry_after`, up to 30 s), 5xx and network errors twice, with a 10 s timeout. A failed edit is sent as a new message (the work is already done). On shutdown the chat queues get 10 s to finish; on startup, drafts the AI never finished (still `draft`, no data, no question) become `failed` and the chat is told to use `/bandeja`. The same happens when they expire after 30 minutes.
 - Observability: `/uso` shows today's AI calls per model against 90 % of its free quota; `GET /v1/health` includes the webhook state from `getWebhookInfo`.
 
+## Deployment (P10)
+
+- `Dockerfile` + `railway.json` (health `/v1/health`); `.github/workflows/deploy.yml` runs `unit-test.yml`, then migrations and seed (`scripts/db-deploy.ts`, `prisma/seed.ts`), `railway up` and `scripts/telegram-setup.ts`. Guide: `docs/deploy.md`.
+- `NODE_ENV=production` turns Swagger off (`isDocsEnabled`) and logs to JSON. Migrations must be backward compatible: they run before the new code.
+
 ## Database (Turso)
 
-Environments: `.env.local` = SQLite `file:./dev.db`, `.env.dev` = Turso (`libsql://…` + `DATABASE_AUTH_TOKEN`), `.env.test` = `file:./test.db`. All are git-ignored.
+Environments: `.env.dev` = SQLite `file:./dev.db`, `.env.prod` = Turso `kogane-db`, production (`libsql://…` + `DATABASE_AUTH_TOKEN`), `.env.test` = `file:./test.db`. All are git-ignored.
 
 Prisma Migrate cannot run against remote Turso. Flow:
 
 1. `make migrate NAME=<name>` creates the migration against local `dev.db` and regenerates the client (Prisma 7 `migrate dev` no longer runs `generate`).
-2. `make db-deploy ENV=dev` (or `make deps ENV=dev`) applies the pending `prisma/migrations/*/migration.sql` to Turso (`scripts/db-deploy.ts`, one batch per migration, tracked in `_app_migrations`; safe to re-run).
-3. `make seed ENV=dev` if catalogs changed.
+2. In production the deploy workflow (`.github/workflows/deploy.yml`) does it; by hand, `make db-deploy ENV=prod` (or `make deps ENV=prod`) applies the pending `prisma/migrations/*/migration.sql` to Turso (`scripts/db-deploy.ts`, one batch per migration, tracked in `_app_migrations`; safe to re-run).
+3. `make seed ENV=prod` if catalogs changed (the deploy workflow also seeds).
 
 Remote Turso does not send SQLite extended codes: a unique violation arrives as `P2039`, not `P2002`. `isPrismaError` handles it; always go through that helper.

@@ -10,6 +10,7 @@
   },
   "packageManager": "pnpm@12.4.2",
   "scripts": {
+    "dev": "dotenv -e .env.dev -- nest start --watch",
     "build": "nest build",
     "start:prod": "node dist/main",
     "lint": "eslint \"src/**/*.ts\"",

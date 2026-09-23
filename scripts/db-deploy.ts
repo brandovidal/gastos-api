@@ -1,5 +1,5 @@
 // Applies pending Prisma migrations to a remote libSQL database (Turso), where `prisma migrate deploy` cannot run.
-// Usage: make db-deploy ENV=dev   (make deps runs it too; on SQLite make uses prisma migrate deploy instead)
+// Usage: make db-deploy ENV=prod   (make deps runs it too; on SQLite make uses prisma migrate deploy instead)
 // Migrations are the SQL files generated locally by `make migrate NAME=<name>` (prisma/migrations/*/migration.sql),
 // applied in name order. Applied ones are recorded in `_app_migrations`, so running it twice is safe.
 import { createClient } from '@libsql/client'

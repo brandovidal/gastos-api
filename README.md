@@ -9,17 +9,17 @@ Stack: NestJS 11 · TypeScript · pnpm · Prisma 7 · Turso (libSQL) · Zod 4 ·
 ```sh
 fnm use            # Node 22 (.node-version)
 pnpm install
-cp .env.example .env.local
+cp .env.example .env.dev
 make deps          # Prisma client + pending migrations + catalogs + bot command menu
-make dev           # http://localhost:5560/v1/health · Swagger at /docs
+pnpm dev           # (or make dev) http://localhost:5560/v1/health · Swagger at /docs
 ```
 
 ## Environments
 
 | Env file | Database | Used by |
 |---|---|---|
-| `.env.local` | local SQLite `file:./dev.db` | every `make` task by default (`ENV=local`) |
-| `.env.dev` | Turso `libsql://…` + `DATABASE_AUTH_TOKEN` | `make <task> ENV=dev` |
+| `.env.dev` | local SQLite `file:./dev.db` | `pnpm dev` and every `make` task by default (`ENV=dev`) |
+| `.env.prod` | Turso `kogane-db` (**production**) `libsql://…` + `DATABASE_AUTH_TOKEN` | `make <task> ENV=prod` (GitHub Actions uses the same values as secrets) |
 | `.env.test` | local SQLite `file:./test.db` | integration tests |
 
 Env files are git-ignored; never commit tokens.
@@ -28,17 +28,21 @@ Env files are git-ignored; never commit tokens.
 
 | Task | Description |
 |---|---|
-| `make deps [ENV=dev]` | Leave local / Turso ready after pulling: Prisma client, pending table migrations, catalogs, bot command menu (and webhook if `PUBLIC_URL` is set). Safe to re-run |
-| `make dev [ENV=dev]` | Start in watch mode |
+| `make deps [ENV=prod]` | Leave local / Turso ready after pulling: Prisma client, pending table migrations, catalogs, bot command menu (and webhook if `PUBLIC_URL` is set). Safe to re-run |
+| `make dev [ENV=prod]` | Start in watch mode |
 | `make migrate NAME=<name>` | New migration against local SQLite + regenerate the client |
-| `make db-deploy` · `make seed` · `make studio` | Pending migrations · catalogs · Prisma Studio (`ENV=dev` for Turso) |
+| `make db-deploy` · `make seed` · `make studio` | Pending migrations · catalogs · Prisma Studio (`ENV=prod` for Turso) |
 | `make telegram URL=https://…` | Register the Telegram webhook and command menu |
 | `make lint` · `make format` · `make build` | ESLint · Prettier · compile to `dist/` |
 | `make test` · `make test-integration` · `make check` | Unit (watch) · integration · everything CI runs |
 | `make eval-replay` | Golden set with the recorded AI answers (no AI calls) |
 | `make eval-ai CONFIRM=yes [RECORD=1]` | Golden set against the **real AI** (~30 calls of the free daily quota) |
 
-`package.json` keeps only what Railway (`build`, `start:prod`), CI (`test:ci`, `test:integration`) and husky (`lint`, `format`) call.
+Tasks are grouped in `makefiles/*.mk` (app, database, bot, quality, eval, docker). `package.json` keeps `pnpm dev` (local watch mode) and what Railway (`build`, `start:prod`), CI (`test:ci`, `test:integration`) and husky (`lint`, `format`) call.
+
+## Deployment
+
+Railway + Turso `kogane-db`, deployed by GitHub Actions on every push to `main` (tests → migrations and seed → `railway up` → Telegram webhook). Setup, variables, secrets, verification and rollback: [docs/deploy.md](docs/deploy.md). `make docker` runs the production image locally.
 
 ## Using the bot (@kogane_finanzas_bot)
 

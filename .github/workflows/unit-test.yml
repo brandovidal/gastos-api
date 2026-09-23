@@ -1,9 +1,11 @@
-name: Run Tests on Pull Request
+name: Tests
 
+# Pull requests to main, and reused by deploy.yml before every deploy
 on:
   pull_request:
     branches:
       - main
+  workflow_call:
 
 jobs:
   test:
