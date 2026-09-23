@@ -83,4 +83,26 @@ describe('ExpenseDraftDBRepository (integration)', () => {
       repository.findOpenByChat(ExpenseDraftChannel.TELEGRAM, chatId, new Date(Date.now() - 60_000)),
     ).resolves.toBeNull()
   })
+
+  it('should fail only the drafts whose extraction never finished, grouped by chat', async () => {
+    const interruptedChat = 'integration-interrupted'
+    const base = {
+      channel: ExpenseDraftChannel.TELEGRAM,
+      chatId: interruptedChat,
+      inputType: ExpenseDraftInputType.TEXT,
+    }
+    const interrupted = await repository.create({ ...base, messageId: '1', rawText: 'almuerzo 25' })
+    const extracted = await repository.create({ ...base, messageId: '2', rawText: 'taxi 10' })
+    await repository.update(extracted.id, { description: 'taxi', amount: 10, pendingField: 'paymentMethodId' })
+
+    const affected = await repository.failInterruptedUpdatedBefore(
+      ExpenseDraftChannel.TELEGRAM,
+      new Date(Date.now() + 60_000),
+      interruptedChat,
+    )
+
+    expect(affected).toEqual([{ chatId: interruptedChat, count: 1 }])
+    await expect(repository.findById(interrupted.id)).resolves.toMatchObject({ status: ExpenseDraftStatus.FAILED })
+    await expect(repository.findById(extracted.id)).resolves.toMatchObject({ status: ExpenseDraftStatus.DRAFT })
+  })
 })

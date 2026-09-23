@@ -32,3 +32,11 @@ export interface TelegramInlineKeyboardButton {
 export interface TelegramReplyMarkup {
   inline_keyboard: TelegramInlineKeyboardButton[][]
 }
+
+// https://core.telegram.org/bots/api#webhookinfo (subset)
+export interface TelegramWebhookInfo {
+  url: string
+  pending_update_count: number
+  last_error_date?: number
+  last_error_message?: string
+}

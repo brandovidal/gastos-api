@@ -76,6 +76,36 @@ export class ExpenseDraftDBRepository {
     return count
   }
 
+  // Drafts whose AI extraction never finished (process restarted mid-request): still `draft`, with no question
+  // asked and no extracted data. They become `failed` so /bandeja can retry them. Returns the affected chats.
+  async failInterruptedUpdatedBefore(
+    channel: ExpenseDraftChannel,
+    before: Date,
+    chatId?: string,
+  ): Promise<{ chatId: string; count: number }[]> {
+    const where = {
+      channel,
+      ...(chatId ? { chatId } : {}),
+      status: ExpenseDraftStatus.DRAFT,
+      pendingField: null,
+      destination: null,
+      description: null,
+      amount: null,
+      updatedAt: { lt: before },
+    }
+    const interrupted = await this.prisma.expenseDraft.findMany({ where, select: { id: true, chatId: true } })
+    if (!interrupted.length) return []
+
+    await this.prisma.expenseDraft.updateMany({
+      where: { id: { in: interrupted.map(({ id }) => id) } },
+      data: { status: ExpenseDraftStatus.FAILED },
+    })
+
+    const countByChat = new Map<string, number>()
+    for (const draft of interrupted) countByChat.set(draft.chatId, (countByChat.get(draft.chatId) ?? 0) + 1)
+    return [...countByChat].map(([chat, count]) => ({ chatId: chat, count }))
+  }
+
   // /cancelar: close every open expense draft of the chat
   async discardOpenByChat(channel: ExpenseDraftChannel, chatId: string): Promise<number> {
     const { count } = await this.prisma.expenseDraft.updateMany({

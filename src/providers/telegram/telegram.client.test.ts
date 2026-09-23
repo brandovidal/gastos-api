@@ -51,4 +51,70 @@ describe('TelegramClient', () => {
     await expect(client().sendChatAction('555', 'typing')).rejects.toThrow(TelegramRequestFailedException)
     expect(mockFetch).not.toHaveBeenCalled()
   })
+
+  describe('retries', () => {
+    const ok = { status: 200, json: async () => ({ ok: true, result: true }) }
+
+    beforeEach(() => {
+      vi.useFakeTimers()
+    })
+
+    afterEach(() => {
+      vi.useRealTimers()
+    })
+
+    it('should wait retry_after on 429 and then succeed', async () => {
+      mockFetch
+        .mockResolvedValueOnce({
+          status: 429,
+          json: async () => ({ ok: false, description: 'Too Many Requests', parameters: { retry_after: 3 } }),
+        })
+        .mockResolvedValueOnce(ok)
+
+      const pending = client('123:abc').sendMessage('555', 'hola')
+      await vi.advanceTimersByTimeAsync(2_999)
+      expect(mockFetch).toHaveBeenCalledTimes(1)
+      await vi.advanceTimersByTimeAsync(1)
+
+      await expect(pending).resolves.toBe(true)
+      expect(mockFetch).toHaveBeenCalledTimes(2)
+    })
+
+    it('should retry network errors and 5xx, and give up after 2 retries', async () => {
+      mockFetch
+        .mockRejectedValueOnce(new TypeError('fetch failed'))
+        .mockResolvedValueOnce({ status: 502, json: async () => ({ ok: false, description: 'Bad Gateway' }) })
+        .mockResolvedValueOnce({ status: 502, json: async () => ({ ok: false, description: 'Bad Gateway' }) })
+
+      const pending = client('123:abc')
+        .sendMessage('555', 'hola')
+        .catch((caught: unknown) => caught)
+      await vi.runAllTimersAsync()
+
+      expect(await pending).toBeInstanceOf(TelegramRequestFailedException)
+      expect(mockFetch).toHaveBeenCalledTimes(3)
+    })
+
+    it('should not retry client errors or a flood wait longer than the limit', async () => {
+      mockFetch.mockResolvedValueOnce({
+        status: 429,
+        json: async () => ({ ok: false, parameters: { retry_after: 120 } }),
+      })
+
+      await expect(client('123:abc').sendMessage('555', 'hola')).rejects.toThrow(TelegramRequestFailedException)
+      expect(mockFetch).toHaveBeenCalledTimes(1)
+    })
+  })
+
+  it('should read the webhook info', async () => {
+    mockFetch.mockResolvedValue({
+      status: 200,
+      json: async () => ({ ok: true, result: { url: 'https://x/v1/telegram/webhook', pending_update_count: 0 } }),
+    })
+
+    await expect(client('123:abc').getWebhookInfo()).resolves.toEqual({
+      url: 'https://x/v1/telegram/webhook',
+      pending_update_count: 0,
+    })
+  })
 })

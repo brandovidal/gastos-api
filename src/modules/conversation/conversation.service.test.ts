@@ -37,12 +37,13 @@ const mockExpenseDraftDB = {
   findById: vi.fn(),
   findOpenByChat: vi.fn(),
   discardOpenUpdatedBefore: vi.fn(),
+  failInterruptedUpdatedBefore: vi.fn(),
   discardOpenByChat: vi.fn(),
   findRecentSaved: vi.fn(),
   findByStatuses: vi.fn(),
 }
 const mockExpenseDB = { findMonthlyTotals: vi.fn() }
-const mockExtraction = { extract: vi.fn(), parseLocalCorrection: vi.fn(), loadCatalog: vi.fn() }
+const mockExtraction = { extract: vi.fn(), parseLocalCorrection: vi.fn(), loadCatalog: vi.fn(), getUsage: vi.fn() }
 const mockSaver = { save: vi.fn() }
 const mockPaymentMethodDB = { create: vi.fn(), updateBillingDays: vi.fn() }
 
@@ -82,6 +83,7 @@ describe('ConversationService', () => {
     mockExtraction.loadCatalog.mockResolvedValue(mockCatalog)
     mockExpenseDraftDB.findOpenByChat.mockResolvedValue(null)
     mockExpenseDraftDB.discardOpenUpdatedBefore.mockResolvedValue(0)
+    mockExpenseDraftDB.failInterruptedUpdatedBefore.mockResolvedValue([])
     mockExpenseDraftDB.create.mockImplementation(async (data) =>
       buildExpenseDraft({ ...data, id: `file-${data.itemIndex ?? 0}` }),
     )
@@ -178,6 +180,22 @@ describe('ConversationService', () => {
       const cutoff = mockExpenseDraftDB.discardOpenUpdatedBefore.mock.calls[0][2] as Date
       expect(Date.now() - cutoff.getTime()).toBeGreaterThanOrEqual(30 * 60_000 - 1000)
       expect(mockExpenseDraftDB.findOpenByChat).toHaveBeenCalledWith(ExpenseDraftChannel.TELEGRAM, CHAT_ID, cutoff)
+    })
+
+    it('should send stale drafts the AI never finished to /bandeja as failed before discarding the rest', async () => {
+      mockExtraction.extract.mockResolvedValue({ expenses: [buildResolvedExpense()] })
+
+      await service.handle(textMessage('almuerzo 25'))
+
+      const cutoff = mockExpenseDraftDB.discardOpenUpdatedBefore.mock.calls[0][2] as Date
+      expect(mockExpenseDraftDB.failInterruptedUpdatedBefore).toHaveBeenCalledWith(
+        ExpenseDraftChannel.TELEGRAM,
+        cutoff,
+        CHAT_ID,
+      )
+      expect(mockExpenseDraftDB.failInterruptedUpdatedBefore.mock.invocationCallOrder[0]).toBeLessThan(
+        mockExpenseDraftDB.discardOpenUpdatedBefore.mock.invocationCallOrder[0],
+      )
     })
 
     it('should apply a local correction without calling the AI and trust the corrected field', async () => {
@@ -388,6 +406,20 @@ describe('ConversationService', () => {
 
       expect(mockExpenseDB.findMonthlyTotals).toHaveBeenCalledWith(expect.any(Number), expect.any(Number))
       expect(replies[0].text).toBe('No hay gastos registrados este mes.')
+    })
+  })
+
+  describe('AI usage (/uso)', () => {
+    it('should show each model against its usable limit', async () => {
+      mockExtraction.getUsage.mockResolvedValue([
+        { provider: 'gemini', model: 'gemini-lite', used: 12, dailyLimit: 500, usableLimit: 450 },
+        { provider: 'groq', model: 'qwen', used: 900, dailyLimit: 1000, usableLimit: 900 },
+      ])
+
+      const { replies } = await service.handle(command(BotCommand.USAGE))
+
+      expect(replies[0].text).toContain('🟢 <b>gemini</b> gemini-lite: 12 de 450')
+      expect(replies[0].text).toContain('🔴 <b>groq</b> qwen: 900 de 900')
     })
   })
 

@@ -57,6 +57,7 @@ modules/<feature>/
 - Exceptions extend `AppException` with their own code: `commons/exceptions/<domain>/<name>.exception.ts` (e.g. `API_KEY_REQUIRED`).
 - Successful responses are wrapped by `ResponseInterceptor`; set the code and message with `@ResponseMessage('CODE', 'Message')`.
 - REST endpoints for kogane-app use `@UseGuards(ApiKeyGuard)` (header `x-api-key`).
+- Swagger (`/docs`, JSON at `/docs-json`): every endpoint has `@ApiTags`, `@ApiOperation` and `@ApiOkResponse` with a response DTO built with `successResponseSchema(schema)` (`commons/helpers/api-response.helper.ts`), the envelope added by `ResponseInterceptor`. `app.routes.test.ts` fails if a route is missing from the document.
 - Routes are versioned by URI with default version `1` (`VERSIONING_OPTIONS`): `@Controller('health')` is served at `/v1/health`. Use `@Version('2')` only for breaking changes. Swagger stays at `/docs`.
 
 ## Tests
@@ -94,6 +95,8 @@ modules/<feature>/
 - Button data: `<action>:<draftId>[:<fieldCode>:<value>]` (`bot-action.codec.ts`), always ≤ 64 bytes (Telegram limit).
 - `ExpenseSaverService` creates the record of the destination table and marks the draft as saved in one transaction (`ExpenseDBRepository.saveFromExpenseDraft`), `daily` included. Credit cards: day ≤ closing day → that month, otherwise the next one.
 - `modules/telegram`: the webhook (`POST /v1/telegram/webhook`) checks the secret header, answers 200 at once and processes the update in a per-chat in-memory queue (`KeyedQueue`). Chats outside `TELEGRAM_ALLOWED_CHAT_IDS` get a 200 and are ignored.
+- Errors (P8): `TelegramClient` retries 429 (waits `retry_after`, up to 30 s), 5xx and network errors twice, with a 10 s timeout. A failed edit is sent as a new message (the work is already done). On shutdown the chat queues get 10 s to finish; on startup, drafts the AI never finished (still `draft`, no data, no question) become `failed` and the chat is told to use `/bandeja`. The same happens when they expire after 30 minutes.
+- Observability: `/uso` shows today's AI calls per model against 90 % of its free quota; `GET /v1/health` includes the webhook state from `getWebhookInfo`.
 
 ## Database (Turso)
 

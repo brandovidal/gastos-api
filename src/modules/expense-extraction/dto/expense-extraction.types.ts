@@ -66,3 +66,13 @@ export interface ExpenseExtractionResult {
   provider: AiProvider
   model: string
 }
+
+// /uso: today's calls of a model against its free daily quota
+export interface AiModelUsage {
+  provider: string
+  model: string
+  used: number
+  dailyLimit: number
+  // calls allowed before the quota guard skips the model (AI_QUOTA_USAGE_THRESHOLD)
+  usableLimit: number
+}

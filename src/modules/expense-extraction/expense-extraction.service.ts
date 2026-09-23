@@ -33,6 +33,7 @@ import {
   ExpenseExtractionResult,
   ExtractionCatalog,
   ResolvedExpenseFields,
+  AiModelUsage,
 } from './dto/expense-extraction.types'
 
 interface ModelCandidate {
@@ -104,6 +105,23 @@ export class ExpenseExtractionService {
     throw new ExpenseExtractionFailedException({ draftId: input.draftId })
   }
 
+  // Every model of both routes, once, with today's calls (each provider resets at its own midnight)
+  async getUsage(): Promise<AiModelUsage[]> {
+    const candidates = [...this.buildRoute(false), ...this.buildRoute(true)].filter(
+      (candidate, index, all) => all.findIndex((other) => other.model === candidate.model) === index,
+    )
+
+    return Promise.all(
+      candidates.map(async ({ provider, model, dailyLimit }) => ({
+        provider,
+        model,
+        used: await this.countToday(provider, model),
+        dailyLimit,
+        usableLimit: Math.floor(dailyLimit * AI_QUOTA_USAGE_THRESHOLD),
+      })),
+    )
+  }
+
   // Text: Flash-Lite, then Groq. Images: Flash-Lite, then Flash (Groq is text-only).
   private buildRoute(hasImages: boolean): ModelCandidate[] {
     const gemini = this.configService.getOrThrow<GeminiConfig>('gemini')
@@ -117,9 +135,16 @@ export class ExpenseExtractionService {
   }
 
   private async isOverQuota({ provider, model, dailyLimit }: ModelCandidate): Promise<boolean> {
-    const since = DateHelper.startOfDayIn(AI_QUOTA_TIME_ZONES[provider])
-    const used = await this.aiRequestLogDBRepository.countSince(provider, model, since)
+    const used = await this.countToday(provider, model)
     return used >= Math.floor(dailyLimit * AI_QUOTA_USAGE_THRESHOLD)
+  }
+
+  private countToday(provider: AiProvider, model: string): Promise<number> {
+    return this.aiRequestLogDBRepository.countSince(
+      provider,
+      model,
+      DateHelper.startOfDayIn(AI_QUOTA_TIME_ZONES[provider]),
+    )
   }
 
   private async tryCandidate(

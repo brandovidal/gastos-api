@@ -14,7 +14,7 @@ const mockClient = {
   answerCallbackQuery: vi.fn().mockResolvedValue(true),
   sendChatAction: vi.fn().mockResolvedValue(true),
 }
-const mockConversation = { handle: vi.fn() }
+const mockConversation = { handle: vi.fn(), recoverInterrupted: vi.fn() }
 
 const chat = { id: 555, type: 'private' }
 const textUpdate = { update_id: 1, message: { message_id: 10, chat, date: 0, text: 'almuerzo 25' } }
@@ -77,5 +77,58 @@ describe('TelegramService', () => {
 
     expect(mockClient.answerCallbackQuery).toHaveBeenCalledWith('cb-1')
     expect(mockClient.sendMessage).toHaveBeenCalledWith('555', expect.stringContaining('Algo salió mal'))
+  })
+
+  it('should send the reply as a new message when the old one cannot be edited', async () => {
+    mockConversation.handle.mockResolvedValue({ replies: [{ text: '✅ Guardado', edit: true }], notice: 'Guardado' })
+    mockClient.editMessageText.mockRejectedValueOnce(new Error('message to edit not found'))
+
+    await service.enqueue(buttonUpdate)
+
+    expect(mockClient.sendMessage).toHaveBeenCalledWith('555', '✅ Guardado', undefined)
+    expect(mockClient.sendMessage).not.toHaveBeenCalledWith('555', expect.stringContaining('Algo salió mal'))
+  })
+
+  describe('lifecycle', () => {
+    it('should move interrupted drafts to /bandeja on startup and tell only allowed chats', async () => {
+      mockConversation.recoverInterrupted.mockResolvedValue([
+        { chatId: '555', count: 2 },
+        { chatId: '999', count: 1 },
+      ])
+
+      service.onApplicationBootstrap()
+      await vi.waitFor(() => expect(mockClient.sendMessage).toHaveBeenCalled())
+
+      const [, before] = mockConversation.recoverInterrupted.mock.calls[0]
+      expect(Date.now() - (before as Date).getTime()).toBeGreaterThanOrEqual(2 * 60_000 - 1000)
+      expect(mockClient.sendMessage).toHaveBeenCalledTimes(1)
+      expect(mockClient.sendMessage).toHaveBeenCalledWith('555', expect.stringContaining('2 mensajes'))
+    })
+
+    it('should not break startup when the recovery fails', async () => {
+      mockConversation.recoverInterrupted.mockRejectedValue(new Error('db down'))
+
+      expect(() => service.onApplicationBootstrap()).not.toThrow()
+      await vi.waitFor(() => expect(Logger.prototype.error).toHaveBeenCalled())
+    })
+
+    it('should wait for the messages in process before shutting down', async () => {
+      let finish: () => void = () => {}
+      mockConversation.handle.mockReturnValue(
+        new Promise((resolve) => {
+          finish = () => resolve({ replies: [] })
+        }),
+      )
+      void service.enqueue(textUpdate)
+
+      let shutDown = false
+      const shutdown = service.beforeApplicationShutdown().then(() => (shutDown = true))
+      await new Promise((resolve) => setTimeout(resolve, 10))
+      expect(shutDown).toBe(false)
+
+      finish()
+      await shutdown
+      expect(shutDown).toBe(true)
+    })
   })
 })

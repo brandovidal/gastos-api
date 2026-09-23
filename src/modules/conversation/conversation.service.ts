@@ -14,6 +14,7 @@ import { PaymentMethodType } from '@/commons/constants/catalog.constant'
 import { ExpenseDestination, SubscriptionPeriod } from '@/commons/constants/expense.constant'
 import {
   EXPENSE_DRAFT_EXPIRATION_MINUTES,
+  ExpenseDraftChannel,
   ExpenseDraftInputType,
   ExpenseDraftStatus,
   OPEN_EXPENSE_DRAFT_STATUSES,
@@ -44,6 +45,7 @@ import {
   buildInboxReplies,
   buildNewPaymentMethodReply,
   formatMonthlyTotals,
+  formatAiUsage,
   formatRecent,
   toNewPaymentMethodName,
 } from './conversation.messages'
@@ -361,6 +363,9 @@ export class ConversationService {
         const count = await this.expenseDraftDBRepository.discardOpenByChat(message.channel, message.chatId)
         return [{ text: TEXTS.cancelled(count) }]
       }
+      case BotCommand.USAGE: {
+        return [{ text: formatAiUsage(await this.expenseExtractionService.getUsage()) }]
+      }
       case BotCommand.RECENT: {
         const recent = await this.expenseDraftDBRepository.findRecentSaved(
           message.channel,
@@ -396,9 +401,16 @@ export class ConversationService {
     return !/\d/.test(text) && text.split(/\s+/).length <= 3
   }
 
+  // Called when the app starts: drafts left without extraction by a restart become failed (retry from /bandeja)
+  recoverInterrupted(channel: ExpenseDraftChannel, before: Date): Promise<{ chatId: string; count: number }[]> {
+    return this.expenseDraftDBRepository.failInterruptedUpdatedBefore(channel, before)
+  }
+
   // The latest open expense draft is the one text corrections apply to; stale ones are discarded first
+  // (except the ones the AI never finished, which go to /bandeja as failed)
   private async findActive(message: ChannelMessage): Promise<ExpenseDraftDbDto | null> {
     const cutoff = new Date(Date.now() - EXPENSE_DRAFT_EXPIRATION_MINUTES * 60_000)
+    await this.expenseDraftDBRepository.failInterruptedUpdatedBefore(message.channel, cutoff, message.chatId)
     await this.expenseDraftDBRepository.discardOpenUpdatedBefore(message.channel, message.chatId, cutoff)
     return this.expenseDraftDBRepository.findOpenByChat(message.channel, message.chatId, cutoff)
   }

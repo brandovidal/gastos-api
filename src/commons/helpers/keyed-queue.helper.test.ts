@@ -49,4 +49,19 @@ describe('KeyedQueue', () => {
     expect(order).toEqual(['b', 'a'])
     expect(queue.size).toBe(0)
   })
+
+  describe('drain', () => {
+    it('should resolve true at once when nothing is queued', async () => {
+      await expect(new KeyedQueue().drain(10)).resolves.toBe(true)
+    })
+
+    it('should wait for the queued tasks, or give up after the timeout', async () => {
+      const queue = new KeyedQueue()
+      void queue.run('a', () => new Promise((resolve) => setTimeout(resolve, 20)))
+      await expect(queue.drain(1_000)).resolves.toBe(true)
+
+      void queue.run('b', () => new Promise((resolve) => setTimeout(resolve, 1_000)))
+      await expect(queue.drain(10)).resolves.toBe(false)
+    })
+  })
 })

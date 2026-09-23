@@ -19,4 +19,21 @@ export class KeyedQueue {
   get size(): number {
     return this.tails.size
   }
+
+  // Waits for the queued work (e.g. before shutdown) up to timeoutMs; true when everything finished
+  async drain(timeoutMs: number): Promise<boolean> {
+    if (!this.tails.size) return true
+
+    let timer: NodeJS.Timeout | undefined
+    const timeout = new Promise<false>((resolve) => {
+      timer = setTimeout(() => resolve(false), timeoutMs)
+    })
+    const finished = Promise.all(this.tails.values()).then(() => true as const)
+
+    try {
+      return await Promise.race([finished, timeout])
+    } finally {
+      clearTimeout(timer)
+    }
+  }
 }

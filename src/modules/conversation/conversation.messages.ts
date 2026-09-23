@@ -12,7 +12,7 @@ import { CatalogKind, ExpenseField } from '@/commons/constants/expense-extractio
 import { ExpenseDraftDbDto } from '@/db/models/expense-draft/expenseDraftDB.dto'
 import { MonthlyTotalDbDto } from '@/db/models/expense/expenseDB.dto'
 import { botPaymentMethods, findCatalogEntryById } from '@/modules/expense-extraction/expense-extraction.catalog'
-import { ExtractionCatalog } from '@/modules/expense-extraction/dto/expense-extraction.types'
+import { AiModelUsage, ExtractionCatalog } from '@/modules/expense-extraction/dto/expense-extraction.types'
 
 import { encodeBotAction } from './bot-action.codec'
 import { lowConfidenceFieldsOf } from './expense-draft.mapper'
@@ -61,9 +61,13 @@ export const TEXTS = {
     '',
     '<b>Para corregir</b> un gasto que acabo de leer, empieza con la palabra: <i>monto 30</i>, <i>persona dany</i>, <i>cuota 2/6</i>, <i>tarjeta oh</i>, <i>categoría comida</i>, <i>con culpa</i>, <i>ayer</i>. Si no, toca ✏️ Corregir y escríbelo como quieras.',
     '',
-    '/bandeja · /ultimos · /resumen · /cancelar',
+    '/bandeja · /ultimos · /resumen · /uso · /cancelar',
   ].join('\n'),
-  failed: '⚠️ No pude procesar el mensaje ahora. Lo dejé en la bandeja para revisarlo en la web.',
+  failed: '⚠️ No pude procesar el mensaje ahora. Lo dejé en /bandeja para reintentarlo.',
+  interrupted: (count: number) =>
+    count === 1
+      ? '⚠️ Me reinicié mientras procesaba un mensaje. Lo dejé en /bandeja para retomarlo.'
+      : `⚠️ Me reinicié mientras procesaba ${count} mensajes. Los dejé en /bandeja para retomarlos.`,
   notAnExpense: '🤔 No encontré un gasto en tu mensaje. Prueba con algo como <i>almuerzo 25 soles con yape</i>.',
   askCorrection: '✏️ Escribe la corrección como quieras (ej: <i>eran 30 soles y fue con la oh</i>).',
   correctionFailed: '⚠️ No pude aplicar la corrección. Prueba con <i>monto 30</i> o <i>persona dany</i>.',
@@ -274,6 +278,15 @@ export function buildInboxReplies(items: ExpenseDraftDbDto[], total: number, cat
 }
 
 // Keeps the typed name short enough for callback_data (64 bytes in total)
+// /uso: one line per model; the bot stops using a model at its usable limit (90 % of the free quota)
+export function formatAiUsage(usage: AiModelUsage[]): string {
+  const lines = usage.map(({ provider, model, used, usableLimit }) => {
+    const icon = used >= usableLimit ? '🔴' : used >= usableLimit * 0.8 ? '🟡' : '🟢'
+    return `${icon} <b>${escapeHtml(provider)}</b> ${escapeHtml(model)}: ${used} de ${usableLimit}`
+  })
+  return ['🤖 <b>Uso de la AI hoy</b>', ...lines, '', '<i>Al llegar al límite uso el siguiente modelo.</i>'].join('\n')
+}
+
 export function toNewPaymentMethodName(text: string): string {
   let name = text.replace(/[:\n]/g, ' ').replace(/\s+/g, ' ').trim()
   while (Buffer.byteLength(name) > MAX_NEW_PAYMENT_METHOD_NAME_BYTES) name = name.slice(0, -1)

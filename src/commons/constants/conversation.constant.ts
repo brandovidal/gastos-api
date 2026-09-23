@@ -22,6 +22,7 @@ export enum BotCommand {
   RECENT = 'ultimos',
   SUMMARY = 'resumen',
   INBOX = 'bandeja',
+  USAGE = 'uso',
 }
 
 // Descriptions shown in the Telegram command menu (Spanish: user-facing)
@@ -32,6 +33,7 @@ export const BOT_COMMAND_DESCRIPTIONS: Record<BotCommand, string> = {
   [BotCommand.RECENT]: 'Últimos gastos guardados',
   [BotCommand.SUMMARY]: 'Total del mes',
   [BotCommand.INBOX]: 'Gastos en bandeja y los que fallaron',
+  [BotCommand.USAGE]: 'Uso de la AI hoy',
 }
 
 export const CALLBACK_SEPARATOR = ':'

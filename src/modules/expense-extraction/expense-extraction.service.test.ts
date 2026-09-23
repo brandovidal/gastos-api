@@ -124,6 +124,20 @@ describe('ExpenseExtractionService', () => {
     expect(mockGemini.generateJson).not.toHaveBeenCalled()
   })
 
+  it('should report today usage of each model once, against 90 % of its quota', async () => {
+    mockAiRequestLog.countSince.mockImplementation((_provider: AiProvider, model: string) =>
+      model === 'gemini-lite' ? 120 : 3,
+    )
+
+    const usage = await service.getUsage()
+
+    expect(usage).toEqual([
+      { provider: AiProvider.GEMINI, model: 'gemini-lite', used: 120, dailyLimit: 500, usableLimit: 450 },
+      { provider: AiProvider.GROQ, model: 'qwen', used: 3, dailyLimit: 1000, usableLimit: 900 },
+      { provider: AiProvider.GEMINI, model: 'gemini-flash', used: 3, dailyLimit: 20, usableLimit: 18 },
+    ])
+  })
+
   it('should use Gemini Flash, not Groq, as the image fallback', async () => {
     mockGemini.generateJson.mockRejectedValueOnce(new Error('timeout')).mockResolvedValueOnce({ text: validOutput })
 
