@@ -15,6 +15,10 @@ import { DraftsController } from '@/modules/drafts/drafts.controller'
 import { ExpensesController } from '@/modules/expenses/expenses.controller'
 import { MessagesController } from '@/modules/messages/messages.controller'
 import { SummaryController } from '@/modules/summary/summary.controller'
+import { CategoryBudgetsController } from '@/modules/budget/category-budgets.controller'
+import { IncomesController } from '@/modules/budget/incomes.controller'
+import { ReportsController } from '@/modules/reports/reports.controller'
+import { REPORT_MIME_TYPES } from '@/commons/constants/report.constant'
 
 type Operation = { responses?: Record<string, { content?: Record<string, { schema?: unknown }> }> }
 
@@ -34,6 +38,9 @@ describe('Swagger of the REST API for kogane-app', () => {
         MessagesController,
         SummaryController,
         DebtsController,
+        IncomesController,
+        CategoryBudgetsController,
+        ReportsController,
       ],
     })
       .useMocker(() => ({}))
@@ -57,7 +64,11 @@ describe('Swagger of the REST API for kogane-app', () => {
         const responses = operation.responses ?? {}
         if (responses['204']) continue
         const success = responses['200'] ?? responses['201']
-        if (!success?.content?.['application/json']?.schema) undocumented.push(`${method.toUpperCase()} ${path}`)
+        // Downloads (D39) document their file types instead of JSON
+        const documented = ['application/json', ...Object.values(REPORT_MIME_TYPES)].some(
+          (type) => success?.content?.[type]?.schema,
+        )
+        if (!documented) undocumented.push(`${method.toUpperCase()} ${path}`)
         expect(operation.security, `${method} ${path}`).toBeDefined()
       }
     }
@@ -71,6 +82,16 @@ describe('Swagger of the REST API for kogane-app', () => {
         .map(([field, property]) => `${name}.${field}: ${property.type}`),
     )
     expect(textFields.filter((field) => !field.endsWith(': string'))).toEqual([])
-    expect(Object.keys(document.paths)).toEqual(expect.arrayContaining(['/v1/debts', '/v1/drafts', '/v1/messages']))
+    expect(Object.keys(document.paths)).toEqual(
+      expect.arrayContaining([
+        '/v1/debts',
+        '/v1/drafts',
+        '/v1/messages',
+        '/v1/incomes',
+        '/v1/category-budgets',
+        '/v1/summary/history',
+        '/v1/reports/debts',
+      ]),
+    )
   })
 })

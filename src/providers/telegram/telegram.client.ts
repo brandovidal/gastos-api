@@ -48,6 +48,18 @@ export class TelegramClient {
     })
   }
 
+  // A file made by kogane-api (Excel / PDF, D39), uploaded as multipart
+  sendDocument(chatId: string, file: { filename: string; mimeType: string; data: Buffer }, caption?: string) {
+    const form = new FormData()
+    form.append('chat_id', chatId)
+    if (caption) {
+      form.append('caption', caption)
+      form.append('parse_mode', TELEGRAM_PARSE_MODE)
+    }
+    form.append('document', new Blob([new Uint8Array(file.data)], { type: file.mimeType }), file.filename)
+    return this.call('sendDocument', form)
+  }
+
   answerCallbackQuery(callbackQueryId: string, text?: string) {
     return this.call('answerCallbackQuery', { callback_query_id: callbackQueryId, text })
   }
@@ -77,7 +89,8 @@ export class TelegramClient {
     return this.call<TelegramWebhookInfo>('getWebhookInfo', {})
   }
 
-  async call<T = unknown>(method: string, body: Record<string, unknown>): Promise<T> {
+  async call<T = unknown>(method: string, body: Record<string, unknown> | FormData): Promise<T> {
+    const isForm = body instanceof FormData
     const botToken = this.botToken(method)
 
     for (let attempt = 0; ; attempt++) {
@@ -85,8 +98,9 @@ export class TelegramClient {
       try {
         response = await fetch(`${TELEGRAM_API_URL}/bot${botToken}/${method}`, {
           method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify(body),
+          // multipart sets its own content-type with the boundary
+          headers: isForm ? undefined : { 'content-type': 'application/json' },
+          body: isForm ? body : JSON.stringify(body),
           signal: AbortSignal.timeout(TELEGRAM_REQUEST_TIMEOUT_MS),
         })
       } catch (error) {

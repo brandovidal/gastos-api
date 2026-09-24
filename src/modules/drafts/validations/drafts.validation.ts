@@ -75,6 +75,10 @@ export const draftResponseSchema = z.object({
   personId: nullableString,
   paymentMethodId: nullableString,
   categoryId: nullableString,
+  sharedWith: z
+    .object({ personIds: z.array(z.string()), parts: z.number().int() })
+    .nullable()
+    .describe('Shared expense (P17): the user and personIds split the amount in `parts` equal parts'),
   confidence: z.record(z.string(), z.number()),
   missingFields: z.array(z.string()),
   confirmedAt: dateTimeSchema.nullable(),

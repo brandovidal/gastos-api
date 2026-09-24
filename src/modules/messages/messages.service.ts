@@ -22,6 +22,16 @@ export interface UploadedMessageFile {
 const parseCommand = (text: string) => text.slice(1).split(/\s+/)[0].toLowerCase()
 
 // Mensajes in kogane-app (D49, D57): the web is one more channel of the same ConversationService as Telegram.
+// The web chat gets JSON: files made for the bot (Excel / PDF) are downloaded from Préstamos y deudas instead
+function withoutDocuments(result: ConversationResult): ConversationResult {
+  return {
+    ...result,
+    replies: result.replies.map(({ document, ...reply }) =>
+      document ? { ...reply, text: `${reply.text}\nDescárgalo desde Préstamos y deudas.` } : reply,
+    ),
+  }
+}
+
 // Uploads go to R2 as temporary files (D58), so the AI, a retry from Borrador and the preview read them from there.
 @Injectable()
 export class MessagesService {
@@ -33,7 +43,8 @@ export class MessagesService {
   async send(body: SendMessageDto, file?: UploadedMessageFile): Promise<ConversationResult> {
     const base = { channel: ExpenseDraftChannel.WEB, chatId: WEB_CHAT_ID, messageId: body.messageId }
 
-    if (file) return this.conversationService.handle({ ...base, ...(await this.toMedia(body, file)) })
+    if (file)
+      return withoutDocuments(await this.conversationService.handle({ ...base, ...(await this.toMedia(body, file)) }))
 
     const text = body.text?.trim()
     if (!text) throw new UnsupportedMessageException()
@@ -41,7 +52,7 @@ export class MessagesService {
     const message: ChannelMessage = text.startsWith('/')
       ? { ...base, type: ChannelMessageType.COMMAND, command: parseCommand(text), text }
       : { ...base, type: ChannelMessageType.TEXT, text }
-    return this.conversationService.handle(message)
+    return withoutDocuments(await this.conversationService.handle(message))
   }
 
   // A pressed button of a bot reply
@@ -49,13 +60,15 @@ export class MessagesService {
     const action = decodeBotAction(data)
     if (!action) throw new UnsupportedMessageException({ data })
 
-    return this.conversationService.handle({
-      channel: ExpenseDraftChannel.WEB,
-      chatId: WEB_CHAT_ID,
-      messageId: `action:${randomUUID()}`,
-      type: ChannelMessageType.ACTION,
-      action,
-    })
+    return withoutDocuments(
+      await this.conversationService.handle({
+        channel: ExpenseDraftChannel.WEB,
+        chatId: WEB_CHAT_ID,
+        messageId: `action:${randomUUID()}`,
+        type: ChannelMessageType.ACTION,
+        action,
+      }),
+    )
   }
 
   private async toMedia(body: SendMessageDto, file: UploadedMessageFile) {

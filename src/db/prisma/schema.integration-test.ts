@@ -40,6 +40,7 @@ describe('Prisma schema (integration)', () => {
       'bot_files',
       'bud_budget_groups',
       'bud_category_budgets',
+      'bud_incomes',
       'bud_monthly_budgets',
       'cat_categories',
       'cat_payment_methods',

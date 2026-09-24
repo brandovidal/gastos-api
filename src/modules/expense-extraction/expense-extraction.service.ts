@@ -100,6 +100,8 @@ export class ExpenseExtractionService {
       if (output) {
         return {
           expenses: output.expenses.map((expense) => resolveExpense(expense, catalog, today)),
+          unreadable: output.unreadable ?? [],
+          received: output.received ?? [],
           provider: candidate.provider,
           model: candidate.model,
         }

@@ -65,8 +65,18 @@ export interface ExpenseExtractionInput {
   draft?: Partial<ResolvedExpenseFields> // expense being corrected
 }
 
+export interface ReceivedPayment {
+  amount: number
+  currency: string | null
+  sender: string
+  spentAt: string | null
+  operationNumber: string | null
+}
+
 export interface ExpenseExtractionResult {
   expenses: ResolvedExpense[]
+  unreadable: string[] // list items the AI could not read (P21)
+  received: ReceivedPayment[] // "Te yapearon": money received, a possible debt payment (P17)
   provider: AiProvider
   model: string
 }

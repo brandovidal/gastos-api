@@ -26,6 +26,11 @@ export enum BotAction {
   LATER_ALL = 'park',
   // Command buttons of the help: "cmd:<command>" runs it as if it was typed
   COMMAND = 'cmd',
+  // D66: installment amount only deduced (total / n) → confirm it before creating the n rows, or type another one
+  INSTALLMENTS_OK = 'cuo',
+  INSTALLMENTS_EDIT = 'cuoe',
+  // /deudas: "rep:<format>-<personId|all>" sends the debts report as Excel or PDF (D39)
+  REPORT = 'rep',
 }
 
 export const BATCH_ACTIONS: string[] = [BotAction.SAVE_ALL, BotAction.REVIEW_ALL, BotAction.LATER_ALL]
@@ -47,6 +52,8 @@ export enum BotCommand {
   USAGE = 'uso',
   DEBTS = 'deudas', // /deudas [persona]
   COLLECT = 'cobrar', // /cobrar <persona>
+  BUDGET = 'presupuesto', // /presupuesto [mes] [año] (P19)
+  FORECAST = 'pronostico', // /pronostico: this month at the current pace (P19)
 }
 
 // Descriptions shown in the Telegram command menu (Spanish: user-facing)
@@ -60,6 +67,8 @@ export const BOT_COMMAND_DESCRIPTIONS: Record<BotCommand, string> = {
   [BotCommand.USAGE]: 'Uso de la AI hoy',
   [BotCommand.DEBTS]: 'Me deben y le debo, por persona',
   [BotCommand.COLLECT]: 'Mensaje para cobrarle a una persona',
+  [BotCommand.BUDGET]: 'Gastado vs límite por categoría y excedente',
+  [BotCommand.FORECAST]: 'A este ritmo, qué categorías se pasan',
 }
 
 export const CALLBACK_SEPARATOR = ':'

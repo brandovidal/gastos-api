@@ -54,8 +54,24 @@ export const extractedExpenseSchema = z.object({
   confidence: confidenceSchema,
 })
 
+// Money received in a screenshot ("Te yapearon"): not an expense, but it can pay a debt (P17)
+export const receivedPaymentSchema = z.object({
+  amount: z.number().positive(),
+  currency: z.enum(Currency).nullable(),
+  sender: z.string().min(1),
+  spentAt: z.iso.date().nullable(),
+  operationNumber: z.string().nullable(),
+})
+
+const extractionShape = {
+  // Items of a list whose amount is covered or cut off: named so the user can send them again (P21)
+  unreadable: z.array(z.string()).optional(),
+  received: z.array(receivedPaymentSchema).optional(),
+}
+
 export const expenseExtractionSchema = z.object({
   expenses: z.array(extractedExpenseSchema).max(MAX_EXPENSES_PER_MESSAGE),
+  ...extractionShape,
 })
 
 // Sent to Gemini as responseJsonSchema and to Groq inside the instructions. Built without maxItems:
@@ -63,7 +79,7 @@ export const expenseExtractionSchema = z.object({
 // The 10 items limit is still enforced when the answer is validated with expenseExtractionSchema.
 export const expenseExtractionJsonSchema = (() => {
   const { $schema: _schema, ...jsonSchema } = z.toJSONSchema(
-    z.object({ expenses: z.array(extractedExpenseSchema) }),
+    z.object({ expenses: z.array(extractedExpenseSchema), ...extractionShape }),
   ) as Record<string, unknown>
   return jsonSchema
 })()

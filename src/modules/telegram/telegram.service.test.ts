@@ -108,7 +108,9 @@ describe('TelegramService', () => {
       const [, before] = mockConversation.recoverInterrupted.mock.calls[0]
       expect(Date.now() - (before as Date).getTime()).toBeGreaterThanOrEqual(2 * 60_000 - 1000)
       expect(mockClient.sendMessage).toHaveBeenCalledTimes(1)
-      expect(mockClient.sendMessage).toHaveBeenCalledWith('555', expect.stringContaining('2 mensajes'))
+      expect(mockClient.sendMessage).toHaveBeenCalledWith('555', expect.stringContaining('2 mensajes'), {
+        inline_keyboard: [[{ text: '📝 Borrador', callback_data: 'cmd:borrador' }]],
+      })
     })
 
     it('should not break startup when the recovery fails', async () => {

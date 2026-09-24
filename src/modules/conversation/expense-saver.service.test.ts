@@ -66,7 +66,17 @@ describe('ExpenseSaverService', () => {
   })
 
   it('should save a fixed cost in the month of the expense', async () => {
-    await expect(service.save(buildExpenseDraft())).resolves.toEqual({ id: 'expense-1' })
+    await expect(service.save(buildExpenseDraft())).resolves.toEqual({
+      id: 'expense-1',
+      installments: null,
+      // what the budget of its category gets (P19): a fixed cost counts in its payment month
+      budget: {
+        personId: 'person-danery',
+        categoryId: 'category-food',
+        period: { paymentMonth: 9, paymentYear: 2026 },
+        amount: 25,
+      },
+    })
 
     expect(mockExpenseDBRepository.saveFromExpenseDraft).toHaveBeenCalledWith(FILE_ID, expect.anything())
     expect(savedInput()).toEqual({
@@ -229,7 +239,7 @@ describe('ExpenseSaverService', () => {
       mockStoredFilesService.keep.mockRejectedValue(new Error('R2 down'))
       vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => {})
 
-      await expect(service.save(buildExpenseDraft({ fileId: 'stored-1' }))).resolves.toEqual({ id: 'expense-1' })
+      await expect(service.save(buildExpenseDraft({ fileId: 'stored-1' }))).resolves.toMatchObject({ id: 'expense-1' })
     })
 
     it('should not touch storage for an expense without a file', async () => {
@@ -244,6 +254,158 @@ describe('ExpenseSaverService', () => {
       ).rejects.toThrow(ExpenseNotSaveableException)
 
       expect(mockStoredFilesService.keep).not.toHaveBeenCalled()
+    })
+  })
+
+  describe('credit card installments (D66)', () => {
+    beforeEach(() => {
+      mockPaymentMethodDBRepository.findById.mockResolvedValue({ id: 'method-ohpay', billingCloseDay: 10 })
+    })
+
+    it('should create the n installments of "1/n", one per billing month, and say which were created', async () => {
+      const saved = await service.save(
+        buildExpenseDraft({
+          destination: ExpenseDestination.CREDIT_CARD,
+          paymentMethodId: 'method-ohpay',
+          installment: '1/10',
+          amount: 164.9,
+          spentAt: new Date('2026-09-14T00:00:00.000Z'),
+        }),
+      )
+
+      // 14/09 after the closing day 10: October is the first billing month
+      expect(savedInput().data).toMatchObject({
+        installment: '1/10',
+        amount: 164.9,
+        paymentMonth: 10,
+        paymentYear: 2026,
+      })
+      const next = savedInput().nextInstallments
+      expect(next).toHaveLength(9)
+      expect(next[0]).toMatchObject({ installment: '2/10', paymentMonth: 11, paymentYear: 2026, amount: 164.9 })
+      expect(next[8]).toMatchObject({ installment: '10/10', paymentMonth: 7, paymentYear: 2027 })
+      expect(saved.installments).toEqual({
+        total: 10,
+        from: { paymentMonth: 10, paymentYear: 2026 },
+        to: { paymentMonth: 7, paymentYear: 2027 },
+      })
+    })
+
+    it('should create only that row for a later installment ("3/6")', async () => {
+      const saved = await service.save(
+        buildExpenseDraft({
+          destination: ExpenseDestination.CREDIT_CARD,
+          paymentMethodId: 'method-ohpay',
+          installment: '3/6',
+        }),
+      )
+
+      expect(savedInput().nextInstallments).toEqual([])
+      expect(saved.installments).toBeNull()
+    })
+  })
+
+  describe('shared expenses (P17)', () => {
+    it('should keep the user part as the expense and create what the other one owes, in the same month', async () => {
+      await service.save(
+        buildExpenseDraft({
+          destination: ExpenseDestination.DAILY,
+          description: 'Cena',
+          amount: 120,
+          personId: 'person-brando',
+          sharedWith: { personIds: ['person-danery'], parts: 2 },
+        }),
+      )
+
+      expect(savedInput().data).toMatchObject({ description: 'Cena', amount: 60, amountInPen: 60 })
+      expect(savedInput().sharedDebts).toEqual([
+        {
+          direction: DebtDirection.OWED_TO_ME,
+          description: 'Cena (compartido)',
+          amount: 60,
+          currency: 'PEN',
+          personId: 'person-danery',
+          installment: null,
+          paymentMonth: 9,
+          paymentYear: 2026,
+        },
+      ])
+    })
+
+    it('should split in thirds "entre 3" and let the user keep the cents left', async () => {
+      await service.save(
+        buildExpenseDraft({
+          destination: ExpenseDestination.DAILY,
+          amount: 100,
+          sharedWith: { personIds: ['person-danery', 'person-juan'], parts: 3 },
+        }),
+      )
+
+      expect(savedInput().data.amount).toBe(33.34)
+      expect(savedInput().sharedDebts.map((debt: { amount: number }) => debt.amount)).toEqual([33.33, 33.33])
+    })
+
+    it('should keep the user part of a platform and charge the sister her part that month (D72)', async () => {
+      await service.save(
+        buildExpenseDraft({
+          destination: ExpenseDestination.SUBSCRIPTION,
+          period: SubscriptionPeriod.MONTHLY,
+          description: 'Netflix',
+          amount: 52.9,
+          personId: 'person-brando',
+          sharedWith: { personIds: ['person-brenda'], parts: 2 },
+        }),
+      )
+
+      expect(savedInput().data).toMatchObject({ description: 'Netflix', amount: 26.45, personId: 'person-brando' })
+      expect(savedInput().sharedDebts).toEqual([
+        expect.objectContaining({
+          direction: DebtDirection.OWED_TO_ME,
+          description: 'Netflix (compartido)',
+          amount: 26.45,
+          personId: 'person-brenda',
+          paymentMonth: 9,
+          paymentYear: 2026,
+        }),
+      ])
+    })
+
+    it('should not split a debt', async () => {
+      await service.save(
+        buildExpenseDraft({
+          destination: ExpenseDestination.RECEIVABLE,
+          amount: 100,
+          sharedWith: { personIds: ['person-danery'], parts: 2 },
+        }),
+      )
+
+      expect(savedInput().data.amount).toBe(100)
+      expect(savedInput().sharedDebts).toBeUndefined()
+    })
+  })
+
+  describe('budget impact (P19)', () => {
+    it('should count a day-to-day expense in the month of its date', async () => {
+      const saved = await service.save(
+        buildExpenseDraft({ destination: ExpenseDestination.DAILY, spentAt: new Date('2026-08-31T00:00:00.000Z') }),
+      )
+
+      expect(saved.budget).toEqual({
+        personId: 'person-danery',
+        categoryId: 'category-food',
+        period: { paymentMonth: 8, paymentYear: 2026 },
+        amount: 25,
+      })
+    })
+
+    it('should leave subscriptions (card charges, D46), debts and other currencies out of the budget', async () => {
+      const subscription = await service.save(
+        buildExpenseDraft({ destination: ExpenseDestination.SUBSCRIPTION, period: SubscriptionPeriod.MONTHLY }),
+      )
+      const debt = await service.save(buildExpenseDraft({ destination: ExpenseDestination.RECEIVABLE }))
+      const dollars = await service.save(buildExpenseDraft({ destination: ExpenseDestination.DAILY, currency: 'USD' }))
+
+      expect([subscription.budget, debt.budget, dollars.budget]).toEqual([null, null, null])
     })
   })
 })

@@ -365,7 +365,8 @@ describe('Conversation flows (integration)', () => {
   })
 
   // P21 (D63): the purchase detail of the IO app is read by the local template, without the AI
-  it('should read an IO purchase in cuotas with the OCR template and save its first installment on IO', async () => {
+  // D66: the installment amount was deduced (300 / 3), so it is confirmed first and then the 3 rows are created
+  it('should read an IO purchase in cuotas with the OCR template, confirm the installment and save the 3 on IO', async () => {
     ocr.enabled = true
     ocr.read.mockResolvedValue(
       [
@@ -387,7 +388,10 @@ describe('Conversation flows (integration)', () => {
         type: ChannelMessageType.IMAGE,
         media: { fileId: 'file-io-detail', uniqueId: 'unique-io-detail' },
       })
-      await press(replies[0], 'Guardar')
+      const [confirm] = await press(replies[0], 'Guardar')
+      expect(confirm.text).toContain('¿Cuota de S/ 100.00 × 3?')
+      const saved3 = await press(confirm, 'Sí, guardar 3 cuotas')
+      expect(saved3[1].text).toContain('Cuotas 1/3 a 3/3')
 
       const saved = await lastDraft()
       expect(saved.documentType).toBe('io_purchase_detail')
@@ -396,6 +400,15 @@ describe('Conversation flows (integration)', () => {
         installment: '1/3',
         paymentMethodId: await paymentMethodId('IO'),
       })
+      const rows = await prisma.creditCardExpense.findMany({
+        where: { description: saved.creditCardExpense?.description },
+        orderBy: [{ paymentYear: 'asc' }, { paymentMonth: 'asc' }],
+      })
+      expect(rows.map((row) => [row.installment, row.paymentMonth, row.amount])).toEqual([
+        ['1/3', 9, 100],
+        ['2/3', 10, 100],
+        ['3/3', 11, 100],
+      ])
       const logs = await prisma.aiRequestLog.findMany({ where: { draftId: saved.id } })
       expect(logs.map((log) => [log.provider, log.success])).toEqual([['local', true]])
     } finally {

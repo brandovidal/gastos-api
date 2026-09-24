@@ -2,10 +2,10 @@ import { Injectable } from '@nestjs/common'
 
 import { PrismaService } from '@/db/prisma/prisma.service'
 import { DebtDirection, OPEN_DEBT_STATUSES } from '@/commons/constants/debt.constant'
-import { ExpenseDestination } from '@/commons/constants/expense.constant'
+import { Currency, ExpenseDestination } from '@/commons/constants/expense.constant'
 import { ExpenseDraftStatus } from '@/commons/constants/expense-draft.constant'
 
-import { MonthlyTotalDbDto, SaveExpenseDbDto } from './expenseDB.dto'
+import { CategorySpentDbDto, MonthlyTotalDbDto, SaveExpenseDbDto } from './expenseDB.dto'
 
 type Transaction = Parameters<Parameters<PrismaService['$transaction']>[0]>[0]
 
@@ -17,6 +17,7 @@ export class ExpenseDBRepository {
   async saveFromExpenseDraft(draftId: string, input: SaveExpenseDbDto): Promise<{ id: string }> {
     return this.prisma.$transaction(async (tx) => {
       const record = await this.createRecord(tx, draftId, input)
+      if (input.sharedDebts?.length) await tx.debt.createMany({ data: input.sharedDebts })
 
       await tx.expenseDraft.update({
         where: { id: draftId },
@@ -25,6 +26,33 @@ export class ExpenseDBRepository {
 
       return { id: record.id }
     })
+  }
+
+  // PEN spent per category in a month (P19): day to day by date, fixed costs and cards by payment month. Subscriptions
+  // are left out: their charge is already a card expense (D46). categoryId null: expenses without category.
+  // With personId, only that person's expenses (the budget counts only yours, D71)
+  async findSpentByCategory(month: number, year: number, personId?: string): Promise<CategorySpentDbDto[]> {
+    const person = personId ? { personId } : {}
+    const period = { paymentMonth: month, paymentYear: year, currency: Currency.PEN, ...person }
+    const aggregate = { by: ['categoryId'] as ['categoryId'], _sum: { amount: true } } as const
+    const [daily, fixedCosts, creditCards] = await Promise.all([
+      this.prisma.dailyExpense.groupBy({
+        ...aggregate,
+        where: {
+          currency: Currency.PEN,
+          ...person,
+          spentAt: { gte: new Date(Date.UTC(year, month - 1, 1)), lt: new Date(Date.UTC(year, month, 1)) },
+        },
+      }),
+      this.prisma.fixedCost.groupBy({ ...aggregate, where: period }),
+      this.prisma.creditCardExpense.groupBy({ ...aggregate, where: period }),
+    ])
+
+    const totals = new Map<string | null, number>()
+    for (const row of [...daily, ...fixedCosts, ...creditCards]) {
+      totals.set(row.categoryId, (totals.get(row.categoryId) ?? 0) + (row._sum.amount ?? 0))
+    }
+    return [...totals].map(([categoryId, total]) => ({ categoryId, total }))
   }
 
   // Totals of the month per destination, currency and person (debts: the balance of everything not paid yet)
@@ -100,8 +128,11 @@ export class ExpenseDBRepository {
         return tx.fixedCost.create({ data: { ...data, draftId } })
       case ExpenseDestination.SUBSCRIPTION:
         return tx.subscription.create({ data: { ...data, draftId } })
-      case ExpenseDestination.CREDIT_CARD:
-        return tx.creditCardExpense.create({ data: { ...data, draftId } })
+      case ExpenseDestination.CREDIT_CARD: {
+        const expense = await tx.creditCardExpense.create({ data: { ...data, draftId } })
+        if (input.nextInstallments.length) await tx.creditCardExpense.createMany({ data: input.nextInstallments })
+        return expense
+      }
       case ExpenseDestination.RECEIVABLE:
       case ExpenseDestination.PAYABLE: {
         const debt = await tx.debt.create({ data: { ...data, draftId } })

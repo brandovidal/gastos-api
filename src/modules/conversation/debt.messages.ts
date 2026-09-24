@@ -1,5 +1,6 @@
 import { BotAction, MAX_INSTALLMENT_BUTTONS } from '@/commons/constants/conversation.constant'
 import { DebtDirection, DebtTiming, toCents } from '@/commons/constants/debt.constant'
+import { ReportFormat } from '@/commons/constants/report.constant'
 import { DebtView, PaymentProposal, PersonDebtSummary } from '@/modules/debts/debts.service'
 
 import { encodeBotAction } from './bot-action.codec'
@@ -19,6 +20,7 @@ export const DEBT_TEXTS = {
   collectUsage: 'Dime a quién: <i>/cobrar dany</i>.',
   nothingToCollect: (name: string) => `🎉 <b>${escapeHtml(name)}</b> no te debe nada.`,
   pickInstallment: '¿A qué cuota va el abono?',
+  reportSent: 'Archivo enviado',
 }
 
 const period = (debt: DebtView) => `${MONTHS[debt.paymentMonth - 1]} ${debt.paymentYear}`
@@ -153,4 +155,22 @@ export function formatCollectMessage(name: string, owed: DebtView[]): string {
     `<b>Total: ${formatAmount(total, 'PEN')}</b>`,
     '¡Gracias! 🙌',
   ].join('\n')
+}
+
+export const REPORT_FOR_EVERYONE = 'all'
+
+// 📥 Excel · 📄 PDF under /deudas: everyone, or the person of /deudas dany
+export function debtReportButtons(personId: string = REPORT_FOR_EVERYONE): BotButton[][] {
+  return [
+    [
+      {
+        label: '📥 Excel',
+        data: encodeBotAction({ name: BotAction.REPORT, draftId: `${ReportFormat.XLSX}-${personId}` }),
+      },
+      {
+        label: '📄 PDF',
+        data: encodeBotAction({ name: BotAction.REPORT, draftId: `${ReportFormat.PDF}-${personId}` }),
+      },
+    ],
+  ]
 }

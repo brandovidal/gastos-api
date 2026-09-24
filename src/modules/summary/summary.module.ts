@@ -1,14 +1,14 @@
 import { Module } from '@nestjs/common'
 
-import { BudgetGroupDBModule } from '@/db/models/budget-group/budgetGroupDB.module'
 import { ExpenseDBModule } from '@/db/models/expense/expenseDB.module'
 import { MonthlyBudgetDBModule } from '@/db/models/monthly-budget/monthlyBudgetDB.module'
+import { BudgetModule } from '@/modules/budget/budget.module'
 
 import { SummaryController } from './summary.controller'
 import { SummaryService } from './summary.service'
 
 @Module({
-  imports: [ExpenseDBModule, MonthlyBudgetDBModule, BudgetGroupDBModule],
+  imports: [ExpenseDBModule, MonthlyBudgetDBModule, BudgetModule],
   controllers: [SummaryController],
   providers: [SummaryService],
 })

@@ -1,5 +1,6 @@
 import { BotAction, ChannelMessageType } from '@/commons/constants/conversation.constant'
 import { ExpenseDraftChannel } from '@/commons/constants/expense-draft.constant'
+import { PaymentPeriod } from '@/commons/helpers/payment-period.helper'
 
 export interface BotActionPayload {
   name: BotAction
@@ -41,8 +42,15 @@ export interface BotButton {
   data: string // encoded BotActionPayload (see bot-action.codec.ts)
 }
 
+export interface BotDocument {
+  filename: string
+  mimeType: string
+  data: Buffer
+}
+
 export interface BotReply {
-  text: string // HTML: <b>, <i> and escaped user text
+  text: string // HTML: <b>, <i> and escaped user text; the caption when there is a document
+  document?: BotDocument // a file to send (Excel / PDF, D39); channels without files show only the text
   buttons?: BotButton[][]
   edit?: boolean // replace the message that had the pressed button instead of sending a new one
 }
@@ -50,4 +58,25 @@ export interface BotReply {
 export interface ConversationResult {
   replies: BotReply[]
   notice?: string // short toast for the pressed button
+}
+
+export interface InstallmentsCreated {
+  total: number // n of "1/n"
+  from: PaymentPeriod
+  to: PaymentPeriod
+}
+
+// What a saved expense adds to the budget of a category (P19): PEN spending only; debts and subscriptions add nothing
+export interface BudgetImpact {
+  personId: string // only the default person's expenses count (D71)
+  categoryId: string | null
+  period: PaymentPeriod // day to day: the month of the date; fixed costs and cards: the payment month
+  amount: number
+}
+
+// ExpenseSaverService.save: "1/n" with n > 1 created every installment (debts D60, credit cards D66)
+export interface SavedExpense {
+  id: string
+  installments: InstallmentsCreated | null
+  budget: BudgetImpact | null
 }

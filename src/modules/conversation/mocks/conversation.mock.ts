@@ -47,6 +47,7 @@ export const buildExpenseDraft = (overrides: Partial<ExpenseDraftDbDto> = {}): E
   personId: 'person-danery',
   paymentMethodId: 'method-yape',
   categoryId: 'category-food',
+  sharedWith: null,
   confidence: {},
   missingFields: [],
   confirmedAt: null,

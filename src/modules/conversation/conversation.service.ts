@@ -18,7 +18,7 @@ import {
 } from '@/commons/constants/conversation.constant'
 import { PaymentMethodType } from '@/commons/constants/catalog.constant'
 import { DebtDirection } from '@/commons/constants/debt.constant'
-import { ExpenseDestination, SubscriptionPeriod } from '@/commons/constants/expense.constant'
+import { Currency, ExpenseDestination, SubscriptionPeriod } from '@/commons/constants/expense.constant'
 import {
   EXPENSE_DRAFT_EXPIRATION_MINUTES,
   ExpenseDraftChannel,
@@ -40,10 +40,14 @@ import { completeExpense, withPrimaryCard } from '@/modules/expense-extraction/e
 import { findCatalogEntryById, matchCatalogEntry } from '@/modules/expense-extraction/expense-extraction.catalog'
 import { DebtsService } from '@/modules/debts/debts.service'
 import { RecognitionService } from '@/modules/recognition/recognition.service'
+import { BudgetService } from '@/modules/budget/budget.service'
+import { ReportsService } from '@/modules/reports/reports.service'
+import { ReportFormat } from '@/commons/constants/report.constant'
 import { RecognitionResult, RecognizedScreen } from '@/modules/recognition/recognition.templates'
 import { StoredFilesService } from '@/modules/stored-files/stored-files.service'
 import {
   ExtractionCatalog,
+  ReceivedPayment,
   ResolvedExpense,
   ResolvedExpenseFields,
   MediaFile,
@@ -52,18 +56,23 @@ import {
 import { parseDebtPayment } from './debt-payment.parser'
 import { sameMerchant } from './duplicate.helper'
 import { formatReconciliation } from './recognition.messages'
+import { BUDGET_TEXTS, formatBudget, formatBudgetAlert, formatForecast } from './budget.messages'
+import { parseMonthArg } from './month-arg.parser'
+import { parseSharedExpense, SharedExpenseMatch } from './shared-expense.parser'
 import {
   buildInstallmentPickerReply,
   buildPaymentProposalReply,
   buildPaymentSavedReply,
   DEBT_TEXTS,
+  debtReportButtons,
   formatCollectMessage,
   formatDebtSummary,
   formatPersonDebts,
+  REPORT_FOR_EVERYONE,
 } from './debt.messages'
 import { ExpenseSaverService } from './expense-saver.service'
 import { MediaDownloaderRegistry } from './media-downloader.registry'
-import { toExpenseFields, toExpenseDraftUpdate } from './expense-draft.mapper'
+import { needsInstallmentConfirmation, toExpenseFields, toExpenseDraftUpdate } from './expense-draft.mapper'
 import {
   DESTINATION_LABELS,
   TEXTS,
@@ -72,6 +81,8 @@ import {
   buildBatchReply,
   buildParkedNotice,
   buildSavedNotice,
+  buildInstallmentsConfirmReply,
+  MONTH_NAMES,
   buildExpenseReply,
   buildDraftReplies,
   buildHelpReply,
@@ -83,22 +94,14 @@ import {
   formatRecent,
   toNewPaymentMethodName,
 } from './conversation.messages'
-import { AlbumItem, BotActionPayload, BotReply, ChannelMessage, ConversationResult } from './dto/conversation.types'
-
-const MONTH_NAMES = [
-  'enero',
-  'febrero',
-  'marzo',
-  'abril',
-  'mayo',
-  'junio',
-  'julio',
-  'agosto',
-  'setiembre',
-  'octubre',
-  'noviembre',
-  'diciembre',
-]
+import {
+  AlbumItem,
+  BotActionPayload,
+  BotReply,
+  BudgetImpact,
+  ChannelMessage,
+  ConversationResult,
+} from './dto/conversation.types'
 
 // Overlapping screenshots are compared against what was registered in this window (P21)
 const DUPLICATE_LOOKBACK_DAYS = 60
@@ -124,6 +127,8 @@ export class ConversationService {
     private readonly storedFilesService: StoredFilesService,
     private readonly debtsService: DebtsService,
     private readonly recognitionService: RecognitionService,
+    private readonly budgetService: BudgetService,
+    private readonly reportsService: ReportsService,
   ) {}
 
   async handle(message: ChannelMessage): Promise<ConversationResult> {
@@ -317,6 +322,9 @@ export class ConversationService {
   // voice note transcribed once (the transcription is kept in rawText, so a retry only repeats the extraction).
   private async extractInto(expenseDraft: ExpenseDraftDbDto, edit = false): Promise<BotReply[]> {
     let expenses: ResolvedExpense[] = []
+    let unreadable: string[] = []
+    let received: ReceivedPayment[] = []
+    let shared: SharedExpenseMatch | null = null
     let text = expenseDraft.rawText ?? undefined
     let documentType: string | null = null
     let summary: Extract<RecognitionResult, { screen: RecognizedScreen.IO_CATEGORY_SUMMARY }> | null = null
@@ -344,14 +352,22 @@ export class ConversationService {
             await this.expenseExtractionService.loadCatalog(),
           )
         } else {
-          ;({ expenses } = await this.expenseExtractionService.extract({
+          const result = await this.expenseExtractionService.extract({
             text,
             images: [image],
             draftId: expenseDraft.id,
-          }))
+          })
+          expenses = result.expenses
+          unreadable = result.unreadable ?? []
+          received = result.received ?? []
         }
       } else {
-        ;({ expenses } = await this.expenseExtractionService.extract({ text, draftId: expenseDraft.id }))
+        // "cena 120 con dany, mitad": the split is read here and the AI only gets "cena 120" (P17)
+        shared = text ? parseSharedExpense(text, await this.expenseExtractionService.loadCatalog()) : null
+        ;({ expenses } = await this.expenseExtractionService.extract({
+          text: shared?.text ?? text,
+          draftId: expenseDraft.id,
+        }))
       }
     } catch (error) {
       this.logger.warn(`[extractInto] extraction failed: ${(error as Error).message}`)
@@ -365,9 +381,14 @@ export class ConversationService {
     // Voice notes show what was understood, so a wrong transcription is easy to spot
     const heard = isAudio && text ? `${TEXTS.heard(text)}\n\n` : ''
 
+    // List items the AI could not read (covered or cut off): named so they can be sent again (P21)
+    const unreadableReplies: BotReply[] = unreadable.length ? [{ text: TEXTS.unreadable(unreadable) }] : []
+
     if (!expenses.length) {
       await this.expenseDraftDBRepository.update(expenseDraft.id, { status: ExpenseDraftStatus.DISCARDED })
-      return [{ text: `${heard}${TEXTS.notAnExpense}`, edit }]
+      // "Te yapearon": money received is not an expense, but it can pay what that person owes (P17)
+      if (received.length) return [await this.replyReceived(received[0], edit), ...unreadableReplies]
+      return [{ text: `${heard}${TEXTS.notAnExpense}`, edit }, ...unreadableReplies]
     }
 
     const catalog = await this.expenseExtractionService.loadCatalog()
@@ -396,12 +417,26 @@ export class ConversationService {
       const updated = await this.expenseDraftDBRepository.update(target.id, {
         ...toExpenseDraftUpdate(expense),
         ...(documentType ? { documentType } : {}),
+        ...(shared && index === 0 ? { sharedWith: shared.sharedWith } : {}),
       })
       const reply = await this.withDuplicateWarning(updated, this.replyFor(updated, catalog, edit && index === 0))
       replies.push(index === 0 && heard ? { ...reply, text: `${heard}${reply.text}` } : reply)
     }
 
-    return replies
+    return [...replies, ...unreadableReplies]
+  }
+
+  // A screenshot of money received from a person of the catalog proposes a payment of what they owe (✅ Confirmar)
+  private async replyReceived(payment: ReceivedPayment, edit: boolean): Promise<BotReply> {
+    const catalog = await this.expenseExtractionService.loadCatalog()
+    const person = matchCatalogEntry(catalog, CatalogKind.PERSON, payment.sender)
+    const isPen = (payment.currency ?? Currency.PEN) === Currency.PEN
+    const proposal =
+      person && isPen
+        ? await this.debtsService.proposePayment(person.id, DebtDirection.OWED_TO_ME, payment.amount)
+        : null
+    if (proposal) return { ...buildPaymentProposalReply(proposal), edit }
+    return { text: TEXTS.receivedNotDebt(payment.sender, payment.amount, payment.currency), edit }
   }
 
   private async replyReconciliation(
@@ -505,12 +540,19 @@ export class ConversationService {
     switch (name) {
       case BotAction.SAVE_ALL: {
         let saved = 0
+        const alerts: string[] = []
         for (const expenseDraft of expenseDrafts) {
-          const complete = !expenseDraft.missingFields.length && !(await this.duplicateWarning(expenseDraft))
+          // Repeated, incomplete or with a deduced installment amount (D66): left in Borrador to review
+          const complete =
+            !expenseDraft.missingFields.length &&
+            !needsInstallmentConfirmation(expenseDraft) &&
+            !(await this.duplicateWarning(expenseDraft))
           try {
             if (!complete) throw new Error('repeated or incomplete')
-            await this.expenseSaverService.save(expenseDraft)
+            const { budget } = await this.expenseSaverService.save(expenseDraft)
             saved++
+            const alert = await this.budgetAlert(budget)
+            if (alert) alerts.push(alert)
           } catch (error) {
             if (complete) this.logger.warn(`[handleBatchAction] save failed: ${(error as Error).message}`)
             await park(expenseDraft.id)
@@ -520,7 +562,7 @@ export class ConversationService {
         return {
           replies: [
             { text: `✅ <b>Lista procesada</b>: ${saved} guardados, ${parked} en borrador.`, edit: true },
-            { text: TEXTS.batchSaved(saved, parked) },
+            { text: [TEXTS.batchSaved(saved, parked), ...alerts].join('\n') },
           ],
           notice: TEXTS.saved,
         }
@@ -546,6 +588,7 @@ export class ConversationService {
 
   private async handleAction(message: ChannelMessage): Promise<ConversationResult> {
     const action = message.action as BotActionPayload
+    if (action.name === BotAction.REPORT) return this.sendDebtReport(action)
     // Help buttons: run the command as if it was typed (draftId carries the command name)
     if (action.name === BotAction.COMMAND) {
       const command = action.draftId
@@ -582,14 +625,22 @@ export class ConversationService {
         if (expenseDraft.missingFields.length) {
           return { replies: [this.replyFor(expenseDraft, catalog, true)] }
         }
-        await this.expenseSaverService.save(expenseDraft)
-        const saved = { ...expenseDraft, status: ExpenseDraftStatus.SAVED }
-        const label = DESTINATION_LABELS[expenseDraft.destination as ExpenseDestination]
-        return {
-          replies: [buildClosedReply(`✅ <b>Guardado en ${label}</b>`, saved, catalog), buildSavedNotice(saved, label)],
-          notice: TEXTS.saved,
+        if (needsInstallmentConfirmation(expenseDraft)) {
+          return { replies: [buildInstallmentsConfirmReply(expenseDraft)] }
         }
+        return this.saveAndReply(expenseDraft, catalog)
       }
+      case BotAction.INSTALLMENTS_OK: {
+        // The deduced amount is confirmed: it loses its ❓ and the n installments are created
+        const confirmed = await this.expenseDraftDBRepository.update(expenseDraft.id, {
+          confidence: { ...expenseDraft.confidence, [ExpenseField.AMOUNT]: 1 },
+        })
+        if (confirmed.missingFields.length) return { replies: [this.replyFor(confirmed, catalog)] }
+        return this.saveAndReply(confirmed, catalog, false)
+      }
+      case BotAction.INSTALLMENTS_EDIT:
+        await this.expenseDraftDBRepository.update(expenseDraft.id, { pendingField: ExpenseField.AMOUNT })
+        return { replies: [{ text: TEXTS.askInstallmentAmount, edit: true }] }
       case BotAction.EDIT:
         await this.expenseDraftDBRepository.update(expenseDraft.id, { pendingField: FREE_CORRECTION_FIELD })
         return { replies: [{ text: TEXTS.askCorrection }] }
@@ -741,9 +792,23 @@ export class ConversationService {
         ]
       }
       case BotCommand.DEBTS:
-        return [{ text: await this.debtsCommand(this.commandArgs(message)) }]
+        return [await this.debtsCommand(this.commandArgs(message))]
       case BotCommand.COLLECT:
         return [{ text: await this.collectCommand(this.commandArgs(message)) }]
+      case BotCommand.BUDGET: {
+        const today = DateHelper.todayIn(APP_TIME_ZONE)
+        const period = parseMonthArg(this.commandArgs(message), today)
+        if (!period) return [{ text: BUDGET_TEXTS.monthUsage }]
+        const view = await this.budgetService.month(period.month, period.year)
+        return [{ text: formatBudget(period.month, period.year, view) }]
+      }
+      case BotCommand.FORECAST: {
+        const today = DateHelper.todayIn(APP_TIME_ZONE)
+        const [year, month, day] = today.split('-').map(Number)
+        const daysInMonth = new Date(Date.UTC(year, month, 0)).getUTCDate()
+        const view = await this.budgetService.month(month, year)
+        return [{ text: formatForecast(month, year, day, daysInMonth, view) }]
+      }
       default:
         return [buildHelpReply()]
     }
@@ -755,12 +820,30 @@ export class ConversationService {
   }
 
   // /deudas: everyone; /deudas dany: that person, installment by installment
-  private async debtsCommand(args: string): Promise<string> {
-    if (!args) return formatDebtSummary(await this.debtsService.summary())
+  private async debtsCommand(args: string): Promise<BotReply> {
+    if (!args) {
+      const summary = await this.debtsService.summary()
+      return { text: formatDebtSummary(summary), buttons: summary.length ? debtReportButtons() : undefined }
+    }
 
     const person = matchCatalogEntry(await this.expenseExtractionService.loadCatalog(), CatalogKind.PERSON, args)
-    if (!person) return DEBT_TEXTS.unknownPerson(args)
-    return formatPersonDebts(person.name, await this.debtsService.findOpen(person.id))
+    if (!person) return { text: DEBT_TEXTS.unknownPerson(args) }
+    const open = await this.debtsService.findOpen(person.id)
+    return {
+      text: formatPersonDebts(person.name, open),
+      buttons: open.length ? debtReportButtons(person.id) : undefined,
+    }
+  }
+
+  // 📥 Excel · 📄 PDF of /deudas (D39): "rep:<format>-<personId|all>"
+  private async sendDebtReport({ draftId }: BotActionPayload): Promise<ConversationResult> {
+    const [format, personId] = [draftId.slice(0, draftId.indexOf('-')), draftId.slice(draftId.indexOf('-') + 1)]
+    if (!(Object.values(ReportFormat) as string[]).includes(format) || !personId) return { replies: [] }
+    const file = await this.reportsService.debts(
+      format as ReportFormat,
+      personId === REPORT_FOR_EVERYONE ? undefined : personId,
+    )
+    return { replies: [{ text: `📎 ${file.filename}`, document: file }], notice: DEBT_TEXTS.reportSent }
   }
 
   // /cobrar dany: what Danery owes, as a message to forward
@@ -830,6 +913,42 @@ export class ConversationService {
     await this.expenseDraftDBRepository.failInterruptedUpdatedBefore(message.channel, cutoff, message.chatId)
     await this.expenseDraftDBRepository.moveStaleOpenToReview(message.channel, message.chatId, cutoff)
     return this.expenseDraftDBRepository.findOpenByChat(message.channel, message.chatId, cutoff)
+  }
+
+  // ✅ Guardar: the summary is closed in place (or sent again when it came from another message) plus a new notice
+  private async saveAndReply(
+    expenseDraft: ExpenseDraftDbDto,
+    catalog: ExtractionCatalog,
+    edit = true,
+  ): Promise<ConversationResult> {
+    const { installments, budget } = await this.expenseSaverService.save(expenseDraft)
+    const saved = { ...expenseDraft, status: ExpenseDraftStatus.SAVED }
+    const label = DESTINATION_LABELS[expenseDraft.destination as ExpenseDestination]
+    const closed = buildClosedReply(`✅ <b>Guardado en ${label}</b>`, saved, catalog)
+    const notice = buildSavedNotice(saved, label, installments)
+    const alert = await this.budgetAlert(budget)
+    return {
+      replies: [{ ...closed, edit }, alert ? { ...notice, text: `${alert}\n${notice.text}` } : notice],
+      notice: TEXTS.saved,
+    }
+  }
+
+  // "⚠️ Comida: 85 % del presupuesto" when this expense crossed 80 % or 100 % of its category (P19). The expense is
+  // already saved: a failure only logs.
+  private async budgetAlert(budget: BudgetImpact | null): Promise<string | null> {
+    if (!budget) return null
+    try {
+      const alert = await this.budgetService.alertAfterSave(
+        budget.categoryId,
+        budget.period,
+        budget.amount,
+        budget.personId,
+      )
+      return alert ? formatBudgetAlert(alert) : null
+    } catch (error) {
+      this.logger.warn(`[budgetAlert] ${(error as Error).message}`)
+      return null
+    }
   }
 
   private replyFor(expenseDraft: ExpenseDraftDbDto, catalog: ExtractionCatalog, edit = false): BotReply {

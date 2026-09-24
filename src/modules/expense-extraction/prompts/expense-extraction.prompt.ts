@@ -51,8 +51,11 @@ ${JSON.stringify(draft)}
 - Bank app transfers or card vouchers: use the bank or card of the catalog when its name or last digits match.
 - Credit card app screenshots (movements, purchase detail) that do not show which card: destination credit_card and
   paymentMethodRef = the [primary] card.
-- Money received ("Te yapearon", "Recibiste") is not an expense: return {"expenses": []}.
-- Ignore balances, limits, fees and ads; one item per payment actually made.
+- Money received ("Te yapearon", "Te plinearon", "Recibiste") is not an expense: "expenses": [] and one item in
+  "received" with the amount, currency, sender (the name as shown), spentAt and operationNumber.
+- Ignore balances, limits, fees and ads; one item per payment actually made. Amounts of 0.00 are card validations: skip them.
+- Lists of movements: never guess an amount that is covered (by a button, a badge) or cut off at the edge of the
+  screenshot; put the visible name of that item in "unreadable" instead.
 - The text sent with the image adds details (person, payment method, category, concept) that apply to every expense in it.
 - One item per expense, at most ${MAX_EXPENSES_PER_MESSAGE}. If the message has no expense, return {"expenses": []}.
 ${draftSection}

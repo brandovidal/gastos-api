@@ -50,6 +50,18 @@ describe('bot action codec', () => {
     },
   )
 
+  it.each([
+    [BotAction.COMMAND, 'borrador'], // help buttons: the command
+    [BotAction.INSTALLMENTS_OK, FILE_ID], // D66
+    [BotAction.INSTALLMENTS_EDIT, FILE_ID],
+    [BotAction.REPORT, `pdf-${FILE_ID}`], // D39: format and person
+  ])('should round-trip the "%s" button', (name, draftId) => {
+    const data = encodeBotAction({ name, draftId })
+
+    expect(Buffer.byteLength(data)).toBeLessThanOrEqual(64)
+    expect(decodeBotAction(data)).toEqual({ name, draftId })
+  })
+
   it.each(['', 'unknown:id', 'ok', `set:${FILE_ID}`, `set:${FILE_ID}:zz:value`, 'payp:batch'])(
     'should reject "%s"',
     (data) => {

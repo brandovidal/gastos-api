@@ -57,3 +57,15 @@ export function lowConfidenceFieldsOf(expenseDraft: ExpenseDraftDbDto): ExpenseF
     )
     .map(([field]) => field as ExpenseField)
 }
+
+// D66: a card purchase "1/n" whose installment amount was only deduced (total / n, with ❓) is confirmed before the
+// n rows are created; an amount said in the screenshot or the text is saved without asking
+export function needsInstallmentConfirmation(expenseDraft: ExpenseDraftDbDto): boolean {
+  const match = /^1\/(\d+)$/.exec(expenseDraft.installment ?? '')
+  return (
+    expenseDraft.destination === ExpenseDestination.CREDIT_CARD &&
+    match != null &&
+    Number(match[1]) > 1 &&
+    (expenseDraft.confidence[ExpenseField.AMOUNT] ?? 1) < LOW_CONFIDENCE_THRESHOLD
+  )
+}

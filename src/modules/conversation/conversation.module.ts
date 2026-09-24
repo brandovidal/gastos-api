@@ -7,6 +7,8 @@ import { ExpenseExtractionModule } from '@/modules/expense-extraction/expense-ex
 import { StoredFilesModule } from '@/modules/stored-files/stored-files.module'
 import { DebtsModule } from '@/modules/debts/debts.module'
 import { RecognitionModule } from '@/modules/recognition/recognition.module'
+import { BudgetModule } from '@/modules/budget/budget.module'
+import { ReportsModule } from '@/modules/reports/reports.module'
 
 import { ConversationService } from './conversation.service'
 import { ExpenseSaverService } from './expense-saver.service'
@@ -21,6 +23,8 @@ import { MediaDownloaderRegistry } from './media-downloader.registry'
     StoredFilesModule,
     DebtsModule,
     RecognitionModule,
+    BudgetModule,
+    ReportsModule,
   ],
   providers: [ConversationService, ExpenseSaverService, MediaDownloaderRegistry],
   exports: [ConversationService, ExpenseSaverService, MediaDownloaderRegistry],

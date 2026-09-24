@@ -26,6 +26,8 @@ import { mockCatalogSource } from '@/modules/expense-extraction/mocks/expense-ex
 import { StoredFilesService } from '@/modules/stored-files/stored-files.service'
 import { DebtsService } from '@/modules/debts/debts.service'
 import { RecognitionService } from '@/modules/recognition/recognition.service'
+import { BudgetService } from '@/modules/budget/budget.service'
+import { ReportsService } from '@/modules/reports/reports.service'
 import { RecognizedScreen } from '@/modules/recognition/recognition.templates'
 
 import { ConversationService } from './conversation.service'
@@ -83,6 +85,8 @@ const mockExtraction = {
   transcribe: vi.fn(),
 }
 const mockSaver = { save: vi.fn() }
+const mockBudget = { alertAfterSave: vi.fn(), month: vi.fn() }
+const mockReports = { debts: vi.fn() }
 const mockPaymentMethodDB = { create: vi.fn(), updateBillingDays: vi.fn() }
 
 const action = (name: BotAction, field?: string, value?: string): ChannelMessage => ({
@@ -117,12 +121,16 @@ describe('ConversationService', () => {
         { provide: StoredFilesService, useValue: mockStoredFiles },
         { provide: DebtsService, useValue: mockDebts },
         { provide: RecognitionService, useValue: mockRecognition },
+        { provide: BudgetService, useValue: mockBudget },
+        { provide: ReportsService, useValue: mockReports },
       ],
     }).compile()
 
     service = module.get<ConversationService>(ConversationService)
 
     mockExtraction.loadCatalog.mockResolvedValue(mockCatalog)
+    mockSaver.save.mockResolvedValue({ id: 'expense-1', installments: null, budget: null })
+    mockBudget.alertAfterSave.mockResolvedValue(null)
     mockExpenseDraftDB.findOpenByChat.mockResolvedValue(null)
     mockExpenseDraftDB.moveStaleOpenToReview.mockResolvedValue(0)
     mockExpenseDraftDB.failInterruptedUpdatedBefore.mockResolvedValue([])
@@ -710,8 +718,15 @@ describe('ConversationService', () => {
       expect(result.replies[0]).toMatchObject({ edit: true, text: expect.stringContaining('Guardado en Costo fijo') })
       expect(result.replies[0].buttons).toBeUndefined()
       // and a new message at the end of the chat, which does notify
+      // "Ver: /ultimos · /resumen" becomes buttons
       expect(result.replies[1]).toEqual({
-        text: '✅ Guardado: Almuerzo S/ 25.00 en Costo fijo.\nVer: /ultimos · /resumen',
+        text: '✅ Guardado: Almuerzo S/ 25.00 en Costo fijo.',
+        buttons: [
+          [
+            { label: '🧾 Últimos', data: 'cmd:ultimos' },
+            { label: '📊 Resumen', data: 'cmd:resumen' },
+          ],
+        ],
       })
     })
 
@@ -753,6 +768,7 @@ describe('ConversationService', () => {
 
       expect(replies[1]).toEqual({
         text: '📝 Quedó en /borrador: Almuerzo S/ 25.00. Retómalo cuando quieras.',
+        buttons: [[{ label: '📝 Borrador', data: 'cmd:borrador' }]],
       })
     })
 
@@ -1301,6 +1317,273 @@ describe('ConversationService', () => {
         'No encontré a <b>pedro</b>',
       )
       expect(mockDebts.findOpen).not.toHaveBeenCalled()
+    })
+  })
+
+  describe('card installments (D66)', () => {
+    const deduced = () =>
+      buildExpenseDraft({
+        destination: ExpenseDestination.CREDIT_CARD,
+        paymentMethodId: 'method-ohpay',
+        installment: '1/10',
+        amount: 164.9,
+        confidence: { [ExpenseField.AMOUNT]: 0.4 },
+      })
+
+    it('should ask to confirm an installment amount that was only deduced before creating the rows', async () => {
+      mockExpenseDraftDB.findById.mockResolvedValue(deduced())
+
+      const { replies } = await service.handle(action(BotAction.SAVE))
+
+      expect(mockSaver.save).not.toHaveBeenCalled()
+      expect(replies[0].text).toContain('¿Cuota de S/ 164.90 × 10?')
+      expect(replies[0].text).toContain('Total S/ 1649.00')
+      expect(replies[0].buttons?.[0].map((button) => button.data)).toEqual([`cuo:${FILE_ID}`, `cuoe:${FILE_ID}`])
+    })
+
+    it('should save the n installments once confirmed and say which months were created', async () => {
+      mockExpenseDraftDB.findById.mockResolvedValue(deduced())
+      mockSaver.save.mockResolvedValue({
+        id: 'expense-1',
+        installments: {
+          total: 10,
+          from: { paymentMonth: 10, paymentYear: 2026 },
+          to: { paymentMonth: 7, paymentYear: 2027 },
+        },
+        budget: null,
+      })
+
+      mockExpenseDraftDB.update.mockImplementationOnce(async (_id, data) => ({ ...deduced(), ...data }))
+
+      const { replies } = await service.handle(action(BotAction.INSTALLMENTS_OK))
+
+      expect(mockExpenseDraftDB.update).toHaveBeenCalledWith(FILE_ID, {
+        confidence: { [ExpenseField.AMOUNT]: 1 },
+      })
+      expect(mockSaver.save).toHaveBeenCalled()
+      expect(replies[0]).toMatchObject({ edit: false, text: expect.stringContaining('Guardado en Tarjeta') })
+      expect(replies[1].text).toContain('📆 Cuotas 1/10 a 10/10 (oct 2026 – jul 2027).')
+    })
+
+    it('should ask the installment amount with ✏️ Otro monto', async () => {
+      mockExpenseDraftDB.findById.mockResolvedValue(deduced())
+
+      const { replies } = await service.handle(action(BotAction.INSTALLMENTS_EDIT))
+
+      expect(mockExpenseDraftDB.update).toHaveBeenCalledWith(FILE_ID, { pendingField: ExpenseField.AMOUNT })
+      expect(replies[0]).toEqual({ text: expect.stringContaining('¿Cuánto es cada cuota?'), edit: true })
+    })
+
+    it('should save without asking when the amount was said (not deduced)', async () => {
+      mockExpenseDraftDB.findById.mockResolvedValue(buildExpenseDraft({ ...deduced(), confidence: {} }))
+
+      await service.handle(action(BotAction.SAVE))
+
+      expect(mockSaver.save).toHaveBeenCalled()
+    })
+  })
+
+  describe('budget (P19)', () => {
+    const month = {
+      budget: { salary: 4000, limitPercent: 100, limit: 4000, isProposal: false },
+      spentPen: 3120,
+      extraIncome: 500,
+      surplus: 1380,
+      incomes: [],
+      budgetGroups: [],
+      byCategory: [
+        {
+          categoryId: 'food',
+          name: 'Comida',
+          spent: 425,
+          limit: 500,
+          alertThreshold: 80,
+          percent: 85,
+          status: 'warning',
+        },
+        { categoryId: 'fun', name: 'Ocio', spent: 104, limit: 100, alertThreshold: 80, percent: 104, status: 'over' },
+        {
+          categoryId: 'taxi',
+          name: 'Transporte',
+          spent: 40,
+          limit: null,
+          alertThreshold: 80,
+          percent: null,
+          status: null,
+        },
+      ],
+    }
+
+    it('should add the alert to the saved notice when the expense crossed 80 % of its category', async () => {
+      mockExpenseDraftDB.findById.mockResolvedValue(buildExpenseDraft())
+      const budget = {
+        personId: 'person-brando',
+        categoryId: 'category-food',
+        period: { paymentMonth: 9, paymentYear: 2026 },
+        amount: 25,
+      }
+      mockSaver.save.mockResolvedValue({ id: 'expense-1', installments: null, budget })
+      mockBudget.alertAfterSave.mockResolvedValue({ category: 'Comida', percent: 85, status: 'warning' })
+
+      const { replies } = await service.handle(action(BotAction.SAVE))
+
+      expect(mockBudget.alertAfterSave).toHaveBeenCalledWith('category-food', budget.period, 25, 'person-brando')
+      expect(replies[1].text).toMatch(/^⚠️ Comida: 85 % del presupuesto\n✅ Guardado/)
+    })
+
+    it('should show /presupuesto with one bar per category with a limit and the surplus', async () => {
+      mockBudget.month.mockResolvedValue(month)
+
+      const { replies } = await service.handle({ ...command(BotCommand.BUDGET), text: '/presupuesto octubre' })
+
+      expect(mockBudget.month).toHaveBeenCalledWith(10, 2026)
+      expect(replies[0].text).toContain('📊 <b>Presupuesto de octubre 2026</b>')
+      expect(replies[0].text).toContain('Gastado S/ 3120.00 de S/ 4000.00 (78 %)')
+      expect(replies[0].text).toContain('Comida       ▓▓▓▓▓▓▓▓░░  85 %')
+      expect(replies[0].text).toContain('Ocio         ▓▓▓▓▓▓▓▓▓▓ 104 %')
+      expect(replies[0].text).toContain('Sin límite: Transporte S/ 40.00')
+      expect(replies[0].text).toContain('💰 <b>Excedente: S/ 1380.00</b>')
+    })
+
+    it('should explain the format of /presupuesto when the month cannot be read', async () => {
+      const { replies } = await service.handle({ ...command(BotCommand.BUDGET), text: '/presupuesto comida' })
+
+      expect(mockBudget.month).not.toHaveBeenCalled()
+      expect(replies[0].text).toContain('/presupuesto octubre')
+    })
+
+    it('should forecast which categories go over at this pace', async () => {
+      vi.useFakeTimers({ toFake: ['Date'] })
+      vi.setSystemTime(new Date('2026-09-10T15:00:00.000Z'))
+      try {
+        mockBudget.month.mockResolvedValue(month)
+
+        const { replies } = await service.handle(command(BotCommand.FORECAST))
+
+        expect(mockBudget.month).toHaveBeenCalledWith(9, 2026)
+        expect(replies[0].text).toContain('🔮 <b>Pronóstico de setiembre 2026</b> (día 10 de 30)')
+        expect(replies[0].text).toContain('🔴 Ocio: ya pasó el límite')
+        // Comida: 425 in 10 days → 1,275 by the end, reaches 500 on day 12
+        expect(replies[0].text).toContain('⚠️ Comida: a este ritmo se pasa S/ 775.00 y llega al límite el día 12.')
+      } finally {
+        vi.useRealTimers()
+      }
+    })
+  })
+
+  describe('shared expenses and money received (P17)', () => {
+    it('should send only the expense to the AI and keep who shares it', async () => {
+      mockExtraction.extract.mockResolvedValue({
+        expenses: [buildResolvedExpense({ description: 'Cena', amount: 120 })],
+      })
+
+      const { replies } = await service.handle(textMessage('cena 120 con dany, mitad'))
+
+      expect(mockExtraction.extract).toHaveBeenCalledWith(expect.objectContaining({ text: 'cena 120' }))
+      expect(mockExpenseDraftDB.update).toHaveBeenCalledWith(
+        'file-0',
+        expect.objectContaining({ sharedWith: { personIds: ['person-danery'], parts: 2 } }),
+      )
+      expect(replies[0].text).toContain('👥 Compartido con Danery: tu parte S/ 60.00 · te debe S/ 60.00')
+    })
+
+    it('should propose a payment of what the sender owes for a "Te yapearon" screenshot', async () => {
+      mockMediaDownloader.download.mockResolvedValue({ mimeType: 'image/jpeg', data: 'base64' })
+      mockExtraction.extract.mockResolvedValue({
+        expenses: [],
+        received: [{ amount: 150, currency: 'PEN', sender: 'Danery Vi*', spentAt: null, operationNumber: null }],
+      })
+      mockDebts.proposePayment.mockResolvedValue({
+        batchId: 'batch1',
+        personId: 'person-danery',
+        direction: DebtDirection.OWED_TO_ME,
+        items: [],
+        excess: 0,
+      })
+
+      await service.handle({
+        channel: ExpenseDraftChannel.TELEGRAM,
+        chatId: CHAT_ID,
+        messageId: '78',
+        type: ChannelMessageType.IMAGE,
+        media: { fileId: 'file-2', uniqueId: 'unique-2' },
+      })
+
+      expect(mockDebts.proposePayment).toHaveBeenCalledWith('person-danery', DebtDirection.OWED_TO_ME, 150)
+    })
+
+    it('should say that money received from someone without debts is not an expense', async () => {
+      mockMediaDownloader.download.mockResolvedValue({ mimeType: 'image/jpeg', data: 'base64' })
+      mockExtraction.extract.mockResolvedValue({
+        expenses: [],
+        received: [{ amount: 50, currency: 'PEN', sender: 'Rosa', spentAt: null, operationNumber: null }],
+      })
+
+      const { replies } = await service.handle({
+        channel: ExpenseDraftChannel.TELEGRAM,
+        chatId: CHAT_ID,
+        messageId: '79',
+        type: ChannelMessageType.IMAGE,
+        media: { fileId: 'file-3', uniqueId: 'unique-3' },
+      })
+
+      expect(mockDebts.proposePayment).not.toHaveBeenCalled()
+      expect(replies[0].text).toContain('💸 Recibiste S/ 50.00 de <b>Rosa</b>: no es un gasto')
+    })
+
+    it('should name the list items the AI could not read (P21)', async () => {
+      mockMediaDownloader.download.mockResolvedValue({ mimeType: 'image/jpeg', data: 'base64' })
+      mockExtraction.extract.mockResolvedValue({
+        expenses: [buildResolvedExpense()],
+        unreadable: ['NINTENDO ESH…', 'YANGO'],
+      })
+
+      const { replies } = await service.handle({
+        channel: ExpenseDraftChannel.TELEGRAM,
+        chatId: CHAT_ID,
+        messageId: '80',
+        type: ChannelMessageType.IMAGE,
+        media: { fileId: 'file-4', uniqueId: 'unique-4' },
+      })
+
+      expect(replies.at(-1)?.text).toBe('⚠️ No pude leer: NINTENDO ESH…, YANGO. Mándalos en otra captura o escríbelos.')
+    })
+
+    it('should offer the debts as Excel and PDF, and send the file when pressed (D39)', async () => {
+      mockDebts.summary.mockResolvedValue([
+        { personId: 'person-danery', name: 'Danery', owedToMe: 400, iOwe: 0, net: 400, late: 0, dueThisMonth: 0 },
+      ])
+      const { replies } = await service.handle(command(BotCommand.DEBTS))
+      expect(replies[0].buttons?.[0].map((button) => button.data)).toEqual(['rep:xlsx-all', 'rep:pdf-all'])
+
+      const file = { filename: 'deudas-todas-2026-09-23.pdf', mimeType: 'application/pdf', data: Buffer.from('%PDF-') }
+      mockReports.debts.mockResolvedValue(file)
+      const result = await service.handle({
+        ...action(BotAction.REPORT),
+        action: { name: BotAction.REPORT, draftId: 'pdf-all' },
+      })
+
+      expect(mockReports.debts).toHaveBeenCalledWith('pdf', undefined)
+      expect(result.replies[0]).toEqual({ text: '📎 deudas-todas-2026-09-23.pdf', document: file })
+    })
+  })
+
+  describe('command buttons', () => {
+    it('should run the command of a help button as if it was typed', async () => {
+      mockExpenseDraftDB.findRecentSaved.mockResolvedValue([])
+
+      await service.handle({ ...action(BotAction.COMMAND), action: { name: BotAction.COMMAND, draftId: 'ultimos' } })
+
+      expect(mockExpenseDraftDB.findRecentSaved).toHaveBeenCalled()
+    })
+
+    it('should ignore a button of an unknown command', async () => {
+      const { replies } = await service.handle({
+        ...action(BotAction.COMMAND),
+        action: { name: BotAction.COMMAND, draftId: 'borrar-todo' },
+      })
+
+      expect(replies).toEqual([])
     })
   })
 })

@@ -1,4 +1,12 @@
-import { Injectable, NestInterceptor, ExecutionContext, CallHandler, HttpException, HttpStatus } from '@nestjs/common'
+import {
+  Injectable,
+  NestInterceptor,
+  ExecutionContext,
+  CallHandler,
+  HttpException,
+  HttpStatus,
+  StreamableFile,
+} from '@nestjs/common'
 import { Reflector } from '@nestjs/core'
 import { ZodValidationException } from 'nestjs-zod'
 import { ZodError } from 'zod'
@@ -15,10 +23,10 @@ import { LOG_CONTEXT_KEY } from '../constants/logger.constant'
 import { LogSanitizer } from '../helpers/log-sanitizer.helper'
 
 @Injectable()
-export class ResponseInterceptor<T> implements NestInterceptor<T, ResponseSuccess<T>> {
+export class ResponseInterceptor<T> implements NestInterceptor<T, ResponseSuccess<T> | StreamableFile> {
   constructor(private readonly reflector: Reflector) {}
 
-  intercept(context: ExecutionContext, next: CallHandler): Observable<ResponseSuccess<T>> {
+  intercept(context: ExecutionContext, next: CallHandler): Observable<ResponseSuccess<T> | StreamableFile> {
     return next.handle().pipe(
       map((res: unknown) => this.responseHandler(res, context)),
       catchError((err) => throwError(() => this.errorHandler(err, context))),
@@ -80,6 +88,9 @@ export class ResponseInterceptor<T> implements NestInterceptor<T, ResponseSucces
   }
 
   responseHandler(responseData, context: ExecutionContext) {
+    // Downloads (Excel / PDF, D39) go out as they are, without the JSON envelope
+    if (responseData instanceof StreamableFile) return responseData
+
     const ctx = context.switchToHttp()
 
     const response = ctx.getResponse()

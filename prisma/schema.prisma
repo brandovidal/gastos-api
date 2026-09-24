@@ -134,6 +134,23 @@ model MonthlyBudget {
   @@map("bud_monthly_budgets")
 }
 
+// Extra incomes of a month (P19, D65): the salary stays in bud_monthly_budgets; surplus = salary + extras − expenses
+model Income {
+  id          String   @id @default(cuid())
+  description String
+  amount      Float
+  currency    String   @default("PEN")
+  receivedAt  DateTime
+  month       Int
+  year        Int
+  notes       String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([month, year])
+  @@map("bud_incomes")
+}
+
 // ==================== CHAT BOT (bot_) ====================
 
 // Every expense received from a chat while the bot works on it: what the AI extracted, what is missing,
@@ -173,6 +190,7 @@ model ExpenseDraft {
   paymentMethod   PaymentMethod? @relation(fields: [paymentMethodId], references: [id])
   categoryId      String?
   category        Category?      @relation(fields: [categoryId], references: [id])
+  sharedWith      String? // JSON { personIds, parts }: "cena 120 con dany, mitad" (P17); each one owes amount / parts
   confidence      String         @default("{}") // JSON { field: 0..1 }
   missingFields   String         @default("[]") // JSON [field]
   confirmedAt     DateTime?

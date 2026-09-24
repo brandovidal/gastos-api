@@ -11,6 +11,8 @@ import { DraftsModule } from '@/modules/drafts/drafts.module'
 import { MessagesModule } from '@/modules/messages/messages.module'
 import { SummaryModule } from '@/modules/summary/summary.module'
 import { DebtsModule } from '@/modules/debts/debts.module'
+import { BudgetModule } from '@/modules/budget/budget.module'
+import { ReportsModule } from '@/modules/reports/reports.module'
 
 @Module({
   imports: [
@@ -26,6 +28,8 @@ import { DebtsModule } from '@/modules/debts/debts.module'
     MessagesModule,
     SummaryModule,
     DebtsModule,
+    BudgetModule,
+    ReportsModule,
   ],
   controllers: [],
   providers: [],

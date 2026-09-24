@@ -22,6 +22,12 @@ export class PersonDBRepository {
     return this.serializer.toDtoArray(persons)
   }
 
+  // "You" (D19): the budget counts only this person's expenses (D71)
+  async findDefault(): Promise<PersonDbDto | null> {
+    const person = await this.prisma.person.findFirst({ where: { isDefault: true } })
+    return person ? this.serializer.toDto(person) : null
+  }
+
   // kogane-app (P7): every person, active or not
   async findAll(): Promise<PersonDbDto[]> {
     const people = await this.prisma.person.findMany({ orderBy: { name: 'asc' } })

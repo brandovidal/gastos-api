@@ -24,6 +24,107 @@ import { SaveExpenseDbDto } from '@/db/models/expense/expenseDB.dto'
 import { PaymentMethodDBRepository } from '@/db/models/payment-method/paymentMethodDB.repository'
 import { StoredFilesService } from '@/modules/stored-files/stored-files.service'
 
+import { BudgetImpact, InstallmentsCreated, SavedExpense } from './dto/conversation.types'
+import { sharesOf } from './shared-expense.parser'
+
+// One row per installment (debts D60, credit cards D66): "1/n" creates the n installments, one per month; "3/6"
+// only that one (the others were registered before). The amount is always the installment's.
+function withInstallments<T extends Record<string, unknown>>(
+  base: T,
+  installment: string | null,
+  period: PaymentPeriod,
+) {
+  const valid = installment && INSTALLMENT_REGEX.test(installment) ? installment : null
+  const [current, total] = valid ? valid.split('/').map(Number) : [0, 0]
+  const data = { ...base, installment: valid, ...period }
+  const nextInstallments =
+    current === 1 && total > 1
+      ? Array.from({ length: total - 1 }, (_, index) => ({
+          ...data,
+          installment: `${index + 2}/${total}`,
+          ...addMonths(period, index + 1),
+        }))
+      : []
+  return { data, nextInstallments }
+}
+
+// Destinations whose amount can be shared ("cena 120 con dany, mitad"; a platform shared with the sister, charged every
+// month, D72); debts cannot
+const SHAREABLE_DESTINATIONS: string[] = [
+  ExpenseDestination.DAILY,
+  ExpenseDestination.FIXED_COST,
+  ExpenseDestination.SUBSCRIPTION,
+  ExpenseDestination.CREDIT_CARD,
+]
+
+function sharedParts(expenseDraft: ExpenseDraftDbDto) {
+  const { sharedWith, destination, amount } = expenseDraft
+  if (!sharedWith?.personIds.length || amount == null || !destination) return null
+  return SHAREABLE_DESTINATIONS.includes(destination) ? sharesOf(amount, sharedWith) : null
+}
+
+// One debt per person (owed to me) and per installment, in the same payment month as the expense row it comes from
+function withSharedDebts(input: SaveExpenseDbDto, expenseDraft: ExpenseDraftDbDto): SaveExpenseDbDto {
+  const parts = sharedParts(expenseDraft)
+  if (!parts || !expenseDraft.sharedWith) return input
+
+  const rows: { installment?: string | null; period: PaymentPeriod }[] =
+    input.destination === ExpenseDestination.DAILY
+      ? [{ period: paymentPeriodOf(new Date(input.data.spentAt).toISOString().slice(0, 10)) }]
+      : [input.data, ...('nextInstallments' in input ? input.nextInstallments : [])].map((row) => ({
+          installment: 'installment' in row ? (row.installment as string | null) : null,
+          period: { paymentMonth: row.paymentMonth as number, paymentYear: row.paymentYear as number },
+        }))
+
+  const sharedDebts = expenseDraft.sharedWith.personIds.flatMap((personId) =>
+    rows.map(({ installment, period }) => ({
+      direction: DebtDirection.OWED_TO_ME,
+      description: `${expenseDraft.description} (compartido)`,
+      amount: parts.share,
+      currency: expenseDraft.currency ?? Currency.PEN,
+      personId,
+      installment: installment ?? null,
+      ...period,
+    })),
+  )
+  return { ...input, sharedDebts }
+}
+
+// Subscriptions are card charges (D46) and debts are not spending: only these count for the budget, in PEN
+function budgetImpact(input: SaveExpenseDbDto): BudgetImpact | null {
+  const { destination, data } = input
+  if ((data.currency ?? Currency.PEN) !== Currency.PEN) return null
+  switch (destination) {
+    case ExpenseDestination.DAILY:
+      return {
+        personId: data.personId,
+        categoryId: data.categoryId ?? null,
+        period: paymentPeriodOf(new Date(data.spentAt).toISOString().slice(0, 10)),
+        amount: data.amount,
+      }
+    case ExpenseDestination.FIXED_COST:
+    case ExpenseDestination.CREDIT_CARD:
+      return {
+        personId: data.personId,
+        categoryId: data.categoryId ?? null,
+        period: { paymentMonth: data.paymentMonth, paymentYear: data.paymentYear },
+        amount: data.amount,
+      }
+    default:
+      return null
+  }
+}
+
+function installmentsCreated(input: SaveExpenseDbDto): InstallmentsCreated | null {
+  if (!('nextInstallments' in input) || !input.nextInstallments.length) return null
+  const last = input.nextInstallments[input.nextInstallments.length - 1]
+  return {
+    total: input.nextInstallments.length + 1,
+    from: { paymentMonth: input.data.paymentMonth, paymentYear: input.data.paymentYear },
+    to: { paymentMonth: last.paymentMonth, paymentYear: last.paymentYear },
+  }
+}
+
 // Turns a confirmed ExpenseDraft into a record of its destination table (✅ Guardar)
 @Injectable()
 export class ExpenseSaverService {
@@ -35,13 +136,13 @@ export class ExpenseSaverService {
     private readonly storedFilesService: StoredFilesService,
   ) {}
 
-  async save(expenseDraft: ExpenseDraftDbDto): Promise<{ id: string }> {
+  async save(expenseDraft: ExpenseDraftDbDto): Promise<SavedExpense> {
     this.assertComplete(expenseDraft)
 
-    const input = await this.buildInput(expenseDraft)
+    const input = withSharedDebts(await this.buildInput(expenseDraft), expenseDraft)
     const saved = await this.expenseDBRepository.saveFromExpenseDraft(expenseDraft.id, input)
     await this.keepFile(expenseDraft.fileId)
-    return saved
+    return { ...saved, installments: installmentsCreated(input), budget: budgetImpact(input) }
   }
 
   // The screenshot of a saved expense moves out of drafts (D58). The expense is already saved: a failure only logs
@@ -63,7 +164,8 @@ export class ExpenseSaverService {
   private async buildInput(expenseDraft: ExpenseDraftDbDto): Promise<SaveExpenseDbDto> {
     const { destination } = expenseDraft
     const description = expenseDraft.description as string
-    const amount = expenseDraft.amount as number
+    // A shared expense keeps only the user's part (P17); the others' parts become debts (withSharedDebts)
+    const amount = sharedParts(expenseDraft)?.own ?? (expenseDraft.amount as number)
     const personId = expenseDraft.personId as string
 
     const currency = expenseDraft.currency ?? Currency.PEN
@@ -131,16 +233,8 @@ export class ExpenseSaverService {
         const period = card.billingCloseDay
           ? creditCardPaymentPeriod(spentAtIso, card.billingCloseDay)
           : paymentPeriodOf(spentAtIso)
-        return {
-          destination,
-          data: {
-            ...expense,
-            paymentMethodId,
-            paymentStatus: PaymentStatus.PENDING,
-            processDate: spentAt,
-            ...period,
-          },
-        }
+        const data = { ...expense, paymentMethodId, paymentStatus: PaymentStatus.PENDING, processDate: spentAt }
+        return { destination, ...withInstallments(data, expenseDraft.installment, period) }
       }
       case ExpenseDestination.RECEIVABLE:
       case ExpenseDestination.PAYABLE: {
@@ -157,29 +251,14 @@ export class ExpenseSaverService {
     }
   }
 
-  // One row per installment (D60). "1/n" creates the n installments, one per month; "3/6" only that one (the
-  // others were registered before). The amount is always the installment's.
+  // One row per installment (D60)
   private buildDebt(
     expenseDraft: ExpenseDraftDbDto,
     destination: ExpenseDestination.RECEIVABLE | ExpenseDestination.PAYABLE,
     base: { direction: DebtDirection; description: string; amount: number; personId: string } & Record<string, unknown>,
     period: PaymentPeriod,
   ): SaveExpenseDbDto {
-    const installment =
-      expenseDraft.installment && INSTALLMENT_REGEX.test(expenseDraft.installment) ? expenseDraft.installment : null
-    const [current, total] = installment ? installment.split('/').map(Number) : [0, 0]
-    const data = { ...base, installment, ...period }
-
-    const nextInstallments =
-      current === 1 && total > 1
-        ? Array.from({ length: total - 1 }, (_, index) => ({
-            ...data,
-            installment: `${index + 2}/${total}`,
-            ...addMonths(period, index + 1),
-          }))
-        : []
-
-    return { destination, data, nextInstallments }
+    return { destination, ...withInstallments(base, expenseDraft.installment, period) }
   }
 
   // Something bought with a credit card for someone is paid back in the card's billing month (D22); otherwise now

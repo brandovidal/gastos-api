@@ -16,6 +16,7 @@ import {
   SubscriptionPeriod,
 } from '@/commons/constants/expense.constant'
 import { CatalogKind, ExpenseField } from '@/commons/constants/expense-extraction.constant'
+import { PaymentPeriod } from '@/commons/helpers/payment-period.helper'
 import { ExpenseDraftDbDto } from '@/db/models/expense-draft/expenseDraftDB.dto'
 import { MonthlyTotalDbDto } from '@/db/models/expense/expenseDB.dto'
 import { botPaymentMethods, findCatalogEntryById } from '@/modules/expense-extraction/expense-extraction.catalog'
@@ -23,7 +24,8 @@ import { AiModelUsage, ExtractionCatalog } from '@/modules/expense-extraction/dt
 
 import { encodeBotAction } from './bot-action.codec'
 import { lowConfidenceFieldsOf } from './expense-draft.mapper'
-import { BotButton, BotReply } from './dto/conversation.types'
+import { sharesOf } from './shared-expense.parser'
+import { BotButton, BotReply, InstallmentsCreated } from './dto/conversation.types'
 
 export const DESTINATION_LABELS: Record<ExpenseDestination, string> = {
   [ExpenseDestination.DAILY]: 'Día a día',
@@ -90,6 +92,11 @@ export const TEXTS = {
     `⚠️ Parece que ya registraste este gasto (operación <b>${escapeHtml(operationNumber)}</b>).`,
   notAnExpense: '🤔 No encontré un gasto en tu mensaje. Prueba con algo como <i>almuerzo 25 soles con yape</i>.',
   askCorrection: '✏️ Escribe la corrección como quieras (ej: <i>eran 30 soles y fue con la oh</i>).',
+  askInstallmentAmount: '✏️ ¿Cuánto es cada cuota? (ej: <i>170.50</i>)',
+  unreadable: (names: string[]) =>
+    `⚠️ No pude leer: ${names.map(escapeHtml).join(', ')}. Mándalos en otra captura o escríbelos.`,
+  receivedNotDebt: (sender: string, amount: number, currency: string | null) =>
+    `💸 Recibiste ${formatAmount(amount, currency)} de <b>${escapeHtml(sender)}</b>: no es un gasto y no tiene deudas pendientes contigo.`,
   correctionFailed: '⚠️ No pude aplicar la corrección. Prueba con <i>monto 30</i> o <i>persona dany</i>.',
   alreadyProcessed: 'Este gasto ya fue procesado',
   saved: 'Guardado',
@@ -170,7 +177,20 @@ export function formatSummary(expenseDraft: ExpenseDraftDbDto, catalog: Extracti
     `🧾 <b>${escapeHtml(expenseDraft.description ?? 'Sin concepto')}</b>${mark(ExpenseField.DESCRIPTION)} — ${formatAmount(expenseDraft.amount, expenseDraft.currency)}${mark(ExpenseField.AMOUNT)}`,
     `👤 ${nameOf(catalog, expenseDraft.personId)}${mark(ExpenseField.PERSON)}   ${payment}   📂 ${nameOf(catalog, expenseDraft.categoryId)}${mark(ExpenseField.CATEGORY)}`,
     `📅 ${details.join(' · ')}`,
-  ].join('\n')
+    formatShared(expenseDraft, catalog),
+  ]
+    .filter(Boolean)
+    .join('\n')
+}
+
+// "👥 Compartido con Danery: tu parte S/ 60.00 · cada uno te debe S/ 60.00" (P17)
+function formatShared(expenseDraft: ExpenseDraftDbDto, catalog: ExtractionCatalog): string | null {
+  const { sharedWith, amount, currency } = expenseDraft
+  if (!sharedWith?.personIds.length || amount == null) return null
+  const { share, own } = sharesOf(amount, sharedWith)
+  const names = sharedWith.personIds.map((id) => nameOf(catalog, id)).join(', ')
+  const each = sharedWith.personIds.length > 1 ? 'cada uno te debe' : 'te debe'
+  return `👥 Compartido con ${names}: tu parte ${formatAmount(own, currency)} · ${each} ${formatAmount(share, currency)}`
 }
 
 const button = (label: string, name: BotAction, draftId: string, field?: string, value?: string): BotButton => ({
@@ -289,9 +309,53 @@ export function buildClosedReply(
 
 // A new message after ✅ Guardar / 📝 Borrador: the summary is edited in place (no notification), this one arrives at
 // the end of the chat
-export function buildSavedNotice(expenseDraft: ExpenseDraftDbDto, destinationLabel: string): BotReply {
+export function buildSavedNotice(
+  expenseDraft: ExpenseDraftDbDto,
+  destinationLabel: string,
+  installments: InstallmentsCreated | null = null,
+): BotReply {
+  const created = installments
+    ? `\n📆 Cuotas 1/${installments.total} a ${installments.total}/${installments.total} (${formatPeriod(installments.from)} – ${formatPeriod(installments.to)}).`
+    : ''
   return {
-    text: `✅ Guardado: ${conceptOf(expenseDraft)} en ${destinationLabel}.\nVer: /ultimos · /resumen`,
+    text: `✅ Guardado: ${conceptOf(expenseDraft)} en ${destinationLabel}.${created}\nVer: /ultimos · /resumen`,
+  }
+}
+
+export const MONTH_NAMES = [
+  'enero',
+  'febrero',
+  'marzo',
+  'abril',
+  'mayo',
+  'junio',
+  'julio',
+  'agosto',
+  'setiembre',
+  'octubre',
+  'noviembre',
+  'diciembre',
+]
+
+// "oct 2026"
+export const formatPeriod = ({ paymentMonth, paymentYear }: PaymentPeriod) =>
+  `${MONTH_NAMES[paymentMonth - 1].slice(0, 3)} ${paymentYear}`
+
+// D66: "1/n" on a card whose installment amount was only deduced (total / n, with ❓): confirm before the n rows
+export function buildInstallmentsConfirmReply(expenseDraft: ExpenseDraftDbDto): BotReply {
+  const total = Number((expenseDraft.installment ?? '1/1').split('/')[1])
+  const amount = expenseDraft.amount ?? 0
+  return {
+    text: [
+      `📆 <b>¿Cuota de ${formatAmount(amount, expenseDraft.currency)} × ${total}?</b>`,
+      `Total ${formatAmount(amount * total, expenseDraft.currency)}. Si el banco cobra intereses, la cuota es otra.`,
+    ].join('\n'),
+    buttons: [
+      [
+        button(`✅ Sí, guardar ${total} cuotas`, BotAction.INSTALLMENTS_OK, expenseDraft.id),
+        button('✏️ Otro monto', BotAction.INSTALLMENTS_EDIT, expenseDraft.id),
+      ],
+    ],
   }
 }
 

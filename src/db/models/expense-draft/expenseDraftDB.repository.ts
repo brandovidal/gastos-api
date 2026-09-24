@@ -57,7 +57,8 @@ export class ExpenseDraftDBRepository {
   async findOpenByBatch(chatId: string, batchId: string): Promise<ExpenseDraftDbDto[]> {
     const expenseDrafts = await this.prisma.expenseDraft.findMany({
       where: { chatId, batchId, status: { in: OPEN_EXPENSE_DRAFT_STATUSES } },
-      orderBy: [{ createdAt: 'asc' }, { itemIndex: 'asc' }],
+      // Drafts of one album can share the millisecond: the message and then its item keep the arrival order
+      orderBy: [{ createdAt: 'asc' }, { messageId: 'asc' }, { itemIndex: 'asc' }],
     })
     return expenseDrafts.map((expenseDraft) => this.serializer.toDto(expenseDraft))
   }

@@ -141,7 +141,9 @@ export class TelegramService implements OnModuleInit, OnApplicationBootstrap, Be
       for (const reply of replies) {
         const markup = toReplyMarkup(reply.buttons)
 
-        if (reply.edit && sourceMessageId) {
+        if (reply.document) {
+          await this.telegramClient.sendDocument(chatId, reply.document, reply.text)
+        } else if (reply.edit && sourceMessageId) {
           await this.editOrSend(chatId, sourceMessageId, reply.text, markup)
         } else {
           await this.telegramClient.sendMessage(chatId, reply.text, markup)
