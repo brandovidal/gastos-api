@@ -74,6 +74,9 @@ import {
   buildSavedNotice,
   buildExpenseReply,
   buildDraftReplies,
+  buildHelpReply,
+  commandButtons,
+  withCommandButtons,
   buildNewPaymentMethodReply,
   formatMonthlyTotals,
   formatAiUsage,
@@ -124,6 +127,11 @@ export class ConversationService {
   ) {}
 
   async handle(message: ChannelMessage): Promise<ConversationResult> {
+    const result = await this.route(message)
+    return { ...result, replies: result.replies.map(withCommandButtons) }
+  }
+
+  private async route(message: ChannelMessage): Promise<ConversationResult> {
     switch (message.type) {
       case ChannelMessageType.COMMAND:
         return { replies: await this.handleCommand(message) }
@@ -538,6 +546,18 @@ export class ConversationService {
 
   private async handleAction(message: ChannelMessage): Promise<ConversationResult> {
     const action = message.action as BotActionPayload
+    // Help buttons: run the command as if it was typed (draftId carries the command name)
+    if (action.name === BotAction.COMMAND) {
+      const command = action.draftId
+      if (!(Object.values(BotCommand) as string[]).includes(command)) return { replies: [] }
+      const replies = await this.handleCommand({
+        ...message,
+        type: ChannelMessageType.COMMAND,
+        command,
+        text: `/${command}`,
+      })
+      return { replies }
+    }
     if (DEBT_PAYMENT_ACTIONS.includes(action.name)) return this.handleDebtPaymentAction(action)
     if (BATCH_ACTIONS.includes(action.name)) return this.handleBatchAction(message.chatId, action)
 
@@ -691,7 +711,7 @@ export class ConversationService {
           message.chatId,
           RECENT_EXPENSES_LIMIT,
         )
-        return [{ text: formatRecent(recent) }]
+        return [{ text: formatRecent(recent), buttons: commandButtons(BotCommand.SUMMARY, BotCommand.DRAFTS) }]
       }
       case BotCommand.DRAFTS: {
         const [{ items, total }, catalog] = await Promise.all([
@@ -713,14 +733,19 @@ export class ConversationService {
           this.expenseDBRepository.findMonthlyTotals(month, year),
           this.expenseExtractionService.loadCatalog(),
         ])
-        return [{ text: formatMonthlyTotals(totals, catalog, `${MONTH_NAMES[month - 1]} ${year}`) }]
+        return [
+          {
+            text: formatMonthlyTotals(totals, catalog, `${MONTH_NAMES[month - 1]} ${year}`),
+            buttons: commandButtons(BotCommand.RECENT, BotCommand.DRAFTS),
+          },
+        ]
       }
       case BotCommand.DEBTS:
         return [{ text: await this.debtsCommand(this.commandArgs(message)) }]
       case BotCommand.COLLECT:
         return [{ text: await this.collectCommand(this.commandArgs(message)) }]
       default:
-        return [{ text: TEXTS.help }]
+        return [buildHelpReply()]
     }
   }
 

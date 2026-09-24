@@ -14,7 +14,7 @@ Las migraciones corren **antes** que el código nuevo: tienen que funcionar tamb
 
 | Entorno     | Archivo o lugar                                                     | Base                    | Para qué                                                                 |
 | ----------- | ------------------------------------------------------------------- | ----------------------- | ------------------------------------------------------------------------ |
-| local (dev) | `.env.dev`                                                          | SQLite `file:./dev.db`  | `pnpm dev` (o `make dev`), `make deps`, `make tunnel` para probar el bot |
+| local (dev) | `.env.dev`                                                          | SQLite `file:./dev.db`  | `make dev` (API + túnel del bot; `pnpm dev` solo la API), `make deps` |
 | producción  | Railway (variables) · GitHub (secretos) · `.env.prod` en tu máquina | Turso `kogane-db`       | La API real; `make <tarea> ENV=prod` para operar a mano                  |
 | tests       | `.env.test`                                                         | SQLite `file:./test.db` | `make check` y el CI                                                     |
 
@@ -30,7 +30,20 @@ Es la URL pública (HTTPS) donde Telegram manda el webhook: `PUBLIC_URL` + `/v1/
 | **local** (`.env.dev`)                        | `http://localhost:5560` o vacío     | Telegram exige HTTPS público: la URL la pone `make tunnel` (cloudflared, cambia en cada arranque)    |
 | **tests** (`.env.test`)                       | vacío                               | Los tests no registran webhooks                                                                      |
 
-`make tunnel` abre el túnel, apunta el webhook del bot de `.env.dev` al túnel y, con Ctrl+C, lo **devuelve a producción** (`PUBLIC_URL` de `.env.prod`). Si local y producción usan el mismo bot, mientras el túnel está abierto el bot de producción no recibe mensajes. Para evitarlo, crea un segundo bot en @BotFather y pon su token en `.env.dev`.
+`make tunnel` abre el túnel, espera a que su URL responda, apunta el webhook del bot de `.env.dev` al túnel (la URL queda en `.tunnel-url` mientras corre) y siempre usa `.env.dev`. Con Ctrl+C, **solo si `.env.dev` y `.env.prod` comparten el token del bot**, devuelve el webhook a producción (`PUBLIC_URL` de `.env.prod`; si falla, avisa que hay que correr `make telegram ENV=prod`); con un bot propio de dev no toca producción. En local, `make telegram` usa `.env.dev`: con el túnel abierto vuelve a registrar el webhook en él; sin túnel solo muestra a dónde apunta el webhook, sin cambiar nada. Si local y producción usan el mismo bot, mientras el túnel está abierto el bot de producción no recibe mensajes. Para evitarlo, crea un segundo bot en @BotFather y pon su token en `.env.dev`.
+
+### Bot propio para dev
+
+1. En Telegram, **@BotFather** → `/newbot` → nombre (p. ej. "Kogane Dev") y usuario terminado en `bot` (p. ej. `kogane_finanzas_dev_bot`). Copia el token.
+2. En `.env.dev`: `TELEGRAM_BOT_TOKEN=<token nuevo>`. `TELEGRAM_WEBHOOK_SECRET` puede ser el mismo o uno nuevo (`make secret`).
+3. **`TELEGRAM_ALLOWED_CHAT_IDS`:** en un chat privado el `chat_id` es tu id de usuario de Telegram, **el mismo con cualquier bot**. Copia el valor de `.env.prod`. Para verlo desde el bot nuevo (solo funciona mientras no tiene webhook, o sea antes del primer `make tunnel`):
+   ```bash
+   # escríbele cualquier cosa al bot nuevo y luego:
+   curl -s "https://api.telegram.org/bot<TOKEN>/getUpdates" | grep -o '"chat":{"id":[0-9-]*'
+   ```
+   Si ya tiene webhook, `getUpdates` responde 409: bórralo con `curl -s "https://api.telegram.org/bot<TOKEN>/deleteWebhook"` y repite. Otra opción: escribirle a **@userinfobot**, que responde tu id.
+4. `make dev` (levanta la API y el túnel juntos; Ctrl+C corta ambos) y escríbele al bot de dev. Por separado: `make dev:only` (o `pnpm dev`) solo la API, y `make tunnel` solo el túnel. `make telegram` (sin `ENV`) muestra a dónde apunta su webhook. Un chat que no está en la lista recibe 200 y se ignora, así que si el bot no responde, revisa este valor primero.
+5. **Después de editar `.env.dev`, reinicia la API** (Ctrl+C y `make dev`): `nest start --watch` recarga el código pero lee `.env.dev` solo al arrancar. Si el túnel registró un secret o token nuevo y la API sigue con el viejo, Telegram recibe **401 Unauthorized** y el bot no responde (se ve en `make telegram` como `Last error`).
 
 Secretos (`API_KEY`, `TELEGRAM_WEBHOOK_SECRET`): `make secret` (o `openssl rand -hex 32`); uno distinto por entorno.
 
@@ -93,7 +106,7 @@ El `Makefile` define las variables comunes (`ENV`, archivo `.env.<ENV>`) e inclu
 
 - **Rotar el token** (el anterior se pegó en un chat): en @BotFather, `/revoke` → elegir el bot → token nuevo en Railway, GitHub y tus `.env`.
 - El webhook y el menú de comandos los registra el job `telegram` en cada deploy. A mano: `make telegram ENV=prod URL=https://….up.railway.app`.
-- Para probar el bot en local: `pnpm dev` en una terminal y `make tunnel` en otra; al cortar el túnel con Ctrl+C, el webhook vuelve a producción.
+- Para probar el bot en local: `pnpm dev` en una terminal y `make tunnel` en otra, idealmente con un bot propio de dev (ver "Bot propio para dev").
 
 ## 4b. Cloudflare R2 (capturas)
 

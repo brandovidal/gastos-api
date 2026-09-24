@@ -1,6 +1,7 @@
 // User-facing texts are in Spanish (D11): everything else in this file is English.
 import {
   BotAction,
+  BotCommand,
   MAX_NEW_PAYMENT_METHOD_NAME_BYTES,
   MAX_QUICK_REPLIES,
   QUICK_REPLIES_PER_ROW,
@@ -69,8 +70,6 @@ export const TEXTS = {
     '• 🎙️ una nota de voz: <i>"almuerzo veinticinco soles con yape"</i>',
     '',
     '<b>Para corregir</b> un gasto que acabo de leer, empieza con la palabra: <i>monto 30</i>, <i>persona dany</i>, <i>cuota 2/6</i>, <i>tarjeta oh</i>, <i>categoría comida</i>, <i>con culpa</i>, <i>ayer</i>. Si no, toca ✏️ Corregir y escríbelo como quieras.',
-    '',
-    '/borrador · /ultimos · /resumen · /uso · /cancelar',
   ].join('\n'),
   failed: '⚠️ No pude procesar el mensaje ahora. Lo dejé en /borrador para reintentarlo.',
   interrupted: (count: number) =>
@@ -185,6 +184,46 @@ const toRows = (buttons: BotButton[]) =>
     rows[rows.length - 1].push(current)
     return rows
   }, [])
+
+const COMMAND_BUTTON_LABELS: Partial<Record<BotCommand, string>> = {
+  [BotCommand.DRAFTS]: '📝 Borrador',
+  [BotCommand.RECENT]: '🧾 Últimos',
+  [BotCommand.SUMMARY]: '📊 Resumen',
+  [BotCommand.USAGE]: '🤖 Uso de la AI',
+  [BotCommand.CANCEL]: '✖️ Cancelar',
+}
+
+const commandButton = (command: BotCommand) =>
+  button(COMMAND_BUTTON_LABELS[command] ?? `/${command}`, BotAction.COMMAND, command)
+
+// One row of buttons that run commands (cmd:<command>)
+export const commandButtons = (...commands: BotCommand[]): BotButton[][] => [commands.map(commandButton)]
+
+// Help (/start, /ayuda): the everyday commands as buttons, two per row
+export function buildHelpReply(): BotReply {
+  const commands = [BotCommand.DRAFTS, BotCommand.RECENT, BotCommand.SUMMARY, BotCommand.USAGE, BotCommand.CANCEL]
+  return {
+    text: TEXTS.help,
+    buttons: commands.reduce<BotButton[][]>((rows, command, index) => {
+      if (index % 2 === 0) rows.push([])
+      rows[rows.length - 1].push(commandButton(command))
+      return rows
+    }, []),
+  }
+}
+
+// Commands a reply mentions that get a button (/deudas and /cobrar need a name, so they stay as text)
+const LINKED_COMMANDS = [BotCommand.DRAFTS, BotCommand.RECENT, BotCommand.SUMMARY]
+const COMMAND_LINK_LINE = /\n?Ver: \/\w+(?: · \/\w+)*\s*$/
+
+// A new message without buttons that mentions /borrador, /ultimos or /resumen gets them as buttons; a trailing
+// "Ver: /ultimos · /resumen" line is replaced by them. Edited summaries and replies with buttons stay as they are.
+export function withCommandButtons(reply: BotReply): BotReply {
+  if (reply.buttons?.length || reply.edit) return reply
+  const commands = LINKED_COMMANDS.filter((command) => new RegExp(`/${command}\\b`).test(reply.text))
+  if (!commands.length) return reply
+  return { ...reply, text: reply.text.replace(COMMAND_LINK_LINE, ''), buttons: commandButtons(...commands) }
+}
 
 function quickReplies(field: ExpenseField, draftId: string, catalog: ExtractionCatalog): BotButton[] {
   const set = (label: string, value: string) => button(label, BotAction.SET_FIELD, draftId, field, value)

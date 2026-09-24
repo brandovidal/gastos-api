@@ -15,7 +15,8 @@ DOTENV_TEST := pnpm exec dotenv -e .env.test
 help: ## Show the available tasks by group
 	@awk 'BEGIN {FS = ":.*## "} \
 	  /^##@/ {printf "\n\033[1m%s\033[0m\n", substr($$0, 5)} \
-	  /^[a-zA-Z_-]+:.*## / {printf "  \033[36m%-18s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)
+	  /^[a-zA-Z_\\:-]+:.*## / {name = $$0; gsub(/\\:/, "\001", name); sub(/:.*/, "", name); gsub(/\001/, ":", name); \
+	    printf "  \033[36m%-18s\033[0m %s\n", name, $$2}' $(MAKEFILE_LIST)
 	@echo ""
 	@echo "  ENV=dev (default, .env.dev, SQLite) | ENV=prod (.env.prod, Turso kogane-db: production)"
 

@@ -12,11 +12,11 @@ NestJS backend for expense intake from chat (Telegram first, WhatsApp later) wit
 
 ## Commands
 
-Tasks live in the `Makefile` + `makefiles/*.mk`, one file per group (`make help` lists them by group); `pnpm dev` = `make dev` with `.env.dev`; `ENV=dev` (default, `.env.dev`, SQLite `dev.db`) or `ENV=prod` (`.env.prod`, Turso `kogane-db`, production). `package.json` only keeps what Railway, CI and husky call.
+Tasks live in the `Makefile` + `makefiles/*.mk`, one file per group (`make help` lists them by group); `make dev` = API in watch mode + the tunnel of the `.env.dev` bot (`scripts/dev.sh`); `make dev:only` or `pnpm dev` = only the API; `ENV=dev` (default, `.env.dev`, SQLite `dev.db`) or `ENV=prod` (`.env.prod`, Turso `kogane-db`, production). `package.json` only keeps what Railway, CI and husky call.
 
 ```sh
 make deps [ENV=prod]     # after pulling: Prisma client + pending migrations + seed + bot command menu
-make dev [ENV=prod]      # watch mode
+make dev                 # API + bot tunnel (dev bot of .env.dev); make dev:only [ENV=prod] = only the API
 make migrate NAME=x     # new migration on local dev.db + prisma generate
 make db-deploy / seed / studio [ENV=prod]
 make telegram URL=https://…   # webhook + command menu
@@ -96,7 +96,7 @@ modules/<feature>/
 - One `ExpenseDraft` per expense; one question at a time (`pendingField`); the latest open file is the one text corrections apply to; open files expire after 30 minutes.
 - A message is a correction only if it answers the pending question or **starts with a correction keyword** (`monto`, `persona`, `cuota`, `tarjeta`, …; see `correction-parser.ts`). Anything else is a new expense. ✏️ Corregir sends the next message to the AI with the draft.
 - ✅ Guardar and 📝 Borrador edit the summary in place (no notification) and also send a short new message (`buildSavedNotice`, `buildParkedNotice`) so the chat shows and notifies the result.
-- Button data: `<action>:<draftId>[:<fieldCode>:<value>]` (`bot-action.codec.ts`), always ≤ 64 bytes (Telegram limit).
+- Button data: `<action>:<draftId>[:<fieldCode>:<value>]` (`bot-action.codec.ts`), always ≤ 64 bytes (Telegram limit). The help (`/start`, `/ayuda`, `buildHelpReply`) shows the everyday commands as buttons `cmd:<command>`, run by `handleCommand` as if typed.
 - `ExpenseSaverService` creates the record of the destination table and marks the draft as saved in one transaction (`ExpenseDBRepository.saveFromExpenseDraft`), `daily` included. Credit cards: day ≤ closing day → that month, otherwise the next one.
 - `modules/telegram`: the webhook (`POST /v1/telegram/webhook`) checks the secret header, answers 200 at once and processes the update in a per-chat in-memory queue (`KeyedQueue`). Chats outside `TELEGRAM_ALLOWED_CHAT_IDS` get a 200 and are ignored.
 - Errors (P8): `TelegramClient` retries 429 (waits `retry_after`, up to 30 s), 5xx and network errors twice, with a 10 s timeout. A failed edit is sent as a new message (the work is already done). On shutdown the chat queues get 10 s to finish; on startup, drafts the AI never finished (still `draft`, no data, no question) become `failed` and the chat is told to use `/borrador`. The same happens when they expire after 30 minutes.
@@ -120,7 +120,7 @@ modules/<feature>/
 
 ## Deployment (P10)
 
-- `Dockerfile` + `railway.json` (health `/v1/health`); `.github/workflows/deploy.yml` runs `unit-test.yml`, then migrations and seed (`scripts/db-deploy.ts`, `prisma/seed.ts`) and `scripts/telegram-setup.ts`; Railway deploys from GitHub itself, after CI ("Wait for CI"). `PUBLIC_URL`: prod `https://kogane-api.up.railway.app`, local via `make tunnel` (`scripts/tunnel.sh`, restores the prod webhook on exit). Guide: `docs/deploy.md`.
+- `Dockerfile` + `railway.json` (health `/v1/health`); `.github/workflows/deploy.yml` runs `unit-test.yml`, then migrations and seed (`scripts/db-deploy.ts`, `prisma/seed.ts`) and `scripts/telegram-setup.ts`; Railway deploys from GitHub itself, after CI ("Wait for CI"). `PUBLIC_URL`: prod `https://kogane-api.up.railway.app`, local via `make dev` / `make tunnel` (`scripts/tunnel.sh`, always `.env.dev`; restores the prod webhook on exit only when dev and prod share the bot token). Guide: `docs/deploy.md`.
 - The `image` job of `deploy.yml` runs `make docker` (`scripts/docker-smoke.sh`, also the local check): builds the image and requires `/v1/health` 200 and `/docs` 404 before migrating Turso. The Prisma generator pins `importFileExtension = ""`: during the Docker install there is no `tsconfig.json` yet and Prisma 7 would emit `./internal/class.ts` imports that crash on start. `.dockerignore` excludes `src/generated`.
 - `NODE_ENV=production` turns Swagger off (`isDocsEnabled`) and logs to JSON. Migrations must be backward compatible: they run before the new code.
 

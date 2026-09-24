@@ -12,7 +12,7 @@ import { KeyedQueue } from '@/commons/helpers/keyed-queue.helper'
 import { TelegramConfig } from '@/settings/settings.model'
 import { TelegramClient } from '@/providers/telegram/telegram.client'
 import { ConversationService } from '@/modules/conversation/conversation.service'
-import { TEXTS } from '@/modules/conversation/conversation.messages'
+import { TEXTS, withCommandButtons } from '@/modules/conversation/conversation.messages'
 import { MediaDownloaderRegistry } from '@/modules/conversation/media-downloader.registry'
 
 import { mapTelegramUpdate, MappedTelegramUpdate, toReplyMarkup } from './telegram.mapper'
@@ -175,7 +175,8 @@ export class TelegramService implements OnModuleInit, OnApplicationBootstrap, Be
 
       for (const { chatId, count } of affected) {
         if (!this.isAllowed(chatId)) continue
-        await this.telegramClient.sendMessage(chatId, TEXTS.interrupted(count)).catch(() => undefined)
+        const reply = withCommandButtons({ text: TEXTS.interrupted(count) })
+        await this.telegramClient.sendMessage(chatId, reply.text, toReplyMarkup(reply.buttons)).catch(() => undefined)
       }
       if (affected.length)
         this.logger.warn(`[recoverInterrupted] moved interrupted drafts of ${affected.length} chat(s) to failed`)

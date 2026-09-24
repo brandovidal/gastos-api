@@ -2,11 +2,15 @@
 
 .PHONY: telegram tunnel secret
 
-telegram: env-file ## Register webhook + command menu (URL=https://<public-url>, or PUBLIC_URL in the env file)
-	$(DOTENV) tsx scripts/telegram-setup.ts $(URL)
+# ENV=dev: the URL of the running `make tunnel` (.tunnel-url); without a tunnel it only shows the webhook (--info)
+TUNNEL_URL := $(shell cat .tunnel-url 2>/dev/null)
+TELEGRAM_ARGS := $(if $(URL),$(URL),$(if $(filter dev,$(ENV)),$(if $(TUNNEL_URL),$(TUNNEL_URL),--info)))
 
-tunnel: ## Local bot: cloudflared tunnel + webhook to it; Ctrl+C restores the production webhook (run pnpm dev apart)
-	./scripts/tunnel.sh $(ENV_FILE)
+telegram: env-file ## Webhook + command menu (URL=https://…, PUBLIC_URL of ENV=prod, or the running tunnel in dev)
+	$(DOTENV) tsx scripts/telegram-setup.ts $(TELEGRAM_ARGS)
+
+tunnel: ## Local bot (always .env.dev): cloudflared tunnel + webhook to it; run pnpm dev apart
+	./scripts/tunnel.sh
 
 secret: ## New random secret for API_KEY or TELEGRAM_WEBHOOK_SECRET
 	@openssl rand -hex 32

@@ -50,3 +50,6 @@ test/eval/ocr-report/
 
 # Local object storage when R2 is not configured (screenshots, voice notes)
 .data/
+
+# URL of the running make tunnel
+.tunnel-url

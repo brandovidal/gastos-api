@@ -24,6 +24,8 @@ export enum BotAction {
   SAVE_ALL = 'all',
   REVIEW_ALL = 'each',
   LATER_ALL = 'park',
+  // Command buttons of the help: "cmd:<command>" runs it as if it was typed
+  COMMAND = 'cmd',
 }
 
 export const BATCH_ACTIONS: string[] = [BotAction.SAVE_ALL, BotAction.REVIEW_ALL, BotAction.LATER_ALL]
