@@ -58,7 +58,7 @@ describe('BudgetService', () => {
       { categoryId: null, total: 50 },
     ])
     mockCategoryBudgetDB.findEffective.mockResolvedValue([
-      { categoryId: 'food', monthlyLimit: 500, alertThreshold: 80 },
+      { id: 'budget-food', categoryId: 'food', monthlyLimit: 500, alertThreshold: 80, month: null },
     ])
     mockMonthlyBudgetDB.findByMonth.mockResolvedValue({ salary: 4000, limitPercent: 90 })
     mockIncomeDB.findByMonth.mockResolvedValue([

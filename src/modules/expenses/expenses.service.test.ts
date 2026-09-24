@@ -1,5 +1,6 @@
 import { Logger } from '@nestjs/common'
 import { Test, TestingModule } from '@nestjs/testing'
+import { ZodValidationException } from 'nestjs-zod'
 import { vi } from 'vitest'
 
 import { ExpenseNotFoundException } from '@/commons/exceptions/expense/expense-not-found.exception'
@@ -8,7 +9,7 @@ import { StoredFilesService } from '@/modules/stored-files/stored-files.service'
 
 import { ExpensesService } from './expenses.service'
 
-const mockExpenseRecordDB = { delete: vi.fn() }
+const mockExpenseRecordDB = { delete: vi.fn(), create: vi.fn(), update: vi.fn(), findMany: vi.fn() }
 const mockStoredFiles = { release: vi.fn() }
 
 describe('ExpensesService', () => {
@@ -64,6 +65,51 @@ describe('ExpensesService', () => {
 
       await expect(service.delete(ExpenseResource.DAILY, 'x')).rejects.toThrow(ExpenseNotFoundException)
       expect(mockStoredFiles.release).not.toHaveBeenCalled()
+    })
+  })
+
+  // P7: the body is validated per table, and a PEN amount is also its amount in soles
+  describe('create and update', () => {
+    const daily = {
+      description: 'Almuerzo',
+      amount: 25,
+      personId: 'person-1',
+      paymentMethodId: 'method-1',
+      spentAt: '2026-09-22',
+    }
+
+    it('should validate the body of the table and fill amountInPen for soles', async () => {
+      await service.create(ExpenseResource.DAILY, daily)
+
+      expect(mockExpenseRecordDB.create).toHaveBeenCalledWith(
+        ExpenseResource.DAILY,
+        expect.objectContaining({ description: 'Almuerzo', currency: 'PEN', amountInPen: 25 }),
+      )
+    })
+
+    it('should reject a body that does not fit the table', () => {
+      expect(() => service.create(ExpenseResource.DAILY, { ...daily, amount: -5 })).toThrow(ZodValidationException)
+      expect(mockExpenseRecordDB.create).not.toHaveBeenCalled()
+    })
+
+    it('should update only the given columns', async () => {
+      await service.update(ExpenseResource.DAILY, 'expense-1', { amount: 30, currency: 'PEN' })
+
+      expect(mockExpenseRecordDB.update).toHaveBeenCalledWith(ExpenseResource.DAILY, 'expense-1', {
+        amount: 30,
+        currency: 'PEN',
+        amountInPen: 30,
+      })
+    })
+
+    it('should list with the filters of the query', async () => {
+      await service.findMany(ExpenseResource.FIXED_COST, { month: 9, year: 2026, personId: 'person-1' })
+
+      expect(mockExpenseRecordDB.findMany).toHaveBeenCalledWith(ExpenseResource.FIXED_COST, {
+        month: 9,
+        year: 2026,
+        personId: 'person-1',
+      })
     })
   })
 })

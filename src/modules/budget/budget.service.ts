@@ -28,6 +28,8 @@ export interface CategoryBudgetLine {
   budgetGroupId: string | null
   spent: number
   limit: number | null
+  budgetId: string | null // the CategoryBudget row that sets the limit (to edit or remove it)
+  limitMonthOnly: boolean // true: the limit is only for this month; false: for every month
   alertThreshold: number
   percent: number | null
   status: BudgetStatus | null // null without limit
@@ -122,6 +124,8 @@ export class BudgetService {
           budgetGroupId: category.budgetGroupId,
           spent: total,
           limit: limit?.monthlyLimit ?? null,
+          budgetId: limit?.id ?? null,
+          limitMonthOnly: limit?.month != null,
           alertThreshold,
           percent: limit ? percentOf(total, limit.monthlyLimit) : null,
           status: limit ? budgetStatus(total, limit.monthlyLimit, alertThreshold) : null,
@@ -138,6 +142,8 @@ export class BudgetService {
         budgetGroupId: null,
         spent: round2(uncategorized),
         limit: null,
+        budgetId: null,
+        limitMonthOnly: false,
         alertThreshold: DEFAULT_ALERT_THRESHOLD,
         percent: null,
         status: null,

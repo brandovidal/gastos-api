@@ -74,6 +74,8 @@ export const categoryBudgetLineSchema = z.object({
   budgetGroupId: z.string().nullable(),
   spent: z.number(),
   limit: z.number().nullable(),
+  budgetId: z.string().nullable().describe('The category budget row of the limit (PUT or DELETE it)'),
+  limitMonthOnly: z.boolean().describe('The limit is only for this month (otherwise for every month)'),
   alertThreshold: z.number(),
   percent: z.number().nullable(),
   status: z.enum(BudgetStatus).nullable().describe('null without limit'),

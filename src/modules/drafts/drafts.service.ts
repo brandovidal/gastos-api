@@ -6,7 +6,7 @@ import {
   ExpenseDraftChannel,
   ExpenseDraftInputType,
   ExpenseDraftStatus,
-  OPEN_EXPENSE_DRAFT_STATUSES,
+  NEW_EXPENSE_DRAFT_STATUSES,
   WEB_CHAT_ID,
 } from '@/commons/constants/expense-draft.constant'
 import { ExpenseDraftNotFoundException } from '@/commons/exceptions/expense-draft/expense-draft-not-found.exception'
@@ -25,7 +25,8 @@ import { DraftFieldsDto, DraftListQueryDto } from './dto/request/drafts.dto'
 import { DraftTab } from './validations/drafts.validation'
 
 const TAB_STATUSES: Record<DraftTab, ExpenseDraftStatus[]> = {
-  [DraftTab.REVIEW]: [...OPEN_EXPENSE_DRAFT_STATUSES, ExpenseDraftStatus.PENDING_REVIEW],
+  // an /editar copy in progress (editing) belongs to the chat, not to Borrador
+  [DraftTab.REVIEW]: [...NEW_EXPENSE_DRAFT_STATUSES, ExpenseDraftStatus.PENDING_REVIEW],
   [DraftTab.FAILED]: [ExpenseDraftStatus.FAILED],
   [DraftTab.DISCARDED]: [ExpenseDraftStatus.DISCARDED],
 }
