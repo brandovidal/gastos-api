@@ -4,6 +4,7 @@ import { vi } from 'vitest'
 
 import { WebhookStatus } from '@/commons/constants/telegram.constant'
 import { PrismaService } from '@/db/prisma/prisma.service'
+import { RedisService } from '@/providers/redis/redis.service'
 import { TelegramClient } from '@/providers/telegram/telegram.client'
 
 import { HealthController } from './health.controller'
@@ -15,6 +16,9 @@ const mockPrismaService = {
 const mockTelegramClient = {
   getWebhookInfo: vi.fn(),
 }
+const mockRedisService = {
+  isHealthy: vi.fn(),
+}
 
 describe('HealthController', () => {
   const build = async (botToken?: string) => {
@@ -23,6 +27,7 @@ describe('HealthController', () => {
       providers: [
         { provide: PrismaService, useValue: mockPrismaService },
         { provide: TelegramClient, useValue: mockTelegramClient },
+        { provide: RedisService, useValue: mockRedisService },
         { provide: ConfigService, useValue: new ConfigService({ telegram: { botToken, allowedChatIds: [] } }) },
       ],
     }).compile()
@@ -32,6 +37,7 @@ describe('HealthController', () => {
 
   beforeEach(() => {
     mockPrismaService.isHealthy.mockResolvedValue(true)
+    mockRedisService.isHealthy.mockResolvedValue(true)
     mockTelegramClient.getWebhookInfo.mockResolvedValue({
       url: 'https://x/v1/telegram/webhook',
       pending_update_count: 0,
@@ -47,8 +53,17 @@ describe('HealthController', () => {
       const response = await (await build('123:abc')).getHealth()
 
       expect(response.database).toBe('OK')
+      expect(response.redis).toBe('OK')
       expect(response.telegram).toEqual({ webhook: 'OK', pendingUpdates: 0, lastError: null, lastErrorAt: null })
       expect(healthSchema.safeParse(response).success).toBe(true)
+    })
+
+    it('should report Redis as DISABLED without REDIS_URL and DOWN when it does not answer (P20)', async () => {
+      mockRedisService.isHealthy.mockResolvedValueOnce(null).mockResolvedValueOnce(false)
+      const controller = await build('123:abc')
+
+      expect((await controller.getHealth()).redis).toBe('DISABLED')
+      expect((await controller.getHealth()).redis).toBe('DOWN')
     })
 
     it('should report the database as DOWN when it fails', async () => {

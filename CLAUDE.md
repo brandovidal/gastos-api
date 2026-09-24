@@ -8,7 +8,7 @@ NestJS backend for expense intake from chat (Telegram first, WhatsApp later) wit
 - Never `git commit` or `push` unless explicitly asked.
 - New dependencies: let pnpm pick a version allowed by `minimumReleaseAge` (use a range like `^2.0.0`); never add `minimumReleaseAgeExclude`. Packages with install scripts go in `allowBuilds` in `pnpm-workspace.yaml`.
 - Node 22 (`.node-version`), pnpm, NestJS 11 (`nestjs-zod` does not support Nest 12 yet), Prisma 7, Zod 4.
-- Personal, single-user app: prefer the simplest thing (no Redis, queues or multi-tenant).
+- Personal app: prefer the simplest thing. Redis is only for the reminders (P20, D87: BullMQ queues and the lists of the bell); Turso stays the source of truth and everything works without `REDIS_URL` (tests, CI). No multi-tenant until P23.
 
 ## Commands
 
@@ -16,7 +16,9 @@ Tasks live in the `Makefile` + `makefiles/*.mk`, one file per group (`make help`
 
 ```sh
 make deps [ENV=prod]     # after pulling: Prisma client + pending migrations + seed + bot command menu
-make dev                 # API + bot tunnel (dev bot of .env.dev); make dev:only [ENV=prod] = only the API
+make dev                 # local Redis + API + bot tunnel (dev bot of .env.dev); make dev:only [ENV=prod] = only the API
+make redis / redis-stop  # local Redis of the reminders (Docker, localhost:6379)
+make notify JOB=due-reminders [ENV=prod]   # run a reminders job now on the running API
 make migrate NAME=x     # new migration on local dev.db + prisma generate
 make db-deploy / seed / studio [ENV=prod]
 make telegram URL=https://…   # webhook + command menu
@@ -35,7 +37,7 @@ src/
   settings/                 configuration + typed models (settings.model.ts), read with ConfigService
   db/prisma/                PrismaService (libSQL adapter: file: locally, libsql:// on Turso)
   db/models/<entity>/       <entity>DB.repository.ts (+ test) · <entity>DB.module.ts · <entity>DB.dto.ts · <entity>DB.serializer.ts (only with JSON columns)
-  providers/                external clients: logger (pino), ai/<provider>, telegram
+  providers/                external clients: logger (pino), ai/<provider>, telegram, storage (R2), redis (optional)
   modules/<feature>/        controllers, services, dto, validations, mocks
   commons/                  constants · decorators · exceptions/<domain> · guards · helpers · serializers · types
 ```
@@ -70,7 +72,7 @@ modules/<feature>/
 - `aliases` in `Person` and `PaymentMethod` is a JSON array stored as a string.
 - Installments use the `n/m` format (`INSTALLMENT_REGEX`).
 - Catalogs live in `src/db/seed/catalog.seed.data.ts` (from the Notion boards). Edit that file and run `make seed` to add people, aliases, cards or categories; exactly one person should have `isDefault`.
-- Table names carry a prefix by use (`cat_`, `bud_`, `exp_`, `bot_`, `ai_`, `imp_`) through `@@map`; model names do not.
+- Table names carry a prefix by use (`cat_`, `bud_`, `exp_`, `bot_`, `ntf_`, `ai_`, `imp_`) through `@@map`; model names do not.
 - `ExpenseDraft` (`bot_expense_drafts`) is every expense received from a chat while the bot works on it. Its open row (`draft` or `awaiting_confirmation`) is the conversation state of that chat; there is no session table. `@@unique([channel, chatId, messageId, itemIndex])` makes webhook retries idempotent (`DuplicateExpenseDraftException`). Saving a draft creates the record of its destination table, linked by `draftId`.
 - `DailyExpense` (`exp_daily_expenses`) holds only confirmed day-to-day expenses ("gastos sin culpa").
 - Credit cards are `PaymentMethod` rows of type `credit_card` (with `code` and billing days); there is no card table. `showInBot` decides the quick replies. The payment method decides daily vs credit card (`applyPaymentMethodRule`).
@@ -85,7 +87,7 @@ modules/<feature>/
 - The AI picks catalog values by short refs (`p1`, `pm2`, `cc1`, `cat3`); `expense-extraction.resolver.ts` maps them to ids and computes `missingFields`. Never send database ids or secrets to the AI.
 - Simple corrections go through `correction-parser.ts` first; the AI is only called when it returns `null`.
 - Images (P4): a photo or `image/*` file becomes `ChannelMessageType.IMAGE`; the draft keeps `mediaFileId` + `mediaUniqueId` (same image sent again → no AI call) and the caption in `rawText`. The first download goes through `MediaDownloaderRegistry` (each channel registers its downloader); then the bytes are kept in R2 and the draft points to them with `fileId`.
-- Files (D58, `modules/stored-files`): **the database never stores bytes**. `bot_files` (`StoredFile`) keeps the R2 key and metadata: `<STORAGE_ENV>/finance/drafts/<yyyy-mm>/…` (`temporary`, 7 days) → `<env>/finance/expenses/<yyyy>/<mm>/…` (`kept`) when an expense is saved (`ExpenseSaverService` → `keep`, failure only logs). `StoredFilesCleanupTask` deletes expired ones daily (row stays `deleted`); an expired file makes the draft `failed` (`TEXTS.fileExpired`). Same `sha256` → the stored file is reused. Deleting an expense (`ExpensesService.delete`) releases its file only when no other expense or draft under review uses it (`countUses`). `STORAGE_ENV=dev|prod` always uses R2 (boot fails without keys); only `test` uses `LocalStorage`. Signed URLs for kogane-app last 10 min.
+- Files (D58, `modules/stored-files`): **the database never stores bytes**. `bot_files` (`StoredFile`) keeps the R2 key and metadata: `<STORAGE_ENV>/finance/drafts/<yyyy-mm>/…` (`temporary`, 7 days) → `<env>/finance/expenses/<yyyy>/<mm>/…` (`kept`) when an expense is saved (`ExpenseSaverService` → `keep`, failure only logs). The `files-cleanup` job (every 6 h, P20) deletes expired ones (row stays `deleted`); an expired file makes the draft `failed` (`TEXTS.fileExpired`). Same `sha256` → the stored file is reused. Deleting an expense (`ExpensesService.delete`) releases its file only when no other expense or draft under review uses it (`countUses`). `STORAGE_ENV=dev|prod` always uses R2 (boot fails without keys); only `test` uses `LocalStorage`. Signed URLs for kogane-app last 10 min.
 - Voice notes (P5): `ChannelMessageType.AUDIO` (≤ 60 s) → `ExpenseExtractionService.transcribe` (Whisper on Groq, logged as `transcribe`) → the transcription is stored in `rawText` and read like a typed message; the reply starts with "🎙️ Entendí: «…»". A retry from /borrador only transcribes again if `rawText` is empty.
 - Tests never call real APIs: mock `@google/genai` / `openai` with `vi.mock`.
 - Golden set (P9): `test/golden/extraction.golden.json`. When the prompt or schema changes, ask the user before running `make eval-ai CONFIRM=yes RECORD=1` (real AI, burns quota) so `test/fixtures/ai-responses.json` stays current; `conversation.integration-test.ts` replays those answers with the clock frozen on `recordedAt`. A new flow test needs its message in the golden set first.
@@ -114,6 +116,17 @@ modules/<feature>/
 - Replies that mention /borrador, /ultimos or /resumen get those commands as buttons (`withCommandButtons`, `cmd:<command>`); the help (`/start`, `/ayuda`) shows the everyday ones. `/deudas [persona]` offers 📥 Excel · 📄 PDF (`rep:<format>-<personId|all>`): the reply carries a `document` that Telegram sends with `sendDocument`; the web chat drops it (`withoutDocuments`).
 - Observability: `/uso` shows today's AI calls per model against 90 % of its free quota; `GET /v1/health` includes the webhook state from `getWebhookInfo`.
 
+## Reminders and notifications (P20, D86–D89)
+
+- `providers/redis` (`RedisService`, global): optional; without `REDIS_URL` it is null, no job is scheduled and the lists are read from the database (`/v1/health` shows `redis: DISABLED`). Railway: a Redis service with `maxmemory-policy noeviction` and "Serverless" off (`docs/deploy.md`).
+- `modules/notifications/notification-queue.service.ts` (`NotificationQueue`, global module): BullMQ queues `ntf-schedule` (one job scheduler per `NotificationJob`, cron in `America/Lima`, upserted on start; a job whose time passed while down runs when the process comes back) and `ntf-deliver` (Telegram, `jobId` = notification id, 5 attempts with exponential backoff). `requestRefresh()` rebuilds the upcoming list 30 s after the last change (BullMQ deduplication); `UpcomingRefreshInterceptor` calls it after every POST/PUT/PATCH/DELETE.
+- Jobs (`NotificationJobsService.run`, also `POST /v1/notifications/run/:job` and `make notify JOB=`): `recurring` day 1 06:00 (`RecurringExpensesService.generate`: pending rows, `lastGeneratedAt` = first day of the last month generated, never twice), `due-reminders` 09:00 (what closes or is due tomorrow and is unpaid), `daily-close` 21:00 (today's expenses, what is still due today, categories at 80 % / 100 % and cargos raros), `weekly` Sunday 20:00, `upcoming-refresh` hourly, `files-cleanup` every 6 h. Workers start in the API process (`NotificationWorkers`).
+- Every notice is one `Notification` row (`ntf_notifications`) with a unique `dedupeKey` (`due:<kind>:<ref>:<day>`, `daily:<day>`, `budget:<category>:<yyyy-mm>:<status>`, `anomaly:…`), so running a job twice sends nothing twice. `NotificationsService.notify` checks `ntf_settings` (defaults in `DEFAULT_NOTIFICATION_SETTINGS`: all on, the daily close only in the web): web off = saved already read; Telegram on = queued for delivery (sent at once without Redis) to the `TELEGRAM_ALLOWED_CHAT_IDS` chats until P23. Title and body are plain Spanish text (`notification.messages.ts`); Telegram escapes them and adds the buttons.
+- Redis lists (`NotificationCache`, never the source of truth: a missing list is rebuilt from the database): `ntf:upcoming` (sorted set, 45 days of `CalendarEvent`, `GET /v1/reminders`, `/calendario`), `ntf:recent` + `ntf:unread` (the bell; invalidated when something is read) and `ntf:await:<chatId>` (✏️ Editar monto, 10 min; in memory without Redis).
+- Cargos raros (`notification.rules.ts`, no AI): a card charge whose name matches a subscription (`sameMerchant`) with another price than its previous charge or the subscription; the same amount, method and merchant within 48 h; a monthly subscription unpaid 3 days after its due date with no card charge of its name. Only expenses registered in the last 2 days are checked.
+- `modules/calendar` (D89): `CalendarService.events(from, to)` computed from the tables (no table of its own): card closing and payment days (`statementDates`: the statement of month M closes on its closing day and is paid on the due day of M, or of M+1 when the due day comes first), `dueDate` of fixed costs, subscriptions and debts, and recurring expenses not generated yet. `installments(months)` adds the card installments per month, estimating the ones "por generar" of a series saved only up to some installment. `pay(refType, refId)` is ✅ Pagado for the bot and `POST /v1/calendar/pay` (card statement = its unpaid rows).
+- Bot (`NotificationsBotService`, called by `ConversationService`): buttons `ntf:<notificationId>:<p|e|m>` (✅ Pagado · ✏️ Editar monto / Otro monto · 🔕 Silenciar), `ntfs:<kind>` for `/avisos`; `/calendario` (14 days) and `/cuotas` (3 months). An amount typed after ✏️ is taken before anything else; any other text drops the wait.
+
 ## REST API for kogane-app (P7)
 
 - Every route uses `@ApiRest(tag)` (`commons/decorators/api-rest.decorator.ts`): Swagger tag, `x-api-key` and `ApiKeyGuard` (constant-time comparison).
@@ -124,6 +137,7 @@ modules/<feature>/
 - `modules/debts` (P17, D60): `/v1/debts` CRUD (`installments: n` creates one row per month), `GET /v1/debts/summary` (per person: owed to me · I owe · net · late · due this month) and `POST|DELETE /v1/debts/:id/payments` (422 above the balance).
 - `modules/budget` (P19): `BudgetService` (month budget, spending per category and group, surplus D65 = salary + extra incomes − spent, history, alert on save), counting only the expenses of the default person (D71, `PersonDBRepository.findDefault`) on `budget.calculator.ts` (pure). `/v1/incomes` CRUD (`bud_incomes`, extras only; the salary stays in `bud_monthly_budgets`), `GET|PUT /v1/category-budgets` + `DELETE /:id` (`CategoryBudget`: row without month = every month, with month replaces it; SQLite keeps NULLs distinct in unique indexes, so the general row is upserted by hand).
 - `modules/summary`: month totals by destination and person plus `BudgetService.month` (a month without salary proposes the latest one with `budget.isProposal`, saved with `PUT /v1/summary/budget`); `GET /v1/summary/history?months=6`. Spending leaves subscriptions out (D46).
+- `modules/notifications` + `modules/calendar` (P20): `GET /v1/notifications` (history), `/recent` and `/unread-count` (the bell), `PATCH /:id/read`, `POST /read-all`, `GET|PUT /settings`, `POST /run/:job`; `GET /v1/reminders?days`; `GET /v1/calendar?from&to` (≤ 100 days), `GET /v1/calendar/installments?months`, `POST /v1/calendar/pay`; `POST /v1/recurring-expenses/generate`.
 - `modules/reports` (D39): `GET /v1/reports/debts?format=xlsx|pdf[&personId]` with `exceljs` and `pdfkit` (Resumen + Detalle por cuota). `ResponseInterceptor` lets `StreamableFile` through without the JSON envelope; `app.swagger.test.ts` accepts the file types as documented content.
 
 ## Deployment (P10)

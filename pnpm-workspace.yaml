@@ -8,6 +8,8 @@ allowBuilds:
   '@scarf/scarf': false
   '@swc/core': true
   esbuild: true
+  # optional native speedup of msgpackr (BullMQ); the JS fallback is enough for a few jobs a day
+  msgpackr-extract: false
   prisma: true
   protobufjs: true
   # only an OpenCollective donation message; OCR works without it

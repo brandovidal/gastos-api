@@ -5,6 +5,7 @@ import { ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swagger'
 import { ResponseMessage } from '@/commons/decorators/response-message.decorator'
 import { WEBHOOK_RECENT_ERROR_MS, WebhookStatus } from '@/commons/constants/telegram.constant'
 import { PrismaService } from '@/db/prisma/prisma.service'
+import { RedisService } from '@/providers/redis/redis.service'
 import { TelegramClient } from '@/providers/telegram/telegram.client'
 import { TelegramConfig } from '@/settings/settings.model'
 
@@ -18,18 +19,24 @@ export class HealthController {
     private readonly prismaService: PrismaService,
     private readonly telegramClient: TelegramClient,
     private readonly configService: ConfigService,
+    private readonly redisService: RedisService,
   ) {}
 
   @Get()
-  @ApiOperation({ summary: 'Database and Telegram webhook status (always 200 while the process is up)' })
+  @ApiOperation({ summary: 'Database, Redis and Telegram webhook status (always 200 while the process is up)' })
   @ApiOkResponse({ type: HealthResponseDto })
   @ResponseMessage('HEALTH_SUCCESS', 'Service is healthy')
   async getHealth() {
-    const [database, telegram] = await Promise.all([this.prismaService.isHealthy(), this.getTelegramHealth()])
+    const [database, redis, telegram] = await Promise.all([
+      this.prismaService.isHealthy(),
+      this.redisService.isHealthy(),
+      this.getTelegramHealth(),
+    ])
 
     return {
       status: 'OK',
       database: database ? 'OK' : 'DOWN',
+      redis: redis === null ? 'DISABLED' : redis ? 'OK' : 'DOWN',
       telegram,
       timestamp: new Date().toISOString(),
     }

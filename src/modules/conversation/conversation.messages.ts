@@ -208,6 +208,10 @@ const COMMAND_BUTTON_LABELS: Partial<Record<BotCommand, string>> = {
   [BotCommand.SUMMARY]: '📊 Resumen',
   [BotCommand.USAGE]: '🤖 Uso de la AI',
   [BotCommand.CANCEL]: '✖️ Cancelar',
+  [BotCommand.BUDGET]: '💰 Presupuesto',
+  [BotCommand.CALENDAR]: '📅 Calendario',
+  [BotCommand.INSTALLMENTS]: '💳 Cuotas',
+  [BotCommand.ALERTS]: '🔔 Avisos',
 }
 
 const commandButton = (command: BotCommand) =>

@@ -52,6 +52,8 @@ describe('Prisma schema (integration)', () => {
       'exp_fixed_costs',
       'exp_recurring_expenses',
       'exp_subscriptions',
+      'ntf_notifications',
+      'ntf_settings',
     ])
   })
 

@@ -12,6 +12,7 @@ import { PrismaService } from '@/db/prisma/prisma.service'
 import { HealthController } from '@/modules/health/health.controller'
 import { TelegramController } from '@/modules/telegram/telegram.controller'
 import { TelegramService } from '@/modules/telegram/telegram.service'
+import { RedisService } from '@/providers/redis/redis.service'
 import { TelegramClient } from '@/providers/telegram/telegram.client'
 
 // kogane-app and the Telegram webhook call these URLs by hand, so a route that moves out of /v1 is an outage.
@@ -24,6 +25,7 @@ describe('Route table', () => {
       providers: [
         { provide: PrismaService, useValue: { isHealthy: vi.fn().mockResolvedValue(true) } },
         { provide: TelegramClient, useValue: { getWebhookInfo: vi.fn() } },
+        { provide: RedisService, useValue: { isHealthy: vi.fn().mockResolvedValue(null) } },
         { provide: TelegramService, useValue: { enqueue: vi.fn() } },
         { provide: ConfigService, useValue: new ConfigService({ telegram: { allowedChatIds: [] } }) },
       ],

@@ -37,6 +37,10 @@ export default () => ({
     enabled: process.env.OCR_ENABLED !== 'false',
     cacheDir: process.env.OCR_CACHE_DIR ?? join(tmpdir(), 'kogane-tesseract'),
   },
+  // Queues and lists of the reminders (P20, D87). Without it the scheduled jobs do not run (tests, CI)
+  redis: {
+    url: process.env.REDIS_URL,
+  },
   db: {
     url: process.env.DATABASE_URL,
     authToken: process.env.DATABASE_AUTH_TOKEN,

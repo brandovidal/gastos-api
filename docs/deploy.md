@@ -59,6 +59,7 @@ El `Makefile` define las variables comunes (`ENV`, archivo `.env.<ENV>`) e inclu
 | `makefiles/quality.mk` | `lint`, `format`, `build`, `test`, `test-integration`, `check` | `make check` es lo mismo que el job `check`                                                       |
 | `makefiles/eval.mk`    | `eval-replay`, `eval-ai`                                       | no entra al despliegue; `eval-ai` gasta cuota y pide `CONFIRM=yes`                                |
 | `makefiles/docker.mk`  | `docker`                                                       | prueba local de la imagen de Railway                                                              |
+| `makefiles/notifications.mk` | `redis`, `redis-stop`, `notify`                          | Redis local de los avisos; `make notify JOB=… ENV=prod` corre un job en producción                |
 
 `package.json` solo tiene `pnpm dev` y lo que llaman Railway (`build`, `start:prod`), el CI (`test:ci`, `test:integration`) y husky (`lint`, `format`).
 
@@ -87,10 +88,23 @@ El `Makefile` define las variables comunes (`ENV`, archivo `.env.<ENV>`) e inclu
 | `PUBLIC_URL`                                                             | la URL del paso 2                                                            |
 | `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_BUCKET` | Cloudflare R2 (capturas y notas de voz, D54); ver la sección 4b              |
 | `STORAGE_ENV`                                                            | `prod`: carpeta de producción en el bucket (D58). Sin ella la API no arranca |
+| `REDIS_URL`                                                              | `${{Redis.REDIS_URL}}` (referencia al servicio Redis, sección 2b). Sin ella no hay avisos |
 
 `PORT` lo pone Railway. El resto de variables de `.env.example` tienen valores por defecto. Entre ellas `OCR_ENABLED` (por defecto `true`: las capturas bancarias pasan primero por el OCR local, P21) y `OCR_CACHE_DIR` (por defecto la carpeta temporal del sistema). El modelo de español (~15 MB) se descarga de jsDelivr con la primera captura después de cada deploy. Con `OCR_ENABLED=false` todas las capturas van a la AI. Pega los valores **sin comillas**.
 
 `railway.json` define el build con el `Dockerfile` y el health check `/v1/health`. Plan Hobby: 5 USD/mes con 5 USD de uso incluido.
+
+## 2b. Redis (avisos y notificaciones, P20)
+
+Los avisos (vencimientos, cierre del día, resumen del domingo, recurrentes) corren con BullMQ sobre Redis (D87). Turso sigue guardando todo; Redis solo tiene las colas y las listas de la campana.
+
+1. En el proyecto de Railway: **New → Database → Add Redis**. Queda en la red privada; no le generes dominio público.
+2. Redis de Railway ya viene con `maxmemory-policy noeviction`, que BullMQ necesita para no perder claves (verificado 2026-09-24, [Railway](https://station.railway.com/questions/changing-a-policy-on-redis-instance-12d9a9f6)). Para que las colas sobrevivan un reinicio, en **Settings → Deploy → Custom Start Command** del servicio Redis pon `redis-server --appendonly yes --appendfsync everysec --maxmemory-policy noeviction` ([guía de Railway](https://docs.railway.com/guides/redis-cache-vs-store)).
+3. En `kogane-api`, **Variables**: `REDIS_URL=${{Redis.REDIS_URL}}`.
+4. En `kogane-api`, **Settings → Serverless**: debe quedar **apagado**. Encendido, Railway duerme el servicio a los 10 minutos sin tráfico y los avisos no salen.
+5. Costo: Redis cobra su RAM dentro de los 5 USD del plan Hobby (uno chico, centavos a 1–2 USD al mes).
+
+Verificación: `/v1/health` muestra `redis: OK` y el log dice `reminders scheduled`. Para probar sin esperar la hora: `make notify JOB=due-reminders ENV=prod` (no repite avisos ya enviados). En local, `make dev` levanta Redis en Docker (`make redis`) y `.env.dev` usa `REDIS_URL=redis://localhost:6379`.
 
 ## 3. GitHub
 
@@ -143,7 +157,7 @@ Plan gratis: 10 GB, 1 M escrituras y 10 M lecturas al mes, sin cobro de salida.
 
 ## 6. Verificación
 
-- `curl https://…/v1/health` → `database: OK` y `telegram.webhook: OK`.
+- `curl https://…/v1/health` → `database: OK`, `redis: OK` y `telegram.webhook: OK`.
 - `https://…/docs` → **404** (Swagger apagado en producción).
 - Desde Telegram: un texto, una foto de Yape y una nota de voz se guardan; `/uso` muestra la cuota del día y la línea "OCR local" después de la primera captura bancaria.
 - Un álbum de 2 o más capturas responde con una sola lista (✅ Guardar todos · 📝 Revisar uno por uno · 📝 Borrador).

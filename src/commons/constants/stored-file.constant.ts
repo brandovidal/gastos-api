@@ -20,9 +20,7 @@ export const FILES_ROOT = 'finance'
 export const DRAFTS_FOLDER = 'drafts'
 export const EXPENSES_FOLDER = 'expenses'
 
-// The daily cleanup (D44) also runs a few minutes after each start
-export const FILE_CLEANUP_INTERVAL_MS = 24 * 60 * 60_000
-export const FILE_CLEANUP_FIRST_RUN_MS = 5 * 60_000
+// Files deleted per run of the files-cleanup job (every 6 h, NotificationJob.FILES_CLEANUP)
 export const FILE_CLEANUP_BATCH = 100
 
 // Signed links to see a file in kogane-app (R2 allows up to 7 days)

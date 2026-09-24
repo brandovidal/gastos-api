@@ -39,3 +39,18 @@ export interface CategorySpentDbDto {
   categoryId: string | null
   total: number
 }
+
+// A day-to-day or card expense as the reminders read it (P20): daily close, weekly summary, duplicated charges
+export interface ChargeDbDto {
+  id: string
+  source: 'daily' | 'card'
+  description: string
+  amount: number
+  othersShare: number
+  currency: string
+  amountInPen: number | null
+  paymentMethodId: string | null
+  personId: string
+  date: Date // spent day, or the processed day of a card expense (the day it was registered when unknown)
+  createdAt: Date
+}

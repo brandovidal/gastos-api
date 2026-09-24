@@ -35,7 +35,13 @@ export enum BotAction {
   SHARE = 'shr',
   // /editar (D76): "eds:<draftId>" of the saved expense to edit
   EDIT_SAVED = 'eds',
+  // Reminders (P20, D86): "ntf:<notificationId>:<NotificationOp>" (✅ Pagado · ✏️ Editar monto · 🔕 Silenciar)
+  NOTIFY = 'ntf',
+  // /avisos: "ntfs:<NotificationKind>" turns that kind on or off in Telegram
+  NOTIFY_SETTING = 'ntfs',
 }
+
+export const NOTIFICATION_ACTIONS: string[] = [BotAction.NOTIFY, BotAction.NOTIFY_SETTING]
 
 export const BATCH_ACTIONS: string[] = [BotAction.SAVE_ALL, BotAction.REVIEW_ALL, BotAction.LATER_ALL]
 
@@ -59,6 +65,9 @@ export enum BotCommand {
   BUDGET = 'presupuesto', // /presupuesto [mes] [año] (P19)
   FORECAST = 'pronostico', // /pronostico: this month at the current pace (P19)
   EDIT = 'editar', // /editar <texto>: find a saved expense and edit it (D76)
+  ALERTS = 'avisos', // /avisos: which reminders reach Telegram (P20)
+  CALENDAR = 'calendario', // /calendario: what is due in the next 14 days (P20)
+  INSTALLMENTS = 'cuotas', // /cuotas: card installments of the next 3 months (P20)
 }
 
 // Descriptions shown in the Telegram command menu (Spanish: user-facing)
@@ -75,6 +84,9 @@ export const BOT_COMMAND_DESCRIPTIONS: Record<BotCommand, string> = {
   [BotCommand.BUDGET]: 'Gastado vs límite por categoría y excedente',
   [BotCommand.FORECAST]: 'A este ritmo, qué categorías se pasan',
   [BotCommand.EDIT]: 'Buscar un gasto guardado y editarlo',
+  [BotCommand.ALERTS]: 'Qué avisos te llegan por Telegram',
+  [BotCommand.CALENDAR]: 'Pagos de los próximos 14 días',
+  [BotCommand.INSTALLMENTS]: 'Cuotas de tarjeta de los próximos meses',
 }
 
 export const CALLBACK_SEPARATOR = ':'

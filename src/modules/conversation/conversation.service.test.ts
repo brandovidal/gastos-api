@@ -29,6 +29,7 @@ import { DebtsService } from '@/modules/debts/debts.service'
 import { RecognitionService } from '@/modules/recognition/recognition.service'
 import { BudgetService } from '@/modules/budget/budget.service'
 import { ReportsService } from '@/modules/reports/reports.service'
+import { NotificationsBotService } from '@/modules/notifications/notifications-bot.service'
 import { RecognizedScreen } from '@/modules/recognition/recognition.templates'
 
 import { ConversationService } from './conversation.service'
@@ -90,6 +91,13 @@ const mockExtraction = {
 const mockSaver = { save: vi.fn() }
 const mockBudget = { alertAfterSave: vi.fn(), month: vi.fn() }
 const mockReports = { debts: vi.fn() }
+const mockNotificationsBot = {
+  answerAmount: vi.fn(),
+  handleAction: vi.fn(),
+  settingsReply: vi.fn(),
+  calendarReply: vi.fn(),
+  installmentsReply: vi.fn(),
+}
 const mockPaymentMethodDB = { create: vi.fn(), updateBillingDays: vi.fn() }
 
 const action = (name: BotAction, field?: string, value?: string): ChannelMessage => ({
@@ -126,12 +134,14 @@ describe('ConversationService', () => {
         { provide: RecognitionService, useValue: mockRecognition },
         { provide: BudgetService, useValue: mockBudget },
         { provide: ReportsService, useValue: mockReports },
+        { provide: NotificationsBotService, useValue: mockNotificationsBot },
       ],
     }).compile()
 
     service = module.get<ConversationService>(ConversationService)
 
     mockExtraction.loadCatalog.mockResolvedValue(mockCatalog)
+    mockNotificationsBot.answerAmount.mockResolvedValue(null)
     mockSaver.save.mockResolvedValue({ id: 'expense-1', installments: null, budget: null })
     mockBudget.alertAfterSave.mockResolvedValue(null)
     mockExpenseDraftDB.findOpenByChat.mockResolvedValue(null)
@@ -1903,6 +1913,49 @@ describe('ConversationService', () => {
 
       expect(result.replies).toEqual([])
       expect(mockExpenseDraftDB.createEditCopy).not.toHaveBeenCalled()
+    })
+  })
+  describe('reminders (P20)', () => {
+    it('should hand the buttons of a notice and of /avisos to the notifications', async () => {
+      const result = { replies: [{ text: 'ok', edit: true }], notice: '✅ Pagado' }
+      mockNotificationsBot.handleAction.mockResolvedValue(result)
+      const payload = { name: BotAction.NOTIFY, draftId: 'n1', value: 'p' }
+
+      const answer = await service.handle({ ...action(BotAction.NOTIFY), action: payload })
+
+      expect(mockNotificationsBot.handleAction).toHaveBeenCalledWith(CHAT_ID, payload)
+      expect(answer).toEqual(result)
+      expect(mockExpenseDraftDB.findById).not.toHaveBeenCalled()
+    })
+
+    it('should answer /avisos, /calendario and /cuotas', async () => {
+      mockNotificationsBot.settingsReply.mockResolvedValue({ text: 'avisos' })
+      mockNotificationsBot.calendarReply.mockResolvedValue({ text: 'calendario' })
+      mockNotificationsBot.installmentsReply.mockResolvedValue({ text: 'cuotas' })
+
+      const texts = await Promise.all(
+        [BotCommand.ALERTS, BotCommand.CALENDAR, BotCommand.INSTALLMENTS].map(
+          async (name) => (await service.handle(command(name))).replies[0].text,
+        ),
+      )
+
+      expect(texts).toEqual(['avisos', 'calendario', 'cuotas'])
+    })
+
+    it('should take the amount asked by ✏️ Editar monto before reading a new expense', async () => {
+      mockNotificationsBot.answerAmount.mockResolvedValue([{ text: '✅ Luz: el monto ahora es S/ 130.00.' }])
+
+      const { replies } = await service.handle({
+        channel: ExpenseDraftChannel.TELEGRAM,
+        chatId: CHAT_ID,
+        messageId: '90',
+        type: ChannelMessageType.TEXT,
+        text: '130',
+      })
+
+      expect(mockNotificationsBot.answerAmount).toHaveBeenCalledWith(CHAT_ID, '130')
+      expect(replies).toEqual([{ text: '✅ Luz: el monto ahora es S/ 130.00.' }])
+      expect(mockExpenseDraftDB.findOpenByChat).not.toHaveBeenCalled()
     })
   })
 })

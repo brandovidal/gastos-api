@@ -23,4 +23,4 @@ help: ## Show the available tasks by group
 env-file:
 	@test -f $(ENV_FILE) || (echo "Missing $(ENV_FILE): copy .env.example"; exit 1)
 
-include makefiles/app.mk makefiles/db.mk makefiles/bot.mk makefiles/quality.mk makefiles/eval.mk makefiles/recognition.mk makefiles/docker.mk
+include makefiles/app.mk makefiles/db.mk makefiles/bot.mk makefiles/quality.mk makefiles/eval.mk makefiles/recognition.mk makefiles/docker.mk makefiles/notifications.mk

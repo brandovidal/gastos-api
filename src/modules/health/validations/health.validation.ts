@@ -14,6 +14,7 @@ export const telegramHealthSchema = z.object({
 export const healthSchema = z.object({
   status: z.literal('OK'),
   database: z.enum(['OK', 'DOWN']),
+  redis: z.enum(['OK', 'DOWN', 'DISABLED']).describe('Reminders queues (P20); DISABLED without REDIS_URL'),
   telegram: telegramHealthSchema,
   timestamp: z.iso.datetime(),
 })

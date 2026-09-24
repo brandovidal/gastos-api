@@ -73,6 +73,20 @@ describe('bot action codec', () => {
     expect(decodeBotAction(`shr:${FILE_ID}`)).toBeNull()
   })
 
+  it('should round-trip the buttons of a reminder and of /avisos (P20)', () => {
+    const payload = { name: BotAction.NOTIFY, draftId: FILE_ID, value: 'p' }
+    const data = encodeBotAction(payload)
+
+    expect(data).toBe(`ntf:${FILE_ID}:p`)
+    expect(Buffer.byteLength(data)).toBeLessThanOrEqual(64)
+    expect(decodeBotAction(data)).toEqual(payload)
+    expect(decodeBotAction(`ntf:${FILE_ID}`)).toBeNull()
+    expect(decodeBotAction(encodeBotAction({ name: BotAction.NOTIFY_SETTING, draftId: 'daily_close' }))).toEqual({
+      name: BotAction.NOTIFY_SETTING,
+      draftId: 'daily_close',
+    })
+  })
+
   it.each(['', 'unknown:id', 'ok', `set:${FILE_ID}`, `set:${FILE_ID}:zz:value`, 'payp:batch'])(
     'should reject "%s"',
     (data) => {

@@ -23,6 +23,10 @@ export interface OcrConfig {
   cacheDir: string // where tesseract.js keeps the Spanish model (downloaded once)
 }
 
+export interface RedisConfig {
+  url?: string
+}
+
 export interface DatabaseConfig {
   url: string
   authToken?: string

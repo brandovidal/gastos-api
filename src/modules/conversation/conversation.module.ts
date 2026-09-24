@@ -9,6 +9,7 @@ import { DebtsModule } from '@/modules/debts/debts.module'
 import { RecognitionModule } from '@/modules/recognition/recognition.module'
 import { BudgetModule } from '@/modules/budget/budget.module'
 import { ReportsModule } from '@/modules/reports/reports.module'
+import { NotificationsModule } from '@/modules/notifications/notifications.module'
 
 import { ConversationService } from './conversation.service'
 import { ExpenseSaverService } from './expense-saver.service'
@@ -25,6 +26,7 @@ import { MediaDownloaderRegistry } from './media-downloader.registry'
     RecognitionModule,
     BudgetModule,
     ReportsModule,
+    NotificationsModule,
   ],
   providers: [ConversationService, ExpenseSaverService, MediaDownloaderRegistry],
   exports: [ConversationService, ExpenseSaverService, MediaDownloaderRegistry],

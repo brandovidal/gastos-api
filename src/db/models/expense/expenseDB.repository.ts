@@ -6,9 +6,42 @@ import { Currency, ExpenseDestination } from '@/commons/constants/expense.consta
 import { ExpenseDraftStatus } from '@/commons/constants/expense-draft.constant'
 import { SavedExpenseLockedException } from '@/commons/exceptions/expense/saved-expense-locked.exception'
 
-import { CategorySpentDbDto, MonthlyTotalDbDto, SaveExpenseDbDto } from './expenseDB.dto'
+import { CategorySpentDbDto, ChargeDbDto, MonthlyTotalDbDto, SaveExpenseDbDto } from './expenseDB.dto'
 
 type Transaction = Parameters<Parameters<PrismaService['$transaction']>[0]>[0]
+
+const CHARGE_FIELDS = {
+  id: true,
+  description: true,
+  amount: true,
+  othersShare: true,
+  currency: true,
+  amountInPen: true,
+  paymentMethodId: true,
+  personId: true,
+  createdAt: true,
+} as const
+
+const CHARGE_SELECT = {
+  daily: { ...CHARGE_FIELDS, spentAt: true },
+  card: { ...CHARGE_FIELDS, processDate: true },
+} as const
+
+type ChargeFields = Omit<ChargeDbDto, 'source' | 'date'>
+
+function toCharges(
+  daily: (ChargeFields & { spentAt: Date })[],
+  cards: (ChargeFields & { processDate: Date | null })[],
+) {
+  return [
+    ...daily.map(({ spentAt, ...row }): ChargeDbDto => ({ ...row, source: 'daily', date: spentAt })),
+    ...cards.map(({ processDate, ...row }): ChargeDbDto => ({
+      ...row,
+      source: 'card',
+      date: processDate ?? row.createdAt,
+    })),
+  ]
+}
 
 @Injectable()
 export class ExpenseDBRepository {
@@ -117,6 +150,29 @@ export class ExpenseDBRepository {
         count: row._count._all,
       })),
     ]
+  }
+
+  // Day-to-day and card expenses of the days [from, to) (P20: daily close and weekly summary)
+  async findChargesBetween(from: Date, to: Date): Promise<ChargeDbDto[]> {
+    const range = { gte: from, lt: to }
+    const [daily, cards] = await Promise.all([
+      this.prisma.dailyExpense.findMany({ where: { spentAt: range }, select: CHARGE_SELECT.daily }),
+      this.prisma.creditCardExpense.findMany({
+        where: { OR: [{ processDate: range }, { processDate: null, createdAt: range }] },
+        select: CHARGE_SELECT.card,
+      }),
+    ])
+    return toCharges(daily, cards)
+  }
+
+  // Day-to-day and card expenses registered since that instant (P20: duplicated charges, price changes)
+  async findChargesCreatedSince(since: Date): Promise<ChargeDbDto[]> {
+    const where = { createdAt: { gte: since } }
+    const [daily, cards] = await Promise.all([
+      this.prisma.dailyExpense.findMany({ where, select: CHARGE_SELECT.daily }),
+      this.prisma.creditCardExpense.findMany({ where, select: CHARGE_SELECT.card }),
+    ])
+    return toCharges(daily, cards)
   }
 
   // P21 reconciliation: card expenses bought (processDate) in a month, in soles

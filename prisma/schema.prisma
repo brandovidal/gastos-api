@@ -1,7 +1,8 @@
 // Data model: sections 2 and 8 of personal/docs/plans/2026-09-22-gastos-bot-ai-design.md
 // SQLite/libSQL has no native enums: string columns are validated with the enums in
 // src/commons/constants/*.constant.ts.
-// Table prefixes by use: cat_ catalogs · bud_ budget · exp_ expenses · bot_ chat bot · ai_ AI usage · imp_ imports (P14)
+// Table prefixes by use: cat_ catalogs · bud_ budget · exp_ expenses · bot_ chat bot · ntf_ notifications · ai_ AI usage ·
+// imp_ imports (P14)
 
 generator client {
   provider            = "prisma-client"
@@ -473,4 +474,39 @@ model AiRequestLog {
 
   @@index([provider, model, createdAt])
   @@map("ai_request_logs")
+}
+
+// ==================== NOTIFICATIONS (ntf_) ====================
+// Reminders and alerts of P20 (D86, D87): the scheduled jobs create one row per notice; Telegram and the web bell
+// deliver it. The rows are the history; Redis only keeps the queues and the lists for the bell.
+
+model Notification {
+  id                String    @id @default(cuid())
+  kind              String // NotificationKind
+  title             String
+  body              String
+  amount            Float?
+  refType           String? // NotificationRefType: what ✅ Pagado and the web link act on
+  refId             String?
+  eventDate         DateTime? // the day it is about (due date, closing day…), 00:00 UTC
+  dedupeKey         String    @unique // the same notice is never created twice, even if a job runs again
+  readAt            DateTime? // read in the web or answered in Telegram
+  telegramChatId    String?
+  telegramMessageId String?
+  telegramSentAt    DateTime?
+  createdAt         DateTime  @default(now())
+
+  @@index([readAt])
+  @@index([kind, createdAt])
+  @@map("ntf_notifications")
+}
+
+// Which kinds go to each channel (/avisos, Configuración ▸ Notificaciones). A kind without a row uses the defaults
+model NotificationSetting {
+  kind      String   @id // NotificationKind
+  telegram  Boolean
+  web       Boolean
+  updatedAt DateTime @updatedAt
+
+  @@map("ntf_settings")
 }

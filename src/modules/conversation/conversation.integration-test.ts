@@ -10,6 +10,8 @@ import { BotCommand, ChannelMessageType } from '@/commons/constants/conversation
 import { ExpenseDraftChannel, ExpenseDraftStatus } from '@/commons/constants/expense-draft.constant'
 import { StoredFileStatus } from '@/commons/constants/stored-file.constant'
 import { PrismaModule } from '@/db/prisma/prisma.module'
+import { RedisModule } from '@/providers/redis/redis.module'
+import { NotificationQueueModule } from '@/modules/notifications/notification-queue.module'
 import { PrismaService } from '@/db/prisma/prisma.service'
 import { seedCatalogs } from '@/db/seed/catalog.seed'
 import { ExpenseExtractionService } from '@/modules/expense-extraction/expense-extraction.service'
@@ -154,7 +156,10 @@ describe('Conversation flows (integration)', () => {
     vi.useFakeTimers({ toFake: ['Date'] })
     vi.setSystemTime(new Date(`${fixtures.recordedAt}T17:00:00.000Z`))
 
-    moduleRef = await Test.createTestingModule({ imports: [SettingsModule, PrismaModule, ConversationModule] })
+    moduleRef = await Test.createTestingModule({
+      // Redis stays off without REDIS_URL (.env.test): reminders are unit tested
+      imports: [SettingsModule, PrismaModule, RedisModule, NotificationQueueModule, ConversationModule],
+    })
       .overrideProvider(AiExtractorProviderStrategy)
       .useValue({ getProvider: (type: AiProvider) => new RecordedAiProvider(type) })
       // Whisper stand-in: every voice note says a sentence of the golden set

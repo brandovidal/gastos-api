@@ -10,6 +10,7 @@ import {
   ChannelMessageType,
   BATCH_ACTIONS,
   DEBT_PAYMENT_ACTIONS,
+  NOTIFICATION_ACTIONS,
   FREE_CORRECTION_FIELD,
   DRAFTS_LIMIT,
   MAX_AUDIO_SECONDS,
@@ -48,6 +49,7 @@ import { DebtsService } from '@/modules/debts/debts.service'
 import { RecognitionService } from '@/modules/recognition/recognition.service'
 import { BudgetService } from '@/modules/budget/budget.service'
 import { ReportsService } from '@/modules/reports/reports.service'
+import { NotificationsBotService } from '@/modules/notifications/notifications-bot.service'
 import { ReportFormat } from '@/commons/constants/report.constant'
 import { RecognitionResult, RecognizedScreen } from '@/modules/recognition/recognition.templates'
 import { StoredFilesService } from '@/modules/stored-files/stored-files.service'
@@ -166,6 +168,7 @@ export class ConversationService {
     private readonly recognitionService: RecognitionService,
     private readonly budgetService: BudgetService,
     private readonly reportsService: ReportsService,
+    private readonly notificationsBotService: NotificationsBotService,
   ) {}
 
   async handle(message: ChannelMessage): Promise<ConversationResult> {
@@ -190,6 +193,10 @@ export class ConversationService {
   private async handleText(message: ChannelMessage): Promise<BotReply[]> {
     const text = message.text?.trim()
     if (!text) return []
+
+    // The amount asked by ✏️ Editar monto of a reminder (P20); any other text drops that wait
+    const amountReply = await this.notificationsBotService.answerAmount(message.chatId, text)
+    if (amountReply) return amountReply
 
     const active = await this.findActive(message)
 
@@ -656,6 +663,9 @@ export class ConversationService {
       return { replies }
     }
     if (action.name === BotAction.EDIT_SAVED) return this.startEdit(message, action.draftId)
+    // Reminder buttons and /avisos (P20): draftId carries the notification id or the kind
+    if (NOTIFICATION_ACTIONS.includes(action.name))
+      return this.notificationsBotService.handleAction(message.chatId, action)
     if (DEBT_PAYMENT_ACTIONS.includes(action.name)) return this.handleDebtPaymentAction(action)
     if (BATCH_ACTIONS.includes(action.name)) return this.handleBatchAction(message.chatId, action)
 
@@ -877,6 +887,12 @@ export class ConversationService {
         const view = await this.budgetService.month(period.month, period.year)
         return [{ text: formatBudget(period.month, period.year, view) }]
       }
+      case BotCommand.ALERTS:
+        return [await this.notificationsBotService.settingsReply()]
+      case BotCommand.CALENDAR:
+        return [await this.notificationsBotService.calendarReply()]
+      case BotCommand.INSTALLMENTS:
+        return [await this.notificationsBotService.installmentsReply()]
       case BotCommand.FORECAST: {
         const today = DateHelper.todayIn(APP_TIME_ZONE)
         const [year, month, day] = today.split('-').map(Number)
