@@ -19,6 +19,7 @@ const mockDB = {
   countUnread: vi.fn(),
   markRead: vi.fn(),
   markAllRead: vi.fn(),
+  markUnread: vi.fn(),
   markSent: vi.fn(),
   findSettings: vi.fn(),
   upsertSetting: vi.fn(),
@@ -178,14 +179,17 @@ describe('NotificationsService', () => {
       expect(await service.unreadCount()).toBe(5)
     })
 
-    it('should drop the cached list only when something was read', async () => {
+    it('should drop the cached list only when something was read or unread again', async () => {
       mockDB.markRead.mockResolvedValueOnce(true).mockResolvedValueOnce(false)
       await service.markRead('n1')
       await service.markRead('n1')
       mockDB.markAllRead.mockResolvedValue(0)
       await service.markAllRead()
+      mockDB.markUnread.mockResolvedValueOnce(true).mockResolvedValueOnce(false)
+      await service.markUnread('n1')
+      await service.markUnread('n1')
 
-      expect(mockCache.invalidateRecent).toHaveBeenCalledTimes(1)
+      expect(mockCache.invalidateRecent).toHaveBeenCalledTimes(2)
     })
   })
 

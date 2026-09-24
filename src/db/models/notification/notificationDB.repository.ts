@@ -54,6 +54,16 @@ export class NotificationDBRepository {
     }
   }
 
+  // Back to unread (the bell counts it again). Returns false when it was already unread
+  async markUnread(id: string): Promise<boolean> {
+    const { count } = await this.prisma.notification.updateMany({
+      where: { id, readAt: { not: null } },
+      data: { readAt: null },
+    })
+    if (count === 0) await this.findById(id)
+    return count > 0
+  }
+
   async markAllRead(readAt: Date = new Date()): Promise<number> {
     const { count } = await this.prisma.notification.updateMany({ where: { readAt: null }, data: { readAt } })
     return count

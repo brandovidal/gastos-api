@@ -34,7 +34,7 @@ describe('NotificationDBRepository (integration)', () => {
     expect(second).toBeNull()
   })
 
-  it('should mark a notice read only once and answer 404 for an unknown one', async () => {
+  it('should mark a notice read or unread only once and answer 404 for an unknown one', async () => {
     const created = await repository.createUnique({
       kind: NotificationKind.WEEKLY,
       title: 'Tu semana',
@@ -44,7 +44,11 @@ describe('NotificationDBRepository (integration)', () => {
 
     expect(await repository.markRead(created!.id)).toBe(true)
     expect(await repository.markRead(created!.id)).toBe(false)
+    expect(await repository.markUnread(created!.id)).toBe(true)
+    expect(await repository.markUnread(created!.id)).toBe(false)
+    expect(await repository.countUnread()).toBeGreaterThan(0)
     await expect(repository.markRead('missing')).rejects.toBeInstanceOf(NotificationNotFoundException)
+    await expect(repository.markUnread('missing')).rejects.toBeInstanceOf(NotificationNotFoundException)
   })
 
   it('should keep one setting row per kind', async () => {

@@ -116,6 +116,10 @@ export class NotificationsService {
     if (await this.notificationDBRepository.markRead(id)) await this.notificationCache.invalidateRecent()
   }
 
+  async markUnread(id: string): Promise<void> {
+    if (await this.notificationDBRepository.markUnread(id)) await this.notificationCache.invalidateRecent()
+  }
+
   async markAllRead(): Promise<number> {
     const count = await this.notificationDBRepository.markAllRead()
     if (count) await this.notificationCache.invalidateRecent()

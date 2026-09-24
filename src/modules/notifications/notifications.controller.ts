@@ -87,6 +87,15 @@ export class NotificationsController {
     return null
   }
 
+  @Patch(':id/unread')
+  @ApiOperation({ summary: 'Mark one notification as unread again (the bell counts it)' })
+  @ApiOkResponse({ type: EmptyResponseDto })
+  @ResponseMessage('NOTIFICATION_UNREAD', 'Notification unread')
+  async unread(@Param('id') id: string) {
+    await this.notificationsService.markUnread(id)
+    return null
+  }
+
   @Get('settings')
   @ApiOperation({ summary: 'Which kinds of notification go to Telegram and to the web bell' })
   @ApiOkResponse({ type: NotificationSettingsResponseDto })
