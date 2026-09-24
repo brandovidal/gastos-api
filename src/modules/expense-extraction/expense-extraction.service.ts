@@ -111,6 +111,68 @@ export class ExpenseExtractionService {
     throw new ExpenseExtractionFailedException({ draftId: input.draftId })
   }
 
+  // Any other structured reading of a text (bank statements, P14): same route, quota and logs as extract(). null when no
+  // model answered valid JSON
+  async generateStructured<T>({
+    instructions,
+    text,
+    jsonSchema,
+    parse,
+    operation,
+  }: {
+    instructions: string
+    text: string
+    jsonSchema: Record<string, unknown>
+    parse: (json: unknown) => { success: true; data: T } | { success: false; error: string }
+    operation: AiOperation
+  }): Promise<T | null> {
+    const { timeoutMs } = this.configService.getOrThrow<AiConfig>('ai')
+    const parts: AiInputPart[] = [{ type: AiInputPartType.TEXT, text }]
+
+    for (const candidate of this.buildRoute(false)) {
+      if (await this.isOverQuota(candidate)) continue
+      const provider = this.aiExtractorProviderStrategy.getProvider(candidate.provider)
+      const startedAt = Date.now()
+      try {
+        const response = await provider.generateJson({
+          model: candidate.model,
+          instructions,
+          parts,
+          jsonSchema,
+          timeoutMs,
+        })
+        let parsed: ReturnType<typeof parse>
+        try {
+          parsed = parse(JSON.parse(response.text.replace(/^```(?:json)?\s*|\s*```$/g, '')))
+        } catch {
+          parsed = { success: false, error: 'Response is not valid JSON' }
+        }
+        await this.logRequest(
+          candidate,
+          undefined,
+          Date.now() - startedAt,
+          parsed.success ? undefined : AiErrorCode.INVALID_OUTPUT,
+          response,
+          operation,
+        )
+        if (parsed.success) return parsed.data
+      } catch (error) {
+        this.logger.warn(
+          `[generateStructured] ${candidate.provider}/${candidate.model} failed: ${(error as Error).message}`,
+        )
+        await this.logRequest(
+          candidate,
+          undefined,
+          Date.now() - startedAt,
+          AiErrorCode.PROVIDER_ERROR,
+          undefined,
+          operation,
+        )
+      }
+    }
+    return null
+  }
+
   // Voice note -> text with Whisper on Groq (P5); the text then goes through extract() like a typed message
   async transcribe({ audio, draftId }: { audio: MediaFile; draftId?: string }): Promise<string> {
     const candidate = this.transcribeCandidate()

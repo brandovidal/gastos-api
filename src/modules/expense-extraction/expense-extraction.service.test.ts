@@ -3,7 +3,7 @@ import { ConfigService } from '@nestjs/config'
 import { Test, TestingModule } from '@nestjs/testing'
 import { vi } from 'vitest'
 
-import { AiErrorCode, AiInputPartType, AiProvider } from '@/commons/constants/ai.constant'
+import { AiErrorCode, AiInputPartType, AiOperation, AiProvider } from '@/commons/constants/ai.constant'
 import { ExpenseField } from '@/commons/constants/expense-extraction.constant'
 import { ExpenseExtractionFailedException } from '@/commons/exceptions/expense-extraction/expense-extraction-failed.exception'
 import { AiExtractorProviderStrategy } from '@/providers/ai/ai-extractor-provider.strategy'
@@ -233,6 +233,33 @@ describe('ExpenseExtractionService', () => {
 
       await expect(service.transcribe({ audio })).rejects.toThrow(TranscriptionFailedException)
       expect(mockTranscriber.transcribe).not.toHaveBeenCalled()
+    })
+  })
+
+  describe('generateStructured (P14 statements)', () => {
+    const parse = (json: unknown) =>
+      typeof json === 'object' && json && 'total' in json
+        ? { success: true as const, data: json as { total: number } }
+        : { success: false as const, error: 'no total' }
+    const request = { instructions: 'read', text: 'Total 20', jsonSchema: {}, parse, operation: AiOperation.STATEMENT }
+
+    it('should follow the text route and log the call as a statement reading', async () => {
+      mockGemini.generateJson.mockResolvedValue({ text: '{"total": 20}' })
+
+      expect(await service.generateStructured(request)).toEqual({ total: 20 })
+      expect(mockGroq.generateJson).not.toHaveBeenCalled()
+      expect(mockAiRequestLog.create).toHaveBeenCalledWith(
+        expect.objectContaining({ operation: AiOperation.STATEMENT, success: true }),
+      )
+    })
+
+    it('should try the next model when one fails or answers something else, and return null when none can', async () => {
+      mockGroq.generateJson.mockResolvedValue({ text: '{"otro": 1}' })
+      mockGemini.generateJson.mockRejectedValue(new Error('503'))
+
+      expect(await service.generateStructured(request)).toBeNull()
+      expect(mockGroq.generateJson).toHaveBeenCalled()
+      expect(mockGemini.generateJson).toHaveBeenCalled()
     })
   })
 })

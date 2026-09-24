@@ -8,6 +8,7 @@ export enum AiOperation {
   EXTRACT = 'extract',
   TRANSCRIBE = 'transcribe',
   RECOGNIZE = 'recognize', // local OCR + templates (D63)
+  STATEMENT = 'statement', // the text of a bank statement (P14, D95)
 }
 
 export const OCR_MODEL = 'tesseract'

@@ -20,13 +20,14 @@ datasource db {
 // ==================== CATALOGS (cat_) ====================
 
 model Person {
-  id        String   @id @default(cuid())
-  name      String   @unique
-  aliases   String   @default("[]") // JSON array of lowercase aliases used by the AI
-  isActive  Boolean  @default(true)
-  isDefault Boolean  @default(false) // the owner: used when a message does not say who the expense is for
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id             String   @id @default(cuid())
+  name           String   @unique
+  aliases        String   @default("[]") // JSON array of lowercase aliases used by the AI
+  isActive       Boolean  @default(true)
+  isDefault      Boolean  @default(false) // the owner: used when a message does not say who the expense is for
+  documentNumber String? // DNI: the password of the bank statement PDFs (D94); never sent to the AI nor logged
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
 
   expenseDrafts ExpenseDraft[]
 
@@ -300,6 +301,7 @@ model FixedCost {
   attentionDate   DateTime?
   notes           String?
   draftId         String?        @unique
+  importKey       String?        @unique // fingerprint of the Notion row it was imported from (P14, D90)
   draft           ExpenseDraft?  @relation(fields: [draftId], references: [id])
   createdAt       DateTime       @default(now())
   updatedAt       DateTime       @updatedAt
@@ -335,6 +337,7 @@ model Subscription {
   dueDate         DateTime?
   notes           String?
   draftId         String?        @unique
+  importKey       String?        @unique // fingerprint of the Notion row it was imported from (P14, D90)
   draft           ExpenseDraft?  @relation(fields: [draftId], references: [id])
   createdAt       DateTime       @default(now())
   updatedAt       DateTime       @updatedAt
@@ -367,6 +370,7 @@ model CreditCardExpense {
   notes           String?
   originDraftId   String? // the draft that also created this row (installments after the first, D73)
   draftId         String?       @unique
+  importKey       String?       @unique // fingerprint of the Notion row it was imported from (P14, D90)
   draft           ExpenseDraft? @relation(fields: [draftId], references: [id])
   createdAt       DateTime      @default(now())
   updatedAt       DateTime      @updatedAt
@@ -401,6 +405,7 @@ model Debt {
   notes         String?
   originDraftId String? // the draft that also created this row (installments, shared parts, D73)
   draftId       String?       @unique // the chat draft it came from (first installment only)
+  importKey     String?       @unique // fingerprint of the Notion row it was imported from (P14, D90)
   draft         ExpenseDraft? @relation(fields: [draftId], references: [id])
   createdAt     DateTime      @default(now())
   updatedAt     DateTime      @updatedAt
@@ -509,4 +514,48 @@ model NotificationSetting {
   updatedAt DateTime @updatedAt
 
   @@map("ntf_settings")
+}
+
+// ==================== IMPORTS (imp_) ====================
+// Bank statements (P14 block 2, D95): one row per statement PDF and one per movement, reconciled with the card
+// expenses of that payment month. The PDF itself lives in R2 (fileId, D58).
+
+model Statement {
+  id              String    @id @default(cuid())
+  paymentMethodId String // the card
+  paymentMonth    Int
+  paymentYear     Int
+  periodStart     DateTime?
+  periodEnd       DateTime?
+  dueDate         DateTime? // last day to pay
+  totalDue        Float? // total to pay of the statement
+  minimumDue      Float?
+  currency        String    @default("PEN")
+  source          String // StatementSource: how it was read (template, ai)
+  fileId          String?
+  status          String    @default("review") // StatementStatus
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  rows StatementRow[]
+
+  @@index([paymentMethodId, paymentYear, paymentMonth])
+  @@map("imp_statements")
+}
+
+model StatementRow {
+  id          String    @id @default(cuid())
+  statementId String
+  statement   Statement @relation(fields: [statementId], references: [id], onDelete: Cascade)
+  date        DateTime? // processed day
+  description String
+  amount      Float
+  currency    String    @default("PEN")
+  installment String? // "n/m"
+  result      String // StatementRowResult: matched, new, created, ignored
+  expenseId   String? // the card expense it matched or created
+  createdAt   DateTime  @default(now())
+
+  @@index([statementId])
+  @@map("imp_statement_rows")
 }

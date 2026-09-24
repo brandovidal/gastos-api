@@ -40,6 +40,7 @@ export const NOTIFICATION_KIND_LABELS: Record<NotificationKind, string> = {
   [NotificationKind.BUDGET]: 'Presupuesto al 80 %',
   [NotificationKind.ANOMALY]: 'Cargos raros',
   [NotificationKind.RECURRING]: 'Gastos recurrentes del mes',
+  [NotificationKind.STATEMENT]: 'Estados de cuenta conciliados',
 }
 
 const EVENT_EMOJI: Record<CalendarEventKind, string> = {

@@ -31,6 +31,12 @@ import {
 
 // Catalogs for kogane-app (P7). The bot reads the same tables: changes apply to the AI prompt right away.
 
+// The document number opens the bank statement PDFs (D94): the web only sees its last 3 characters
+const maskDocument = <T extends { documentNumber: string | null }>(person: T): T => ({
+  ...person,
+  documentNumber: person.documentNumber ? `•••••${person.documentNumber.slice(-3)}` : null,
+})
+
 @ApiRest('catalogs')
 @Controller('people')
 export class PeopleController {
@@ -40,31 +46,31 @@ export class PeopleController {
   @ApiOperation({ summary: 'People (active and inactive)' })
   @ApiOkResponse({ type: PersonListResponseDto })
   @ResponseMessage('PEOPLE_LISTED', 'People listed')
-  findAll() {
-    return this.personDBRepository.findAll()
+  async findAll() {
+    return (await this.personDBRepository.findAll()).map(maskDocument)
   }
 
   @Post()
   @ApiOperation({ summary: 'Add a person; isDefault clears the previous default' })
   @ApiOkResponse({ type: PersonResponseDto })
   @ResponseMessage('PERSON_CREATED', 'Person created')
-  create(@Body() body: CreatePersonDto) {
-    return this.personDBRepository.create(body)
+  async create(@Body() body: CreatePersonDto) {
+    return maskDocument(await this.personDBRepository.create(body))
   }
 
   @Patch(':id')
   @ApiOkResponse({ type: PersonResponseDto })
   @ResponseMessage('PERSON_UPDATED', 'Person updated')
-  update(@Param('id') id: string, @Body() body: UpdatePersonDto) {
-    return this.personDBRepository.update(id, body)
+  async update(@Param('id') id: string, @Body() body: UpdatePersonDto) {
+    return maskDocument(await this.personDBRepository.update(id, body))
   }
 
   @Delete(':id')
   @ApiOperation({ summary: 'Deactivate a person (expenses keep pointing to it)' })
   @ApiOkResponse({ type: PersonResponseDto })
   @ResponseMessage('PERSON_DEACTIVATED', 'Person deactivated')
-  deactivate(@Param('id') id: string) {
-    return this.personDBRepository.deactivate(id)
+  async deactivate(@Param('id') id: string) {
+    return maskDocument(await this.personDBRepository.deactivate(id))
   }
 }
 

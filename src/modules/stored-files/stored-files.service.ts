@@ -30,6 +30,7 @@ const EXTENSION_BY_MIME: Record<string, string> = {
   'audio/mpeg': '.mp3',
   'audio/mp4': '.m4a',
   'audio/wav': '.wav',
+  'application/pdf': '.pdf', // bank statements (P14)
 }
 
 // Screenshots and voice notes (D54, D58): R2 keeps the bytes, bot_files decides where they live.

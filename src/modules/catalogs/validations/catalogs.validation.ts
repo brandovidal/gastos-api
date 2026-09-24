@@ -11,6 +11,13 @@ export const personSchema = z.object({
   aliases: aliases.optional(),
   isDefault: z.boolean().optional(),
   isActive: z.boolean().optional(),
+  // DNI or CE: the password of the bank statement PDFs (D94). Answered masked, never whole
+  documentNumber: z
+    .string()
+    .trim()
+    .regex(/^[0-9A-Za-z]{6,15}$/)
+    .nullable()
+    .optional(),
 })
 
 export const paymentMethodSchema = z.object({
@@ -51,6 +58,7 @@ export const personResponseSchema = z.object({
   aliases: z.array(z.string()),
   isActive: z.boolean(),
   isDefault: z.boolean(),
+  documentNumber: z.string().nullable().describe('Masked: only the last 3 characters (D94)'),
 })
 
 export const paymentMethodResponseSchema = z.object({

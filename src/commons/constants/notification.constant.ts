@@ -9,6 +9,7 @@ export enum NotificationKind {
   BUDGET = 'budget', // a category reached its alert threshold (80 %) or its limit
   ANOMALY = 'anomaly', // a platform got more expensive, a duplicated charge, a platform not charged
   RECURRING = 'recurring', // the expenses of the month were created from Recurrentes
+  STATEMENT = 'statement', // a bank statement was read and reconciled (P14, D95)
 }
 
 // What a notification is about: what ✅ Pagado acts on and where the web link goes
@@ -20,6 +21,7 @@ export enum NotificationRefType {
   DAILY_EXPENSE = 'daily_expense',
   DEBT = 'debt',
   CATEGORY = 'category',
+  STATEMENT = 'statement',
 }
 
 // A kind without a row in ntf_settings: everything on, except the daily close in Telegram (only the web bell)
@@ -31,6 +33,7 @@ export const DEFAULT_NOTIFICATION_SETTINGS: Record<NotificationKind, { telegram:
   [NotificationKind.BUDGET]: { telegram: true, web: true },
   [NotificationKind.ANOMALY]: { telegram: true, web: true },
   [NotificationKind.RECURRING]: { telegram: true, web: true },
+  [NotificationKind.STATEMENT]: { telegram: true, web: true },
 }
 
 // Scheduled jobs (D87): BullMQ job schedulers in America/Lima

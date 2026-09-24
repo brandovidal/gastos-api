@@ -7,4 +7,5 @@ export interface PersonWriteDbDto {
   aliases?: string[]
   isDefault?: boolean
   isActive?: boolean
+  documentNumber?: string | null
 }

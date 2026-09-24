@@ -8,6 +8,7 @@ import { AppException } from '@/commons/exceptions/app.exception'
 import { DateHelper } from '@/commons/helpers/date.helper'
 import { addMonths, comparePeriods, PaymentPeriod } from '@/commons/helpers/payment-period.helper'
 import { CalendarDBRepository } from '@/db/models/calendar/calendarDB.repository'
+import { StatementDBRepository } from '@/db/models/statement/statementDB.repository'
 import { DebtsService } from '@/modules/debts/debts.service'
 import { normalizeText } from '@/modules/expense-extraction/expense-extraction.catalog'
 
@@ -83,6 +84,7 @@ export class CalendarService {
   constructor(
     private readonly calendarDBRepository: CalendarDBRepository,
     private readonly debtsService: DebtsService,
+    private readonly statementDBRepository: StatementDBRepository,
   ) {}
 
   // ✅ Pagado of a reminder (bot) or of the calendar (web): the unpaid rows of a card statement, a fixed cost, a
@@ -315,11 +317,23 @@ export class CalendarService {
 
     // A statement is paid up to a month after it closes: the month before `from` may be due inside the range
     const periods = periodsBetween(DateHelper.addDays(from, -31), to)
-    const rows = await this.calendarDBRepository.findCardRows(periods)
+    const [rows, statements] = await Promise.all([
+      this.calendarDBRepository.findCardRows(periods),
+      this.statementDBRepository.findForPeriods(periods),
+    ])
 
     return cards.flatMap((card) =>
       periods.flatMap((period) => {
-        const { closeDate, dueDate } = statementDates(card.billingCloseDay!, card.paymentDueDay!, period)
+        const dates = statementDates(card.billingCloseDay!, card.paymentDueDay!, period)
+        // A statement read from the bank (P14, D95) has the real due date and total to pay
+        const statement = statements.find(
+          (candidate) =>
+            candidate.paymentMethodId === card.id &&
+            candidate.paymentMonth === period.paymentMonth &&
+            candidate.paymentYear === period.paymentYear,
+        )
+        const closeDate = dates.closeDate
+        const dueDate = statement?.dueDate ? isoDate(statement.dueDate) : dates.dueDate
         const ofStatement = rows.filter(
           (row) =>
             row.paymentMethodId === card.id &&
@@ -352,13 +366,15 @@ export class CalendarService {
           })
         }
         // A statement with nothing in it has nothing to pay
-        if (dueDate >= from && dueDate <= to && total > 0) {
+        const bankTotal = statement?.totalDue ?? null
+        if (dueDate >= from && dueDate <= to && (total > 0 || (bankTotal ?? 0) > 0)) {
+          const paid = total > 0 && unpaid === 0
           events.push({
             ...base,
             date: dueDate,
             kind: CalendarEventKind.CARD_DUE,
-            amount: unpaid || total,
-            status: statusOf(unpaid === 0, dueDate, today),
+            amount: !paid && bankTotal ? bankTotal : unpaid || total,
+            status: statusOf(paid, dueDate, today),
           })
         }
         return events

@@ -7,6 +7,7 @@ import { PaymentStatus } from '@/commons/constants/expense.constant'
 import { NotificationRefType } from '@/commons/constants/notification.constant'
 import { DebtNotFoundException } from '@/commons/exceptions/debt/debt-not-found.exception'
 import { CalendarDBRepository } from '@/db/models/calendar/calendarDB.repository'
+import { StatementDBRepository } from '@/db/models/statement/statementDB.repository'
 import { DebtsService } from '@/modules/debts/debts.service'
 
 import { CalendarService, cardStatementRef, parseCardStatementRef } from './calendar.service'
@@ -27,6 +28,7 @@ const mockCalendarDB = {
   paySubscription: vi.fn(),
 }
 const mockDebts = { get: vi.fn(), addPayment: vi.fn() }
+const mockStatementDB = { findForPeriods: vi.fn() }
 
 const IO = { id: 'io', name: 'IO', code: 'IO', color: '#000', billingCloseDay: 25, paymentDueDay: 12 }
 
@@ -55,6 +57,7 @@ describe('CalendarService', () => {
         CalendarService,
         { provide: CalendarDBRepository, useValue: mockCalendarDB },
         { provide: DebtsService, useValue: mockDebts },
+        { provide: StatementDBRepository, useValue: mockStatementDB },
       ],
     }).compile()
     service = module.get(CalendarService)
@@ -66,6 +69,7 @@ describe('CalendarService', () => {
     mockCalendarDB.findSubscriptionsDue.mockResolvedValue([])
     mockCalendarDB.findDebtsDue.mockResolvedValue([])
     mockCalendarDB.findActiveRecurring.mockResolvedValue([])
+    mockStatementDB.findForPeriods.mockResolvedValue([])
   })
 
   afterEach(() => {
@@ -110,6 +114,21 @@ describe('CalendarService', () => {
       ])
       mockCalendarDB.findCardRows.mockResolvedValue([])
       expect(await service.events('2026-10-12', '2026-10-12', TODAY)).toEqual([])
+    })
+
+    it('should take the due date and the total to pay of a statement read from the bank (P14, D95)', async () => {
+      mockCalendarDB.findCardRows.mockResolvedValue([cardRow({ amount: 100, amountInPen: 100 })])
+      mockStatementDB.findForPeriods.mockResolvedValue([
+        { paymentMethodId: 'io', paymentMonth: 9, paymentYear: 2026, dueDate: day('2026-10-13'), totalDue: 312.4 },
+      ])
+
+      const events = await service.events('2026-10-01', '2026-10-31', TODAY)
+
+      expect(events.find((event) => event.kind === CalendarEventKind.CARD_DUE)).toMatchObject({
+        date: '2026-10-13',
+        amount: 312.4,
+        status: CalendarEventStatus.PENDING,
+      })
     })
 
     it('should list fixed costs, subscriptions and debts by due date, late when their day passed', async () => {

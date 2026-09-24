@@ -42,6 +42,11 @@ describe('Catalogs controllers', () => {
 
   it('should list, create, edit and deactivate people (Configuración ▸ Personas, D80)', async () => {
     const controller = module.get(PeopleController)
+    const person = { id: 'person-1', name: 'Brenda', documentNumber: null }
+    people.findAll.mockResolvedValue([person])
+    people.create.mockResolvedValue(person)
+    people.update.mockResolvedValue(person)
+    people.deactivate.mockResolvedValue(person)
     await controller.findAll()
     await controller.create({ name: 'Brenda', aliases: ['mi hermana'] })
     await controller.update('person-1', { isActive: false })
@@ -51,6 +56,19 @@ describe('Catalogs controllers', () => {
     expect(people.create).toHaveBeenCalledWith({ name: 'Brenda', aliases: ['mi hermana'] })
     expect(people.update).toHaveBeenCalledWith('person-1', { isActive: false })
     expect(people.deactivate).toHaveBeenCalledWith('person-1')
+  })
+
+  it('should never answer the document number whole, only its last 3 characters (D94)', async () => {
+    const controller = module.get(PeopleController)
+    people.findAll.mockResolvedValue([
+      { id: 'me', name: 'Brando', documentNumber: '44556677' },
+      { id: 'dany', name: 'Danery', documentNumber: null },
+    ])
+    people.update.mockResolvedValue({ id: 'me', name: 'Brando', documentNumber: '44556677' })
+
+    expect((await controller.findAll()).map((person) => person.documentNumber)).toEqual(['•••••677', null])
+    expect((await controller.update('me', { documentNumber: '44556677' })).documentNumber).toBe('•••••677')
+    expect(people.update).toHaveBeenCalledWith('me', { documentNumber: '44556677' })
   })
 
   it('should turn a card off for the menu and the bot (Cuentas y tarjetas)', async () => {
