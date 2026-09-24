@@ -4,7 +4,6 @@ import { vi } from 'vitest'
 
 import { ExpenseNotFoundException } from '@/commons/exceptions/expense/expense-not-found.exception'
 import { ExpenseRecordDBRepository, ExpenseResource } from '@/db/models/expense-record/expenseRecordDB.repository'
-import { ExpenseExtractionService } from '@/modules/expense-extraction/expense-extraction.service'
 import { StoredFilesService } from '@/modules/stored-files/stored-files.service'
 
 import { ExpensesService } from './expenses.service'
@@ -20,7 +19,6 @@ describe('ExpensesService', () => {
       providers: [
         ExpensesService,
         { provide: ExpenseRecordDBRepository, useValue: mockExpenseRecordDB },
-        { provide: ExpenseExtractionService, useValue: {} },
         { provide: StoredFilesService, useValue: mockStoredFiles },
       ],
     }).compile()

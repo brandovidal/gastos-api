@@ -17,12 +17,8 @@ import { ApiRest } from '@/commons/decorators/api-rest.decorator'
 import { ResponseMessage } from '@/commons/decorators/response-message.decorator'
 import { ExpenseResource } from '@/db/models/expense-record/expenseRecordDB.repository'
 
-import {
-  ExpenseRecordListResponseDto,
-  ExpenseRecordResponseDto,
-  ExtractedExpensesResponseDto,
-} from './dto/response/expenses-response.dto'
-import { ExpenseBodyDto, ExpenseListQueryDto, ExpensePatchDto, ExtractExpenseDto } from './dto/request/expenses.dto'
+import { ExpenseRecordListResponseDto, ExpenseRecordResponseDto } from './dto/response/expenses-response.dto'
+import { ExpenseBodyDto, ExpenseListQueryDto, ExpensePatchDto } from './dto/request/expenses.dto'
 import { ExpensesService } from './expenses.service'
 
 const resourceParam = new ParseEnumPipe(ExpenseResource)
@@ -34,16 +30,6 @@ const PATCH_DOC = { type: ExpensePatchDto, description: 'Columns to change (vali
 @Controller('expenses')
 export class ExpensesController {
   constructor(private readonly expensesService: ExpensesService) {}
-
-  // Declared before the :resource routes so "extract" is not read as a resource
-  @Post('extract')
-  @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Nuevo gasto: read a typed or pasted text with the AI and return the fields to prefill' })
-  @ApiOkResponse({ type: ExtractedExpensesResponseDto })
-  @ResponseMessage('EXPENSE_EXTRACTED', 'Expense extracted')
-  extract(@Body() body: ExtractExpenseDto) {
-    return this.expensesService.extract(body.text)
-  }
 
   @Get(':resource')
   @ApiParam(RESOURCE_DOC)

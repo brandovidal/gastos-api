@@ -94,10 +94,6 @@ export const expenseListQuerySchema = z.object({
   paymentMethodId: z.string().min(1).optional(),
 })
 
-export const extractExpenseSchema = z.object({
-  text: z.string().trim().min(1).max(1000),
-})
-
 // ==================== Responses (Swagger / kogane-app types) ====================
 
 const nullableDate = dateTimeSchema.nullable()
@@ -173,24 +169,3 @@ export const EXPENSE_RESPONSE_SCHEMAS = {
 
 // /v1/expenses/{resource}: the shape depends on the resource of the path
 export const expenseRecordResponseSchema = z.union(Object.values(EXPENSE_RESPONSE_SCHEMAS))
-
-// POST /v1/expenses/extract: fields to prefill "Nuevo gasto" (ids already resolved from the catalog)
-export const resolvedExpenseResponseSchema = z.object({
-  destination: z.string().nullable(),
-  description: z.string().nullable(),
-  amount: z.number().nullable(),
-  currency: z.string().nullable(),
-  spentAt: z.string().nullable().describe('YYYY-MM-DD'),
-  expenseType: z.string().nullable(),
-  installment: z.string().nullable(),
-  period: z.string().nullable(),
-  personId: z.string().nullable(),
-  paymentMethodId: z.string().nullable(),
-  categoryId: z.string().nullable(),
-  merchant: z.string().nullable(),
-  operationNumber: z.string().nullable(),
-  notes: z.string().nullable(),
-  confidence: z.record(z.string(), z.number()),
-  missingFields: z.array(z.string()),
-  lowConfidenceFields: z.array(z.string()),
-})

@@ -34,6 +34,23 @@ export const draftFieldsSchema = z.object({
   merchant: z.string().trim().max(120).nullable().optional(),
   operationNumber: z.string().trim().max(40).nullable().optional(),
   notes: z.string().trim().max(500).nullable().optional(),
+  // Shared (D73, D78): each person owes a ratio of the total or a fixed amount; null or [] stops sharing
+  sharedWith: z
+    .object({
+      shares: z.array(
+        z
+          .object({
+            personId: id,
+            ratio: z.number().gt(0).max(1).optional(),
+            amount: z.number().positive().optional(),
+          })
+          .refine((share) => (share.ratio == null) !== (share.amount == null), {
+            message: 'Either ratio or amount',
+          }),
+      ),
+    })
+    .nullable()
+    .optional(),
 })
 
 export const draftListQuerySchema = z.object({

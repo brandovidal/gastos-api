@@ -3,7 +3,6 @@ import { ZodValidationException } from 'nestjs-zod'
 
 import { Currency } from '@/commons/constants/expense.constant'
 import { ExpenseRecordDBRepository, ExpenseResource } from '@/db/models/expense-record/expenseRecordDB.repository'
-import { ExpenseExtractionService } from '@/modules/expense-extraction/expense-extraction.service'
 import { StoredFilesService } from '@/modules/stored-files/stored-files.service'
 
 import { ExpenseListQueryDto } from './dto/request/expenses.dto'
@@ -16,7 +15,6 @@ export class ExpensesService {
 
   constructor(
     private readonly expenseRecordDBRepository: ExpenseRecordDBRepository,
-    private readonly expenseExtractionService: ExpenseExtractionService,
     private readonly storedFilesService: StoredFilesService,
   ) {}
 
@@ -36,7 +34,6 @@ export class ExpensesService {
     return this.expenseRecordDBRepository.update(resource, id, this.withAmountInPen(this.parse(resource, body, true)))
   }
 
-  // The screenshot of the expense goes too, unless another expense or draft still uses it (D58)
   async delete(resource: ExpenseResource, id: string): Promise<void> {
     const { fileId } = await this.expenseRecordDBRepository.delete(resource, id)
     if (!fileId) return
@@ -47,13 +44,6 @@ export class ExpensesService {
     }
   }
 
-  // "Nuevo gasto": the AI reads a typed or pasted text and the web prefills its form with the result (no draft)
-  async extract(text: string) {
-    const { expenses } = await this.expenseExtractionService.extract({ text })
-    return expenses
-  }
-
-  // The body shape depends on the table, so it is validated here instead of with a DTO
   private parse(resource: ExpenseResource, body: unknown, partial: boolean): Record<string, unknown> {
     const schema = partial ? EXPENSE_SCHEMAS[resource].partial() : EXPENSE_SCHEMAS[resource]
     const parsed = schema.safeParse(body)
@@ -61,7 +51,6 @@ export class ExpensesService {
     return parsed.data as Record<string, unknown>
   }
 
-  // Soles need no conversion; other currencies keep amountInPen until an exchange rate is known
   private withAmountInPen(data: Record<string, unknown>) {
     if (data.currency === Currency.PEN && typeof data.amount === 'number') return { ...data, amountInPen: data.amount }
     return data

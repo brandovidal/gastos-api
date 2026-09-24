@@ -47,12 +47,10 @@ export class DraftsService {
 
   async get(id: string) {
     const expenseDraft = await this.find(id)
-    // Signed link of 10 minutes (D58); null once the file expired
     const mediaUrl = await this.storedFilesService.signedUrl(expenseDraft.fileId)
     return { ...expenseDraft, mediaUrl }
   }
 
-  // Nuevo gasto: the form creates a draft (channel web) and then saves it like any other
   async create(fields: DraftFieldsDto) {
     const expenseDraft = await this.expenseDraftDBRepository.create({
       channel: ExpenseDraftChannel.WEB,
@@ -77,21 +75,22 @@ export class DraftsService {
     return this.expenseDraftDBRepository.update(id, { status: ExpenseDraftStatus.DISCARDED, pendingField: null })
   }
 
-  // Reintentar: the AI reads the text, image or voice note again
   async retry(id: string) {
     await this.conversationService.retryExtraction(await this.find(id))
     return this.get(id)
   }
 
-  // Same rules as the bot (payment method → destination, required fields); what the user typed is certain.
-  // The draft stays in Borrador (pending_review) so it never reopens a chat conversation.
-  private async applyFields(expenseDraft: ExpenseDraftDbDto, fields: DraftFieldsDto) {
+  private async applyFields(expenseDraft: ExpenseDraftDbDto, { sharedWith, ...fields }: DraftFieldsDto) {
     const catalog = await this.expenseExtractionService.loadCatalog()
     const merged: ResolvedExpenseFields = {
       ...toExpenseFields(expenseDraft),
       ...(fields as Partial<ResolvedExpenseFields>),
     }
     merged.personId ??= findDefaultPerson(catalog)?.id ?? null
+    const shares = sharedWith === undefined ? expenseDraft.sharedWith : sharedWith?.shares.length ? sharedWith : null
+    if (shares?.shares.some((share) => share.personId === merged.personId)) {
+      merged.personId = findDefaultPerson(catalog)?.id ?? merged.personId
+    }
 
     const confidence = { ...expenseDraft.confidence }
     for (const [field, value] of Object.entries(fields)) if (value != null) confidence[field] = 1
@@ -99,6 +98,7 @@ export class DraftsService {
     const update = toExpenseDraftUpdate(completeExpense(merged, confidence, catalog))
     return this.expenseDraftDBRepository.update(expenseDraft.id, {
       ...update,
+      ...(sharedWith !== undefined ? { sharedWith: shares } : {}),
       status: update.status === ExpenseDraftStatus.DISCARDED ? update.status : ExpenseDraftStatus.PENDING_REVIEW,
       pendingField: null,
     })

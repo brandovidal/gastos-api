@@ -118,7 +118,7 @@ modules/<feature>/
 
 - Every route uses `@ApiRest(tag)` (`commons/decorators/api-rest.decorator.ts`): Swagger tag, `x-api-key` and `ApiKeyGuard` (constant-time comparison).
 - `modules/catalogs`: people, payment-methods (deactivated, never deleted), categories, budget-groups (409 `CATALOG_ITEM_IN_USE` while used).
-- `modules/expenses`: `/v1/expenses/:resource` (`ExpenseResource`: daily-expenses, fixed-costs, subscriptions, credit-card-expenses, recurring-expenses) on `ExpenseRecordDBRepository`, validated per resource in `EXPENSE_SCHEMAS`; `POST /v1/expenses/extract` prefills "Nuevo gasto".
+- `modules/expenses`: `/v1/expenses/:resource` (`ExpenseResource`: daily-expenses, fixed-costs, subscriptions, credit-card-expenses, recurring-expenses) on `ExpenseRecordDBRepository`, validated per resource in `EXPENSE_SCHEMAS`. "Nuevo gasto" of the web creates a draft (`POST /v1/drafts`); reading text, screenshots or voice with the AI is done by Mensajes (D79).
 - `modules/drafts`: Borrador (`tab=review|failed|discarded`), Nuevo gasto (`POST /v1/drafts` channel `web`, input `manual`), save through `ExpenseSaverService` like the bot, retry through `ConversationService.retryExtraction`. Web edits keep drafts in `pending_review` so they never reopen a chat.
 - `modules/messages`: web chat = channel `web` (`WEB_CHAT_ID`), multipart text/image/voice; uploads go through `StoredFilesService.storeTemporary` and the draft keeps its `fileId`.
 - `modules/debts` (P17, D60): `/v1/debts` CRUD (`installments: n` creates one row per month), `GET /v1/debts/summary` (per person: owed to me · I owe · net · late · due this month) and `POST|DELETE /v1/debts/:id/payments` (422 above the balance).
