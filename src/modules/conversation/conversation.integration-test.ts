@@ -13,6 +13,7 @@ import { PrismaModule } from '@/db/prisma/prisma.module'
 import { PrismaService } from '@/db/prisma/prisma.service'
 import { seedCatalogs } from '@/db/seed/catalog.seed'
 import { ExpenseExtractionService } from '@/modules/expense-extraction/expense-extraction.service'
+import { OcrService } from '@/modules/recognition/ocr.service'
 import { StoredFilesService } from '@/modules/stored-files/stored-files.service'
 import { GroqTranscriberService } from '@/providers/ai/groq/groq-transcriber.service'
 import { AiExtractorProviderStrategy } from '@/providers/ai/ai-extractor-provider.strategy'
@@ -86,6 +87,8 @@ describe('Conversation flows (integration)', () => {
   let chatCount = 0
   let messageCount = 0
   let chatId: string
+  // tesseract.js stand-in: off (every screenshot goes to the AI) unless a test gives it the text of a screen
+  const ocr = { enabled: false, read: vi.fn<() => Promise<string>>() }
 
   // The clock is frozen on the recording day: move it one second per message so drafts keep their order
   const tick = () => vi.setSystemTime(new Date(Date.now() + 1_000))
@@ -157,6 +160,8 @@ describe('Conversation flows (integration)', () => {
       // Whisper stand-in: every voice note says a sentence of the golden set
       .overrideProvider(GroqTranscriberService)
       .useValue({ transcribe: async () => 'cafe 8 con plin' })
+      .overrideProvider(OcrService)
+      .useValue(ocr)
       .compile()
     await moduleRef.init()
 
@@ -357,6 +362,46 @@ describe('Conversation flows (integration)', () => {
     // Another screenshot of the same payment (different file, same operation number)
     tick()
     expect((await image('img-3', 'unique-yape-2')).replies[0].text).toContain('Parece que ya registraste este gasto')
+  })
+
+  // P21 (D63): the purchase detail of the IO app is read by the local template, without the AI
+  it('should read an IO purchase in cuotas with the OCR template and save its first installment on IO', async () => {
+    ocr.enabled = true
+    ocr.read.mockResolvedValue(
+      [
+        'Detalle de categoría',
+        'RESTAURANTES',
+        '1consumo',
+        '14 Sep 2026',
+        'CEVICHERIA',
+        'Virtual / 3 cuotas',
+        '-S/300.00',
+      ].join('\n'),
+    )
+    try {
+      tick()
+      const { replies } = await conversation.handle({
+        channel: ExpenseDraftChannel.TELEGRAM,
+        chatId,
+        messageId: String(++messageCount),
+        type: ChannelMessageType.IMAGE,
+        media: { fileId: 'file-io-detail', uniqueId: 'unique-io-detail' },
+      })
+      await press(replies[0], 'Guardar')
+
+      const saved = await lastDraft()
+      expect(saved.documentType).toBe('io_purchase_detail')
+      expect(saved.creditCardExpense).toMatchObject({
+        amount: 100,
+        installment: '1/3',
+        paymentMethodId: await paymentMethodId('IO'),
+      })
+      const logs = await prisma.aiRequestLog.findMany({ where: { draftId: saved.id } })
+      expect(logs.map((log) => [log.provider, log.success])).toEqual([['local', true]])
+    } finally {
+      ocr.enabled = false
+      ocr.read.mockReset()
+    }
   })
 
   it('should keep a screenshot parked in /borrador for 7 days and ask for it again once it expired', async () => {

@@ -18,6 +18,7 @@ export interface CatalogEntry {
   paymentType?: PaymentMethodType // payment methods
   showInBot?: boolean // payment methods offered as quick replies
   billingCloseDay?: number | null // credit cards
+  isPrimary?: boolean // the card of screenshots that do not show which one (D47)
 }
 
 export interface ExtractionCatalog {

@@ -6,6 +6,7 @@ import { PaymentMethodDBModule } from '@/db/models/payment-method/paymentMethodD
 import { ExpenseExtractionModule } from '@/modules/expense-extraction/expense-extraction.module'
 import { StoredFilesModule } from '@/modules/stored-files/stored-files.module'
 import { DebtsModule } from '@/modules/debts/debts.module'
+import { RecognitionModule } from '@/modules/recognition/recognition.module'
 
 import { ConversationService } from './conversation.service'
 import { ExpenseSaverService } from './expense-saver.service'
@@ -19,6 +20,7 @@ import { MediaDownloaderRegistry } from './media-downloader.registry'
     ExpenseExtractionModule,
     StoredFilesModule,
     DebtsModule,
+    RecognitionModule,
   ],
   providers: [ConversationService, ExpenseSaverService, MediaDownloaderRegistry],
   exports: [ConversationService, ExpenseSaverService, MediaDownloaderRegistry],

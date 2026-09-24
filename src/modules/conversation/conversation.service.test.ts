@@ -20,8 +20,13 @@ import { ExpenseDraftDBRepository } from '@/db/models/expense-draft/expenseDraft
 import { ExpenseDBRepository } from '@/db/models/expense/expenseDB.repository'
 import { PaymentMethodDBRepository } from '@/db/models/payment-method/paymentMethodDB.repository'
 import { ExpenseExtractionService } from '@/modules/expense-extraction/expense-extraction.service'
+import { buildExtractionCatalog } from '@/modules/expense-extraction/expense-extraction.catalog'
+import { completeExpense } from '@/modules/expense-extraction/expense-extraction.resolver'
+import { mockCatalogSource } from '@/modules/expense-extraction/mocks/expense-extraction.mock'
 import { StoredFilesService } from '@/modules/stored-files/stored-files.service'
 import { DebtsService } from '@/modules/debts/debts.service'
+import { RecognitionService } from '@/modules/recognition/recognition.service'
+import { RecognizedScreen } from '@/modules/recognition/recognition.templates'
 
 import { ConversationService } from './conversation.service'
 import { MediaDownloaderRegistry } from './media-downloader.registry'
@@ -48,7 +53,9 @@ const mockExpenseDraftDB = {
   findByStatuses: vi.fn(),
   findByMediaUniqueId: vi.fn(),
   existsSavedWithOperationNumber: vi.fn(),
+  findSameCardDayAmount: vi.fn(),
   parkMessage: vi.fn(),
+  findOpenByBatch: vi.fn(),
 }
 const mockExpenseDB = { findMonthlyTotals: vi.fn() }
 const mockMediaDownloader = { download: vi.fn() }
@@ -61,6 +68,12 @@ const mockDebts = {
   cancelPayment: vi.fn(),
   findOpen: vi.fn(),
   summary: vi.fn(),
+}
+const mockRecognition = {
+  recognize: vi.fn(),
+  toExpenses: vi.fn(),
+  reconcile: vi.fn(),
+  todayStats: vi.fn(),
 }
 const mockExtraction = {
   extract: vi.fn(),
@@ -103,6 +116,7 @@ describe('ConversationService', () => {
         { provide: MediaDownloaderRegistry, useValue: mockMediaDownloader },
         { provide: StoredFilesService, useValue: mockStoredFiles },
         { provide: DebtsService, useValue: mockDebts },
+        { provide: RecognitionService, useValue: mockRecognition },
       ],
     }).compile()
 
@@ -114,12 +128,16 @@ describe('ConversationService', () => {
     mockExpenseDraftDB.failInterruptedUpdatedBefore.mockResolvedValue([])
     mockExpenseDraftDB.findByMediaUniqueId.mockResolvedValue(null)
     mockExpenseDraftDB.existsSavedWithOperationNumber.mockResolvedValue(false)
+    mockExpenseDraftDB.findSameCardDayAmount.mockResolvedValue([])
+    mockExpenseDraftDB.findOpenByBatch.mockResolvedValue([])
     mockExpenseDraftDB.create.mockImplementation(async (data) =>
       buildExpenseDraft({ ...data, id: `file-${data.itemIndex ?? 0}` }),
     )
     mockExpenseDraftDB.update.mockImplementation(async (id, data) => buildExpenseDraft({ id, ...data }))
     mockStoredFiles.storeTemporary.mockResolvedValue({ id: 'stored-1' })
     mockDebts.proposePayment.mockResolvedValue(null)
+    mockRecognition.recognize.mockResolvedValue(null)
+    mockRecognition.todayStats.mockResolvedValue({ attempts: 0, resolved: 0 })
     vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => {})
   })
 
@@ -233,6 +251,111 @@ describe('ConversationService', () => {
         expect.objectContaining({ text: 'persona dany', images: [{ mimeType: 'image/jpeg', data: 'base64' }] }),
       )
       expect(replies).toHaveLength(1)
+    })
+
+    it('should use the expenses a local template read, without calling the AI (D63)', async () => {
+      mockMediaDownloader.download.mockResolvedValue({ mimeType: 'image/jpeg', data: 'base64' })
+      const recognized = { screen: RecognizedScreen.BANK_MOVEMENT, expenses: [{ merchant: 'Plin-Rosa' }] }
+      mockRecognition.recognize.mockResolvedValue(recognized)
+      mockRecognition.toExpenses.mockReturnValue([buildResolvedExpense({ description: 'Plin a Rosa' })])
+
+      const { replies } = await service.handle(imageMessage())
+
+      expect(mockRecognition.recognize).toHaveBeenCalledWith({ mimeType: 'image/jpeg', data: 'base64' }, 'file-0')
+      expect(mockRecognition.toExpenses).toHaveBeenCalledWith(recognized.expenses, mockCatalog)
+      expect(mockExtraction.extract).not.toHaveBeenCalled()
+      expect(mockExpenseDraftDB.update).toHaveBeenCalledWith(
+        'file-0',
+        expect.objectContaining({ description: 'Plin a Rosa', documentType: RecognizedScreen.BANK_MOVEMENT }),
+      )
+      expect(replies[0].text).toContain('Plin a Rosa')
+    })
+
+    it('should answer the IO summary by category with how the month adds up, without an expense', async () => {
+      mockMediaDownloader.download.mockResolvedValue({ mimeType: 'image/jpeg', data: 'base64' })
+      mockRecognition.recognize.mockResolvedValue({
+        screen: RecognizedScreen.IO_CATEGORY_SUMMARY,
+        month: 9,
+        total: 3000.5,
+        categories: [{ name: 'DELIVERY', amount: 300.25, count: 14 }],
+      })
+      mockRecognition.reconcile.mockResolvedValue({
+        card: 'IO',
+        month: 9,
+        year: 2026,
+        appTotal: 3000.5,
+        registered: 2800.5,
+        categories: [{ name: 'DELIVERY', amount: 300.25, count: 14 }],
+      })
+
+      const { replies } = await service.handle(imageMessage())
+
+      expect(mockExtraction.extract).not.toHaveBeenCalled()
+      expect(mockExpenseDraftDB.update).toHaveBeenCalledWith('file-0', {
+        status: ExpenseDraftStatus.DISCARDED,
+        documentType: RecognizedScreen.IO_CATEGORY_SUMMARY,
+      })
+      expect(replies[0].text).toContain('IO · setiembre 2026')
+      expect(replies[0].text).toContain('Faltan S/ 200.00')
+      expect(replies[0].text).toContain('DELIVERY: S/ 300.25 (14)')
+    })
+
+    it('should give a card expense of a screenshot without a card to the primary card (D47)', async () => {
+      const catalog = buildExtractionCatalog({
+        ...mockCatalogSource,
+        paymentMethods: mockCatalogSource.paymentMethods.map((method) =>
+          method.id === 'method-ohpay' ? { ...method, isPrimary: true } : method,
+        ),
+      })
+      mockExtraction.loadCatalog.mockResolvedValue(catalog)
+      mockMediaDownloader.download.mockResolvedValue({ mimeType: 'image/jpeg', data: 'base64' })
+      mockExtraction.extract.mockResolvedValue({
+        expenses: [
+          completeExpense(
+            { ...buildResolvedExpense({ destination: ExpenseDestination.CREDIT_CARD, paymentMethodId: null }) },
+            {},
+            catalog,
+          ),
+        ],
+      })
+
+      await service.handle(imageMessage())
+
+      expect(mockExpenseDraftDB.update).toHaveBeenCalledWith(
+        'file-0',
+        expect.objectContaining({ paymentMethodId: 'method-ohpay', destination: ExpenseDestination.CREDIT_CARD }),
+      )
+    })
+
+    it('should warn about the same card, day, amount and merchant of an overlapping screenshot', async () => {
+      mockMediaDownloader.download.mockResolvedValue({ mimeType: 'image/jpeg', data: 'base64' })
+      mockExtraction.extract.mockResolvedValue({
+        expenses: [buildResolvedExpense({ merchant: 'PEDIDOSYA FO...', amount: 30.9, operationNumber: null })],
+      })
+      mockExpenseDraftDB.findSameCardDayAmount.mockResolvedValue([
+        { id: 'older', description: 'Delivery', merchant: 'PEDIDOSYA FOOD' },
+      ])
+
+      const { replies } = await service.handle(imageMessage())
+
+      const [query, since] = mockExpenseDraftDB.findSameCardDayAmount.mock.calls[0]
+      expect(query).toMatchObject({ id: 'file-0', paymentMethodId: 'method-yape', amount: 30.9 })
+      expect(Date.now() - since.getTime()).toBeCloseTo(60 * 24 * 60 * 60_000, -5)
+      expect(replies[0].text).toContain(
+        '⚠️ Parece repetido: ya hay <b>PEDIDOSYA FOOD</b> de S/ 30.90 con esa tarjeta el 22/09/2026.',
+      )
+    })
+
+    it('should not warn when the same amount that day is another merchant', async () => {
+      mockMediaDownloader.download.mockResolvedValue({ mimeType: 'image/jpeg', data: 'base64' })
+      mockExtraction.extract.mockResolvedValue({ expenses: [buildResolvedExpense({ merchant: 'YANGO' })] })
+      mockExpenseDraftDB.findSameCardDayAmount.mockResolvedValue([
+        { id: 'older', description: 'Uber', merchant: 'UBER' },
+      ])
+
+      const { replies } = await service.handle(imageMessage())
+
+      expect(replies[0].text).not.toContain('Parece repetido')
     })
 
     it('should not read the same image twice', async () => {
@@ -416,8 +539,9 @@ describe('ConversationService', () => {
       })
       expect(mockExpenseDraftDB.update).toHaveBeenCalledWith('file-0', { rawText: 'almuerzo 25 soles con yape' })
       expect(mockExtraction.extract).toHaveBeenCalledWith(
-        expect.objectContaining({ text: 'almuerzo 25 soles con yape', images: undefined }),
+        expect.objectContaining({ text: 'almuerzo 25 soles con yape' }),
       )
+      expect(mockExtraction.extract.mock.calls[0][0]).not.toHaveProperty('images')
       expect(replies[0].text).toContain('Entendí: <i>«almuerzo 25 soles con yape»</i>')
     })
 
@@ -714,6 +838,148 @@ describe('ConversationService', () => {
     })
   })
 
+  describe('lists of screenshots (P21)', () => {
+    const BATCH_ID = '0b6f5a1e-7c4d-4f7e-9a51-3d2f0c8e1b27'
+    const listed = [
+      buildExpenseDraft({ id: 'draft-a', batchId: BATCH_ID, description: 'Tienda', amount: 120, installment: '1/10' }),
+      buildExpenseDraft({
+        id: 'draft-b',
+        batchId: BATCH_ID,
+        description: 'Delivery',
+        amount: 30.9,
+        missingFields: ['categoryId'],
+      }),
+      buildExpenseDraft({ id: 'draft-c', batchId: BATCH_ID, description: 'Taxi', amount: 12, operationNumber: '555' }),
+    ]
+    const batchAction = (name: BotAction): ChannelMessage => ({
+      channel: ExpenseDraftChannel.TELEGRAM,
+      chatId: CHAT_ID,
+      messageId: 'callback:9',
+      type: ChannelMessageType.ACTION,
+      action: { name, draftId: BATCH_ID },
+    })
+
+    beforeEach(() => {
+      // draft-c is a receipt already saved
+      mockExpenseDraftDB.existsSavedWithOperationNumber.mockImplementation(
+        async (operationNumber) => operationNumber === '555',
+      )
+    })
+
+    it('should read each photo of an album as its own draft and answer with one list', async () => {
+      mockMediaDownloader.download.mockResolvedValue({ mimeType: 'image/jpeg', data: 'base64' })
+      mockExtraction.extract.mockResolvedValue({ expenses: [buildResolvedExpense()] })
+      mockExpenseDraftDB.findOpenByBatch.mockResolvedValue(listed)
+
+      const { replies } = await service.handle({
+        channel: ExpenseDraftChannel.TELEGRAM,
+        chatId: CHAT_ID,
+        messageId: '40',
+        type: ChannelMessageType.IMAGE,
+        media: { fileId: 'file-a', uniqueId: 'unique-a' },
+        album: [
+          { messageId: '40', media: { fileId: 'file-a', uniqueId: 'unique-a' } },
+          { messageId: '41', media: { fileId: 'file-b', uniqueId: 'unique-b' }, text: 'io' },
+        ],
+      })
+
+      const created = mockExpenseDraftDB.create.mock.calls.map(([data]) => data)
+      expect(created.map((data) => [data.messageId, data.mediaUniqueId, data.rawText])).toEqual([
+        ['40', 'unique-a', null],
+        ['41', 'unique-b', 'io'],
+      ])
+      expect(created[0].batchId).toBeTruthy()
+      expect(created[1].batchId).toBe(created[0].batchId)
+      expect(mockExpenseDraftDB.findOpenByBatch).toHaveBeenCalledWith(CHAT_ID, created[0].batchId)
+
+      expect(replies).toHaveLength(1)
+      expect(replies[0].text).toContain('📋 <b>3 gastos</b> · total S/ 162.90')
+      expect(replies[0].text).toContain('1. 22/09 · <b>Tienda</b> · S/ 120.00 · cuota 1/10 · Yape')
+      expect(replies[0].text).toContain('❓ falta categoría')
+      expect(replies[0].text).toContain('<b>Taxi</b> · S/ 12.00 · Yape ⚠️ repetido')
+      expect(replies[0].buttons?.flat().map((button) => button.data)).toEqual([
+        `all:${created[0].batchId}`,
+        `each:${created[0].batchId}`,
+        `park:${created[0].batchId}`,
+      ])
+    })
+
+    it('should keep the summary of a single expense when the list has only one', async () => {
+      mockMediaDownloader.download.mockResolvedValue({ mimeType: 'image/jpeg', data: 'base64' })
+      mockExtraction.extract.mockResolvedValue({ expenses: [buildResolvedExpense()] })
+      mockExpenseDraftDB.findOpenByBatch.mockResolvedValue([listed[0]])
+
+      const { replies } = await service.handle({
+        channel: ExpenseDraftChannel.TELEGRAM,
+        chatId: CHAT_ID,
+        messageId: '42',
+        type: ChannelMessageType.IMAGE,
+        media: { fileId: 'file-a', uniqueId: 'unique-a' },
+      })
+
+      expect(replies[0].buttons?.flat().map((button) => button.label)).toContain('✅ Guardar')
+    })
+
+    it('should save the complete ones with Guardar todos and leave the repeated and incomplete in Borrador', async () => {
+      mockExpenseDraftDB.findOpenByBatch.mockResolvedValue(listed)
+
+      const { replies } = await service.handle(batchAction(BotAction.SAVE_ALL))
+
+      expect(mockSaver.save).toHaveBeenCalledTimes(1)
+      expect(mockSaver.save).toHaveBeenCalledWith(listed[0])
+      expect(mockExpenseDraftDB.update).toHaveBeenCalledWith('draft-b', {
+        status: ExpenseDraftStatus.PENDING_REVIEW,
+        pendingField: null,
+      })
+      expect(mockExpenseDraftDB.update).toHaveBeenCalledWith('draft-c', {
+        status: ExpenseDraftStatus.PENDING_REVIEW,
+        pendingField: null,
+      })
+      expect(replies[0]).toMatchObject({ edit: true })
+      expect(replies[1].text).toContain('✅ Guardé 1 gasto.')
+      expect(replies[1].text).toContain('📝 2 quedaron en /borrador')
+    })
+
+    it('should park an expense whose save fails instead of losing the rest', async () => {
+      mockExpenseDraftDB.findOpenByBatch.mockResolvedValue([listed[0]])
+      mockSaver.save.mockRejectedValueOnce(new Error('db down'))
+
+      const { replies } = await service.handle(batchAction(BotAction.SAVE_ALL))
+
+      expect(mockExpenseDraftDB.update).toHaveBeenCalledWith(
+        'draft-a',
+        expect.objectContaining({ status: 'pending_review' }),
+      )
+      expect(replies[1].text).toContain('📝 1 quedó en /borrador')
+    })
+
+    it('should show each summary with Revisar uno por uno', async () => {
+      mockExpenseDraftDB.findOpenByBatch.mockResolvedValue(listed)
+
+      const { replies } = await service.handle(batchAction(BotAction.REVIEW_ALL))
+
+      expect(replies).toHaveLength(4)
+      expect(replies[0]).toMatchObject({ text: '👇 Revisa cada uno:', edit: true })
+      expect(replies[3].text).toContain('Parece que ya registraste este gasto')
+      expect(mockSaver.save).not.toHaveBeenCalled()
+    })
+
+    it('should park every expense with Borrador', async () => {
+      mockExpenseDraftDB.findOpenByBatch.mockResolvedValue(listed)
+
+      const { replies } = await service.handle(batchAction(BotAction.LATER_ALL))
+
+      expect(mockExpenseDraftDB.update).toHaveBeenCalledTimes(3)
+      expect(replies[1].text).toContain('Dejé 3 gastos en /borrador')
+    })
+
+    it('should ignore a list already processed or from another chat', async () => {
+      const result = await service.handle(batchAction(BotAction.SAVE_ALL))
+
+      expect(result).toEqual({ replies: [], notice: 'Este gasto ya fue procesado' })
+    })
+  })
+
   describe('AI usage (/uso)', () => {
     it('should show each model against its usable limit', async () => {
       mockExtraction.getUsage.mockResolvedValue([
@@ -725,6 +991,16 @@ describe('ConversationService', () => {
 
       expect(replies[0].text).toContain('🟢 <b>gemini</b> gemini-lite: 12 de 450')
       expect(replies[0].text).toContain('🔴 <b>groq</b> qwen: 900 de 900')
+      expect(replies[0].text).not.toContain('OCR')
+    })
+
+    it('should show the screenshots the local OCR read without AI (P21)', async () => {
+      mockExtraction.getUsage.mockResolvedValue([])
+      mockRecognition.todayStats.mockResolvedValue({ attempts: 5, resolved: 3 })
+
+      const { replies } = await service.handle(command(BotCommand.USAGE))
+
+      expect(replies[0].text).toContain('🔎 <b>OCR local</b>: 3 de 5 capturas sin AI')
     })
   })
 

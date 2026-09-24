@@ -82,6 +82,15 @@ export class ExpenseDBRepository {
     ]
   }
 
+  // P21 reconciliation: card expenses bought (processDate) in a month, in soles
+  async sumCardExpensesProcessedBetween(paymentMethodId: string, from: Date, to: Date): Promise<number> {
+    const rows = await this.prisma.creditCardExpense.findMany({
+      where: { paymentMethodId, processDate: { gte: from, lt: to } },
+      select: { amount: true, amountInPen: true },
+    })
+    return Math.round(rows.reduce((sum, row) => sum + (row.amountInPen ?? row.amount), 0) * 100) / 100
+  }
+
   private async createRecord(tx: Transaction, draftId: string, input: SaveExpenseDbDto) {
     const { destination, data } = input
     switch (destination) {

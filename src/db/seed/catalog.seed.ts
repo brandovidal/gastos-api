@@ -18,9 +18,14 @@ export async function seedCatalogs(prisma: PrismaClient): Promise<CatalogSeedRes
     await prisma.person.upsert({ where: { name }, create: { name, ...data }, update: data })
   }
 
-  for (const { name, aliases, showInBot = true, ...method } of PAYMENT_METHODS) {
-    const data = { ...method, aliases: JsonHelper.stringify(aliases), showInBot, isActive: true }
-    await prisma.paymentMethod.upsert({ where: { name }, create: { name, ...data }, update: data })
+  // isActive and showInBot are only set on create: what the web turns off (P22) survives every deploy
+  for (const { name, aliases, showInBot = true, isPrimary = false, ...method } of PAYMENT_METHODS) {
+    const data = { ...method, aliases: JsonHelper.stringify(aliases), isPrimary }
+    await prisma.paymentMethod.upsert({
+      where: { name },
+      create: { name, ...data, showInBot, isActive: true },
+      update: data,
+    })
   }
 
   const groupIdByName = new Map<string, string>()

@@ -75,7 +75,7 @@ El `Makefile` define las variables comunes (`ENV`, archivo `.env.<ENV>`) e inclu
 | `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_BUCKET` | Cloudflare R2 (capturas y notas de voz, D54); ver la sección 4b              |
 | `STORAGE_ENV`                                                            | `prod`: carpeta de producción en el bucket (D58). Sin ella la API no arranca |
 
-`PORT` lo pone Railway. El resto de variables de `.env.example` tienen valores por defecto. Pega los valores **sin comillas**.
+`PORT` lo pone Railway. El resto de variables de `.env.example` tienen valores por defecto. Entre ellas `OCR_ENABLED` (por defecto `true`: las capturas bancarias pasan primero por el OCR local, P21) y `OCR_CACHE_DIR` (por defecto la carpeta temporal del sistema). El modelo de español (~15 MB) se descarga de jsDelivr con la primera captura después de cada deploy. Con `OCR_ENABLED=false` todas las capturas van a la AI. Pega los valores **sin comillas**.
 
 `railway.json` define el build con el `Dockerfile` y el health check `/v1/health`. Plan Hobby: 5 USD/mes con 5 USD de uso incluido.
 
@@ -132,7 +132,8 @@ Plan gratis: 10 GB, 1 M escrituras y 10 M lecturas al mes, sin cobro de salida.
 
 - `curl https://…/v1/health` → `database: OK` y `telegram.webhook: OK`.
 - `https://…/docs` → **404** (Swagger apagado en producción).
-- Desde Telegram: un texto, una foto de Yape y una nota de voz se guardan; `/uso` muestra la cuota del día.
+- Desde Telegram: un texto, una foto de Yape y una nota de voz se guardan; `/uso` muestra la cuota del día y la línea "OCR local" después de la primera captura bancaria.
+- Un álbum de 2 o más capturas responde con una sola lista (✅ Guardar todos · 📝 Revisar uno por uno · 📝 Borrador).
 - Imagen igual a la de Railway: `make docker` la construye, la arranca sin secretos y comprueba `/v1/health` 200 y `/docs` 404. El CI corre lo mismo antes de cada deploy.
 - Antes de hacer push: `make check` (lo mismo que el job `check`).
 

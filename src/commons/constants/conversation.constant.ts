@@ -20,7 +20,13 @@ export enum BotAction {
   PAY_LIST = 'payl', // ✏️ Elegir cuota
   PAY_PICK = 'payp',
   PAY_CANCEL = 'payx',
+  // Lists of screenshots (P21): "<action>:<batchId>"
+  SAVE_ALL = 'all',
+  REVIEW_ALL = 'each',
+  LATER_ALL = 'park',
 }
+
+export const BATCH_ACTIONS: string[] = [BotAction.SAVE_ALL, BotAction.REVIEW_ALL, BotAction.LATER_ALL]
 
 export const DEBT_PAYMENT_ACTIONS: string[] = [
   BotAction.PAY_CONFIRM,

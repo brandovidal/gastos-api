@@ -81,6 +81,8 @@ describe('telegram mapper', () => {
       'AQADalbum1-x',
       'AQADalbum2-x',
     ])
+    expect(mapTelegramUpdate(TELEGRAM_UPDATES.album[0])?.mediaGroupId).toBe('13572468')
+    expect(mapTelegramUpdate(TELEGRAM_UPDATES.photo)).not.toHaveProperty('mediaGroupId')
   })
 
   it.each([

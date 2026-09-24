@@ -2,7 +2,7 @@ import { Currency, ExpenseDestination, SubscriptionPeriod } from '@/commons/cons
 import { ExpenseField } from '@/commons/constants/expense-extraction.constant'
 
 import { buildExtractionCatalog } from './expense-extraction.catalog'
-import { applyPaymentMethodRule, completeExpense, resolveExpense } from './expense-extraction.resolver'
+import { applyPaymentMethodRule, completeExpense, resolveExpense, withPrimaryCard } from './expense-extraction.resolver'
 import { ResolvedExpenseFields } from './dto/expense-extraction.types'
 import { mockCatalogSource, mockExtractedExpense } from './mocks/expense-extraction.mock'
 
@@ -133,5 +133,58 @@ describe('completeExpense', () => {
 
     expect(expense.destination).toBe(ExpenseDestination.CREDIT_CARD)
     expect(expense.missingFields).toEqual([])
+  })
+})
+
+// D47: bank screenshots without a visible card belong to the primary card (IO)
+describe('withPrimaryCard', () => {
+  const catalogWithPrimary = buildExtractionCatalog({
+    ...mockCatalogSource,
+    paymentMethods: mockCatalogSource.paymentMethods.map((method) =>
+      method.id === 'method-ohpay' ? { ...method, isPrimary: true } : method,
+    ),
+  })
+  const cardExpense = completeExpense(
+    {
+      destination: ExpenseDestination.CREDIT_CARD,
+      description: 'MP*MERCADOLIBRE',
+      amount: 164.9,
+      currency: Currency.PEN,
+      spentAt: '2026-09-14',
+      expenseType: null,
+      installment: '1/10',
+      period: null,
+      personId: 'person-brando',
+      paymentMethodId: null,
+      categoryId: null,
+      merchant: null,
+      operationNumber: null,
+      notes: null,
+    },
+    {},
+    catalogWithPrimary,
+  )
+
+  it('should use the primary card when a card expense has none', () => {
+    expect(cardExpense.missingFields).toContain(ExpenseField.PAYMENT_METHOD)
+
+    const resolved = withPrimaryCard(cardExpense, catalogWithPrimary)
+
+    expect(resolved.paymentMethodId).toBe('method-ohpay')
+    expect(resolved.missingFields).not.toContain(ExpenseField.PAYMENT_METHOD)
+  })
+
+  it('should keep the card it already has, other destinations, and work without a primary card', () => {
+    const withCard = { ...cardExpense, paymentMethodId: 'method-hidden' }
+    expect(withPrimaryCard(withCard, catalogWithPrimary)).toBe(withCard)
+
+    const daily = { ...cardExpense, destination: ExpenseDestination.DAILY }
+    expect(withPrimaryCard(daily, catalogWithPrimary)).toBe(daily)
+
+    expect(withPrimaryCard(cardExpense, buildExtractionCatalog(mockCatalogSource)).paymentMethodId).toBeNull()
+  })
+
+  it('should mark the primary card in the catalog the AI reads', () => {
+    expect(catalogWithPrimary.promptText).toContain('pm1 OhPay [credit_card] [primary]')
   })
 })

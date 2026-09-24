@@ -22,6 +22,7 @@ export const mockExpenseDraftRow: ExpenseDraft = {
   chatId: '123456',
   messageId: '42',
   itemIndex: 0,
+  batchId: null,
   inputType: ExpenseDraftInputType.TEXT,
   documentType: null,
   rawText: 'almuerzo 25 soles yape',

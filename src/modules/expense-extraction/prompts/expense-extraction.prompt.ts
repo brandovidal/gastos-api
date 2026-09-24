@@ -49,6 +49,8 @@ ${JSON.stringify(draft)}
   the receiver as merchant, the "Nro. de operación" as operationNumber, and paymentMethodRef = the Yape or Plin catalog entry.
   description: what was bought if the text next to the image says it, otherwise "Yape a <receiver>" / "Plin a <receiver>".
 - Bank app transfers or card vouchers: use the bank or card of the catalog when its name or last digits match.
+- Credit card app screenshots (movements, purchase detail) that do not show which card: destination credit_card and
+  paymentMethodRef = the [primary] card.
 - Money received ("Te yapearon", "Recibiste") is not an expense: return {"expenses": []}.
 - Ignore balances, limits, fees and ads; one item per payment actually made.
 - The text sent with the image adds details (person, payment method, category, concept) that apply to every expense in it.

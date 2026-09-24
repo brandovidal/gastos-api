@@ -84,6 +84,9 @@ export const TEXTS = {
   fileExpired: '📎 La captura ya expiró (7 días). Mándala otra vez.',
   duplicateImage: '🖼️ Ya recibí esta imagen antes. Búscala en /ultimos o /borrador.',
   imageTooLarge: '🖼️ La imagen pesa demasiado. Envíala como foto (no como archivo) o una captura más liviana.',
+  // Two overlapping screenshots with the same movement (P21)
+  possibleRepeat: (concept: string, amount: string, date: string) =>
+    `⚠️ Parece repetido: ya hay <b>${escapeHtml(concept)}</b> de ${amount} con esa tarjeta el ${date}.`,
   possibleDuplicate: (operationNumber: string) =>
     `⚠️ Parece que ya registraste este gasto (operación <b>${escapeHtml(operationNumber)}</b>).`,
   notAnExpense: '🤔 No encontré un gasto en tu mensaje. Prueba con algo como <i>almuerzo 25 soles con yape</i>.',
@@ -105,6 +108,27 @@ export const TEXTS = {
   cardDaysInvalid: 'No entendí los días. Escribe dos números del 1 al 31, por ejemplo <i>cierre 15, pago 5</i>.',
   paymentMethodCreated: (name: string) => `✅ Agregué <b>${escapeHtml(name)}</b> a tus medios de pago.`,
   paymentMethodNotAdded: 'Listo, no lo agregué. Elige uno de la lista o escríbelo de nuevo.',
+  batchSaved: (saved: number, parked: number) =>
+    [
+      saved ? `✅ Guardé ${saved} ${saved === 1 ? 'gasto' : 'gastos'}.` : null,
+      parked ? `📝 ${parked} ${parked === 1 ? 'quedó' : 'quedaron'} en /borrador (repetidos o incompletos).` : null,
+      'Ver: /ultimos · /resumen',
+    ]
+      .filter(Boolean)
+      .join('\n'),
+  batchParked: (count: number) => `📝 Dejé ${count} gastos en /borrador. Retómalos cuando quieras.`,
+  batchReview: '👇 Revisa cada uno:',
+}
+
+// "❓ falta categoría" in the list of screenshots
+const FIELD_NAMES: Partial<Record<ExpenseField, string>> = {
+  [ExpenseField.DESTINATION]: 'destino',
+  [ExpenseField.DESCRIPTION]: 'concepto',
+  [ExpenseField.AMOUNT]: 'monto',
+  [ExpenseField.PERSON]: 'persona',
+  [ExpenseField.PAYMENT_METHOD]: 'medio de pago',
+  [ExpenseField.CATEGORY]: 'categoría',
+  [ExpenseField.PERIOD]: 'período',
 }
 
 const QUESTIONS: Partial<Record<ExpenseField, string>> = {
@@ -239,6 +263,54 @@ export function buildParkedNotice(expenseDraft: ExpenseDraftDbDto): BotReply {
 const conceptOf = ({ description, amount, currency }: ExpenseDraftDbDto) =>
   `${escapeHtml(description ?? 'Gasto')} ${formatAmount(amount, currency)}`
 
+// Several screenshots or movements at once (P21): one list instead of one summary per expense
+export function buildBatchReply(
+  batchId: string,
+  expenseDrafts: ExpenseDraftDbDto[],
+  warnings: (string | null)[],
+  catalog: ExtractionCatalog,
+): BotReply {
+  const totals = new Map<string, number>()
+  for (const { amount, currency } of expenseDrafts) {
+    if (amount == null) continue
+    const key = currency ?? Currency.PEN
+    totals.set(key, (totals.get(key) ?? 0) + amount)
+  }
+  const total = [...totals].map(([currency, amount]) => formatAmount(Math.round(amount * 100) / 100, currency))
+
+  const lines = expenseDrafts.map((expenseDraft, index) => {
+    const details = [
+      formatDate(expenseDraft.spentAt).slice(0, 5),
+      `<b>${escapeHtml(expenseDraft.description ?? 'Sin concepto')}</b>`,
+      formatAmount(expenseDraft.amount, expenseDraft.currency),
+      expenseDraft.installment ? `cuota ${expenseDraft.installment}` : null,
+      expenseDraft.paymentMethodId ? nameOf(catalog, expenseDraft.paymentMethodId) : null,
+    ].filter(Boolean)
+    const flag = warnings[index]
+      ? ' ⚠️ repetido'
+      : expenseDraft.missingFields.length
+        ? ` ❓ falta ${expenseDraft.missingFields.map((field) => FIELD_NAMES[field as ExpenseField] ?? field).join(', ')}`
+        : ''
+    return `${index + 1}. ${details.join(' · ')}${flag}`
+  })
+  const pending = expenseDrafts.some((expenseDraft, index) => warnings[index] || expenseDraft.missingFields.length)
+
+  return {
+    text: [
+      `📋 <b>${expenseDrafts.length} gastos</b> · total ${total.join(' + ') || '—'}`,
+      ...lines,
+      ...(pending ? ['', '<i>Guardar todos deja los repetidos e incompletos en /borrador.</i>'] : []),
+    ].join('\n'),
+    buttons: [
+      [button('✅ Guardar todos', BotAction.SAVE_ALL, batchId)],
+      [
+        button('📝 Revisar uno por uno', BotAction.REVIEW_ALL, batchId),
+        button('📝 Borrador', BotAction.LATER_ALL, batchId),
+      ],
+    ],
+  }
+}
+
 export function formatRecent(expenseDrafts: ExpenseDraftDbDto[]): string {
   if (!expenseDrafts.length) return TEXTS.noRecent
 
@@ -313,12 +385,20 @@ export function buildDraftReplies(items: ExpenseDraftDbDto[], total: number, cat
 
 // Keeps the typed name short enough for callback_data (64 bytes in total)
 // /uso: one line per model; the bot stops using a model at its usable limit (90 % of the free quota)
-export function formatAiUsage(usage: AiModelUsage[]): string {
+export function formatAiUsage(usage: AiModelUsage[], ocr?: { attempts: number; resolved: number }): string {
   const lines = usage.map(({ provider, model, used, usableLimit }) => {
     const icon = used >= usableLimit ? '🔴' : used >= usableLimit * 0.8 ? '🟡' : '🟢'
     return `${icon} <b>${escapeHtml(provider)}</b> ${escapeHtml(model)}: ${used} de ${usableLimit}`
   })
-  return ['🤖 <b>Uso de la AI hoy</b>', ...lines, '', '<i>Al llegar al límite uso el siguiente modelo.</i>'].join('\n')
+  // P21: bank screenshots read by the local OCR, without spending AI
+  const ocrLine = ocr?.attempts ? [`🔎 <b>OCR local</b>: ${ocr.resolved} de ${ocr.attempts} capturas sin AI`] : []
+  return [
+    '🤖 <b>Uso de la AI hoy</b>',
+    ...lines,
+    ...ocrLine,
+    '',
+    '<i>Al llegar al límite uso el siguiente modelo.</i>',
+  ].join('\n')
 }
 
 export function toNewPaymentMethodName(text: string): string {

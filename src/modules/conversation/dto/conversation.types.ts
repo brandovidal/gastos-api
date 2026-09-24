@@ -17,6 +17,12 @@ export interface ChannelMedia {
   storedFileId?: string // bot_files row already holding the bytes (D58): web uploads always have one
 }
 
+export interface AlbumItem {
+  messageId: string
+  media: ChannelMedia
+  text?: string // Telegram puts the caption of an album on one of its photos
+}
+
 // A message from any channel, already translated by its adapter (Telegram now, WhatsApp later)
 export interface ChannelMessage {
   channel: ExpenseDraftChannel
@@ -25,6 +31,7 @@ export interface ChannelMessage {
   type: ChannelMessageType
   text?: string // message text, or the caption of an image
   media?: ChannelMedia
+  album?: AlbumItem[] // photos sent together (Telegram media_group_id), answered with one list (P21)
   command?: string
   action?: BotActionPayload
 }

@@ -13,6 +13,7 @@ export interface PaymentMethodSeed {
   type: PaymentMethodType
   aliases: string[]
   showInBot?: boolean
+  isPrimary?: boolean
   // credit cards only
   code?: string
   billingCloseDay?: number
@@ -89,6 +90,7 @@ export const PAYMENT_METHODS: PaymentMethodSeed[] = [
     type: PaymentMethodType.CREDIT_CARD,
     aliases: ['io', 'interbank io'],
     code: 'IO',
+    isPrimary: true, // D47: bank screenshots without a visible card are IO
     billingCloseDay: 25,
     paymentDueDay: 12,
     color: '#3B82F6',

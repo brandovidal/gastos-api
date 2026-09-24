@@ -1,3 +1,5 @@
+import { randomUUID } from 'node:crypto'
+
 import { Injectable, Logger } from '@nestjs/common'
 
 import { APP_TIME_ZONE } from '@/commons/constants/app.constant'
@@ -6,6 +8,7 @@ import {
   BotCommand,
   CARD_DAYS_FIELD_PREFIX,
   ChannelMessageType,
+  BATCH_ACTIONS,
   DEBT_PAYMENT_ACTIONS,
   FREE_CORRECTION_FIELD,
   DRAFTS_LIMIT,
@@ -33,9 +36,11 @@ import { ExpenseDraftDbDto } from '@/db/models/expense-draft/expenseDraftDB.dto'
 import { ExpenseDBRepository } from '@/db/models/expense/expenseDB.repository'
 import { PaymentMethodDBRepository } from '@/db/models/payment-method/paymentMethodDB.repository'
 import { ExpenseExtractionService } from '@/modules/expense-extraction/expense-extraction.service'
-import { completeExpense } from '@/modules/expense-extraction/expense-extraction.resolver'
+import { completeExpense, withPrimaryCard } from '@/modules/expense-extraction/expense-extraction.resolver'
 import { findCatalogEntryById, matchCatalogEntry } from '@/modules/expense-extraction/expense-extraction.catalog'
 import { DebtsService } from '@/modules/debts/debts.service'
+import { RecognitionService } from '@/modules/recognition/recognition.service'
+import { RecognitionResult, RecognizedScreen } from '@/modules/recognition/recognition.templates'
 import { StoredFilesService } from '@/modules/stored-files/stored-files.service'
 import {
   ExtractionCatalog,
@@ -45,6 +50,8 @@ import {
 } from '@/modules/expense-extraction/dto/expense-extraction.types'
 
 import { parseDebtPayment } from './debt-payment.parser'
+import { sameMerchant } from './duplicate.helper'
+import { formatReconciliation } from './recognition.messages'
 import {
   buildInstallmentPickerReply,
   buildPaymentProposalReply,
@@ -60,7 +67,9 @@ import { toExpenseFields, toExpenseDraftUpdate } from './expense-draft.mapper'
 import {
   DESTINATION_LABELS,
   TEXTS,
+  formatAmount,
   buildClosedReply,
+  buildBatchReply,
   buildParkedNotice,
   buildSavedNotice,
   buildExpenseReply,
@@ -71,7 +80,7 @@ import {
   formatRecent,
   toNewPaymentMethodName,
 } from './conversation.messages'
-import { BotActionPayload, BotReply, ChannelMessage, ConversationResult } from './dto/conversation.types'
+import { AlbumItem, BotActionPayload, BotReply, ChannelMessage, ConversationResult } from './dto/conversation.types'
 
 const MONTH_NAMES = [
   'enero',
@@ -87,6 +96,9 @@ const MONTH_NAMES = [
   'noviembre',
   'diciembre',
 ]
+
+// Overlapping screenshots are compared against what was registered in this window (P21)
+const DUPLICATE_LOOKBACK_DAYS = 60
 
 // Closed-for-now expenses of Borrador that accept only Retomar and Descartar
 const PARKED_STATUSES = [ExpenseDraftStatus.PENDING_REVIEW, ExpenseDraftStatus.FAILED]
@@ -108,6 +120,7 @@ export class ConversationService {
     private readonly mediaDownloaderRegistry: MediaDownloaderRegistry,
     private readonly storedFilesService: StoredFilesService,
     private readonly debtsService: DebtsService,
+    private readonly recognitionService: RecognitionService,
   ) {}
 
   async handle(message: ChannelMessage): Promise<ConversationResult> {
@@ -222,7 +235,37 @@ export class ConversationService {
 
   // An image (receipt photo, Yape/Plin screenshot) or a voice note is always a new message: an image caption adds
   // details for every expense in it and is never read as a correction of the open draft
+  // Screenshots share a batch: an album, or one image with several movements, is answered with one list (P21)
   private async handleMedia(message: ChannelMessage): Promise<BotReply[]> {
+    if (message.type === ChannelMessageType.AUDIO) return this.receiveMedia(message)
+
+    const batchId = randomUUID()
+    const items: AlbumItem[] = message.album?.length
+      ? message.album
+      : message.media
+        ? [{ messageId: message.messageId, media: message.media, text: message.text }]
+        : []
+    const replies: BotReply[] = []
+    for (const { messageId, media, text } of items) {
+      replies.push(...(await this.receiveMedia({ ...message, messageId, media, text, album: undefined }, batchId)))
+    }
+    return this.asList(message.chatId, batchId, replies)
+  }
+
+  // Two or more open expenses → one list; the replies without buttons (failures, cuadre, repeated images) stay
+  private async asList(chatId: string, batchId: string, replies: BotReply[]): Promise<BotReply[]> {
+    const expenseDrafts = await this.expenseDraftDBRepository.findOpenByBatch(chatId, batchId)
+    if (expenseDrafts.length < 2) return replies
+
+    const catalog = await this.expenseExtractionService.loadCatalog()
+    const warnings = await Promise.all(expenseDrafts.map((expenseDraft) => this.duplicateWarning(expenseDraft)))
+    return [
+      ...replies.filter((reply) => !reply.buttons?.length),
+      buildBatchReply(batchId, expenseDrafts, warnings, catalog),
+    ]
+  }
+
+  private async receiveMedia(message: ChannelMessage, batchId?: string): Promise<BotReply[]> {
     const { media } = message
     if (!media) return []
 
@@ -245,6 +288,7 @@ export class ConversationService {
         channel: message.channel,
         chatId: message.chatId,
         messageId: message.messageId,
+        batchId: batchId ?? null,
         inputType: isAudio ? ExpenseDraftInputType.AUDIO : ExpenseDraftInputType.IMAGE,
         // Audio: rawText is filled with the transcription
         rawText: isAudio ? null : message.text?.trim() || null,
@@ -264,8 +308,10 @@ export class ConversationService {
   // The input comes from the row itself: its text or caption, its image downloaded again from the channel, or its
   // voice note transcribed once (the transcription is kept in rawText, so a retry only repeats the extraction).
   private async extractInto(expenseDraft: ExpenseDraftDbDto, edit = false): Promise<BotReply[]> {
-    let expenses: ResolvedExpense[]
+    let expenses: ResolvedExpense[] = []
     let text = expenseDraft.rawText ?? undefined
+    let documentType: string | null = null
+    let summary: Extract<RecognitionResult, { screen: RecognizedScreen.IO_CATEGORY_SUMMARY }> | null = null
     const isAudio = expenseDraft.inputType === ExpenseDraftInputType.AUDIO
 
     try {
@@ -277,16 +323,36 @@ export class ConversationService {
         }
       }
 
-      const images =
-        expenseDraft.inputType === ExpenseDraftInputType.IMAGE && expenseDraft.mediaFileId
-          ? [await this.download(expenseDraft)]
-          : undefined
-      ;({ expenses } = await this.expenseExtractionService.extract({ text, images, draftId: expenseDraft.id }))
+      if (expenseDraft.inputType === ExpenseDraftInputType.IMAGE && expenseDraft.mediaFileId) {
+        // Hybrid (D47, D63): the local templates first; Yape, lists and anything unsure go to the AI
+        const image = await this.download(expenseDraft)
+        const recognized = await this.recognitionService.recognize(image, expenseDraft.id)
+        if (recognized?.screen === RecognizedScreen.IO_CATEGORY_SUMMARY) {
+          summary = recognized
+        } else if (recognized) {
+          documentType = recognized.screen
+          expenses = this.recognitionService.toExpenses(
+            recognized.expenses,
+            await this.expenseExtractionService.loadCatalog(),
+          )
+        } else {
+          ;({ expenses } = await this.expenseExtractionService.extract({
+            text,
+            images: [image],
+            draftId: expenseDraft.id,
+          }))
+        }
+      } else {
+        ;({ expenses } = await this.expenseExtractionService.extract({ text, draftId: expenseDraft.id }))
+      }
     } catch (error) {
       this.logger.warn(`[extractInto] extraction failed: ${(error as Error).message}`)
       await this.expenseDraftDBRepository.update(expenseDraft.id, { status: ExpenseDraftStatus.FAILED })
       return [{ text: error instanceof StoredFileExpiredException ? TEXTS.fileExpired : TEXTS.failed, edit }]
     }
+
+    // A summary by category has no expenses: it answers how the month of the card adds up
+    if (summary) return this.replyReconciliation(expenseDraft, summary, edit)
 
     // Voice notes show what was understood, so a wrong transcription is easy to spot
     const heard = isAudio && text ? `${TEXTS.heard(text)}\n\n` : ''
@@ -298,6 +364,10 @@ export class ConversationService {
 
     const catalog = await this.expenseExtractionService.loadCatalog()
     const replies: BotReply[] = []
+    // Card screenshots without a visible card are the primary card (D47)
+    if (expenseDraft.inputType === ExpenseDraftInputType.IMAGE) {
+      expenses = expenses.map((expense) => withPrimaryCard(expense, catalog))
+    }
 
     for (const [index, expense] of expenses.entries()) {
       const target =
@@ -308,18 +378,38 @@ export class ConversationService {
               chatId: expenseDraft.chatId,
               messageId: expenseDraft.messageId,
               itemIndex: expenseDraft.itemIndex + index,
+              batchId: expenseDraft.batchId,
               inputType: expenseDraft.inputType,
               rawText: text ?? null,
               mediaFileId: expenseDraft.mediaFileId,
               fileId: expenseDraft.fileId,
             })
 
-      const updated = await this.expenseDraftDBRepository.update(target.id, toExpenseDraftUpdate(expense))
+      const updated = await this.expenseDraftDBRepository.update(target.id, {
+        ...toExpenseDraftUpdate(expense),
+        ...(documentType ? { documentType } : {}),
+      })
       const reply = await this.withDuplicateWarning(updated, this.replyFor(updated, catalog, edit && index === 0))
       replies.push(index === 0 && heard ? { ...reply, text: `${heard}${reply.text}` } : reply)
     }
 
     return replies
+  }
+
+  private async replyReconciliation(
+    expenseDraft: ExpenseDraftDbDto,
+    summary: Extract<RecognitionResult, { screen: RecognizedScreen.IO_CATEGORY_SUMMARY }>,
+    edit: boolean,
+  ): Promise<BotReply[]> {
+    await this.expenseDraftDBRepository.update(expenseDraft.id, {
+      status: ExpenseDraftStatus.DISCARDED,
+      documentType: summary.screen,
+    })
+    const reconciliation = await this.recognitionService.reconcile(
+      summary,
+      await this.expenseExtractionService.loadCatalog(),
+    )
+    return [{ text: reconciliation ? formatReconciliation(reconciliation) : TEXTS.notAnExpense, edit }]
   }
 
   // From R2 when the file is already stored (D58); otherwise from the channel the first time, and kept in R2 for 7 days
@@ -391,9 +481,65 @@ export class ConversationService {
     return { text: TEXTS.correctionFailed }
   }
 
+  // ✅ Guardar todos saves the complete ones and leaves repeated or incomplete ones in Borrador; 📝 Revisar uno por
+  // uno shows each summary; 📝 Borrador parks them all
+  private async handleBatchAction(
+    chatId: string,
+    { name, draftId: batchId }: BotActionPayload,
+  ): Promise<ConversationResult> {
+    const expenseDrafts = await this.expenseDraftDBRepository.findOpenByBatch(chatId, batchId)
+    if (!expenseDrafts.length) return { replies: [], notice: TEXTS.alreadyProcessed }
+
+    const catalog = await this.expenseExtractionService.loadCatalog()
+    const park = (id: string) =>
+      this.expenseDraftDBRepository.update(id, { status: ExpenseDraftStatus.PENDING_REVIEW, pendingField: null })
+
+    switch (name) {
+      case BotAction.SAVE_ALL: {
+        let saved = 0
+        for (const expenseDraft of expenseDrafts) {
+          const complete = !expenseDraft.missingFields.length && !(await this.duplicateWarning(expenseDraft))
+          try {
+            if (!complete) throw new Error('repeated or incomplete')
+            await this.expenseSaverService.save(expenseDraft)
+            saved++
+          } catch (error) {
+            if (complete) this.logger.warn(`[handleBatchAction] save failed: ${(error as Error).message}`)
+            await park(expenseDraft.id)
+          }
+        }
+        const parked = expenseDrafts.length - saved
+        return {
+          replies: [
+            { text: `✅ <b>Lista procesada</b>: ${saved} guardados, ${parked} en borrador.`, edit: true },
+            { text: TEXTS.batchSaved(saved, parked) },
+          ],
+          notice: TEXTS.saved,
+        }
+      }
+      case BotAction.REVIEW_ALL: {
+        const replies: BotReply[] = [{ text: TEXTS.batchReview, edit: true }]
+        for (const expenseDraft of expenseDrafts) {
+          replies.push(await this.withDuplicateWarning(expenseDraft, this.replyFor(expenseDraft, catalog)))
+        }
+        return { replies }
+      }
+      default: {
+        for (const expenseDraft of expenseDrafts) await park(expenseDraft.id)
+        return {
+          replies: [
+            { text: `📝 <b>En borrador</b>: ${expenseDrafts.length} gastos.`, edit: true },
+            { text: TEXTS.batchParked(expenseDrafts.length) },
+          ],
+        }
+      }
+    }
+  }
+
   private async handleAction(message: ChannelMessage): Promise<ConversationResult> {
     const action = message.action as BotActionPayload
     if (DEBT_PAYMENT_ACTIONS.includes(action.name)) return this.handleDebtPaymentAction(action)
+    if (BATCH_ACTIONS.includes(action.name)) return this.handleBatchAction(message.chatId, action)
 
     const expenseDraft = await this.expenseDraftDBRepository.findById(action.draftId)
     const status = expenseDraft?.status as ExpenseDraftStatus | undefined
@@ -533,7 +679,11 @@ export class ConversationService {
         return [{ text: TEXTS.cancelled(count) }]
       }
       case BotCommand.USAGE: {
-        return [{ text: formatAiUsage(await this.expenseExtractionService.getUsage()) }]
+        const [usage, ocr] = await Promise.all([
+          this.expenseExtractionService.getUsage(),
+          this.recognitionService.todayStats(),
+        ])
+        return [{ text: formatAiUsage(usage, ocr) }]
       }
       case BotCommand.RECENT: {
         const recent = await this.expenseDraftDBRepository.findRecentSaved(
@@ -597,16 +747,34 @@ export class ConversationService {
     return formatCollectMessage(person.name, await this.debtsService.findOpen(person.id, DebtDirection.OWED_TO_ME))
   }
 
-  // The same receipt already saved (same operation number, e.g. typed first and then sent as a screenshot)
+  // Same receipt (operation number) or, without one, the same card + day + amount + merchant of an overlapping
+  // screenshot in the last 60 days (P21). Only a warning: the user decides.
   private async withDuplicateWarning(expenseDraft: ExpenseDraftDbDto, reply: BotReply): Promise<BotReply> {
-    const { operationNumber } = expenseDraft
-    if (!operationNumber) return reply
+    const warning = await this.duplicateWarning(expenseDraft)
+    return warning ? { ...reply, text: `${warning}\n\n${reply.text}` } : reply
+  }
 
-    const duplicated = await this.expenseDraftDBRepository.existsSavedWithOperationNumber(
-      operationNumber,
-      expenseDraft.id,
+  private async duplicateWarning(expenseDraft: ExpenseDraftDbDto): Promise<string | null> {
+    const { id, operationNumber, paymentMethodId, amount, spentAt } = expenseDraft
+    if (operationNumber) {
+      const duplicated = await this.expenseDraftDBRepository.existsSavedWithOperationNumber(operationNumber, id)
+      return duplicated ? TEXTS.possibleDuplicate(operationNumber) : null
+    }
+    if (!paymentMethodId || amount == null || !spentAt) return null
+
+    const since = new Date(Date.now() - DUPLICATE_LOOKBACK_DAYS * 24 * 60 * 60_000)
+    const candidates = await this.expenseDraftDBRepository.findSameCardDayAmount(
+      { id, paymentMethodId, amount, spentAt },
+      since,
     )
-    return duplicated ? { ...reply, text: `${TEXTS.possibleDuplicate(operationNumber)}\n\n${reply.text}` } : reply
+    const concept = expenseDraft.merchant ?? expenseDraft.description
+    const match = candidates.find((candidate) => sameMerchant(candidate.merchant ?? candidate.description, concept))
+    if (!match) return null
+    return TEXTS.possibleRepeat(
+      match.merchant ?? match.description ?? '',
+      formatAmount(amount, expenseDraft.currency),
+      spentAt.toISOString().slice(0, 10).split('-').reverse().join('/'),
+    )
   }
 
   // A short text without digits ("bbva", "tarjeta ripley"); anything with an amount is a new expense

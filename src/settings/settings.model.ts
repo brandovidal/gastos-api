@@ -18,6 +18,11 @@ export interface StorageConfig {
   localDir: string
 }
 
+export interface OcrConfig {
+  enabled: boolean
+  cacheDir: string // where tesseract.js keeps the Spanish model (downloaded once)
+}
+
 export interface DatabaseConfig {
   url: string
   authToken?: string

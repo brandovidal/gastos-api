@@ -44,8 +44,6 @@ describe('Prisma schema (integration)', () => {
       'cat_categories',
       'cat_payment_methods',
       'cat_people',
-      // copied into exp_debts by the P17 migration; dropped by a later one (migrations stay backward compatible)
-      'exp_accounts_receivable',
       'exp_credit_card_expenses',
       'exp_daily_expenses',
       'exp_debt_payments',

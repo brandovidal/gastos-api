@@ -113,4 +113,74 @@ describe('ExpenseDraftDBRepository (integration)', () => {
     await expect(repository.findById(interrupted.id)).resolves.toMatchObject({ status: ExpenseDraftStatus.FAILED })
     await expect(repository.findById(extracted.id)).resolves.toMatchObject({ status: ExpenseDraftStatus.DRAFT })
   })
+
+  // P21: overlapping screenshots of the same card
+  it('should find drafts of the same card, day and amount, only open or saved and recent', async () => {
+    const card = await prisma.paymentMethod.create({
+      data: { name: `Duplicates Card ${Date.now()}`, type: 'credit_card' },
+    })
+    const other = await prisma.paymentMethod.create({ data: { name: `Other Card ${Date.now()}`, type: 'credit_card' } })
+    const spentAt = new Date('2026-09-22T00:00:00.000Z')
+    let messageId = 0
+    const draft = (data: Record<string, unknown>) =>
+      prisma.expenseDraft.create({
+        data: {
+          channel: ExpenseDraftChannel.TELEGRAM,
+          chatId: 'duplicates-chat',
+          messageId: `dup-${++messageId}`,
+          inputType: ExpenseDraftInputType.IMAGE,
+          paymentMethodId: card.id,
+          amount: 30.9,
+          spentAt,
+          merchant: 'PEDIDOSYA FOOD',
+          status: ExpenseDraftStatus.SAVED,
+          ...data,
+        },
+      })
+
+    const current = await draft({ status: ExpenseDraftStatus.DRAFT, merchant: 'PEDIDOSYA FO...' })
+    const saved = await draft({})
+    const parked = await draft({ status: ExpenseDraftStatus.PENDING_REVIEW })
+    await draft({ status: ExpenseDraftStatus.DISCARDED })
+    await draft({ paymentMethodId: other.id })
+    await draft({ amount: 31 })
+    await draft({ spentAt: new Date('2026-09-23T00:00:00.000Z') })
+    await draft({ createdAt: new Date('2026-06-01T00:00:00.000Z') })
+
+    const found = await repository.findSameCardDayAmount(
+      { id: current.id, paymentMethodId: card.id, amount: 30.9, spentAt: new Date('2026-09-22T00:00:00.000Z') },
+      new Date('2026-07-24T00:00:00.000Z'),
+    )
+
+    expect(found.map((row) => row.id).sort()).toEqual([saved.id, parked.id].sort())
+
+    // Test catalogs out: the conversation flows replay AI answers that point to catalog refs by position
+    await prisma.expenseDraft.deleteMany({ where: { chatId: 'duplicates-chat' } })
+    await prisma.paymentMethod.deleteMany({ where: { id: { in: [card.id, other.id] } } })
+  })
+
+  it('should list the open expenses of one batch of screenshots, of that chat only, in arrival order', async () => {
+    const batchChat = 'batch-chat'
+    const create = (messageId: string, itemIndex: number, overrides: { chatId?: string; batchId?: string } = {}) =>
+      repository.create({
+        channel: ExpenseDraftChannel.TELEGRAM,
+        chatId: overrides.chatId ?? batchChat,
+        messageId,
+        itemIndex,
+        batchId: overrides.batchId ?? 'batch-1',
+        inputType: ExpenseDraftInputType.IMAGE,
+      })
+    const first = await create('1', 0)
+    const second = await create('1', 1)
+    const third = await create('2', 0)
+    const saved = await create('3', 0)
+    await repository.update(saved.id, { status: ExpenseDraftStatus.SAVED })
+    await create('4', 0, { batchId: 'batch-2' })
+    await create('5', 0, { chatId: 'another-chat' })
+
+    const found = await repository.findOpenByBatch(batchChat, 'batch-1')
+
+    expect(found.map((row) => row.id)).toEqual([first.id, second.id, third.id])
+    await prisma.expenseDraft.deleteMany({ where: { chatId: { in: [batchChat, 'another-chat'] } } })
+  })
 })

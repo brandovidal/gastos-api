@@ -23,6 +23,7 @@ export const buildExpenseDraft = (overrides: Partial<ExpenseDraftDbDto> = {}): E
   chatId: CHAT_ID,
   messageId: '10',
   itemIndex: 0,
+  batchId: null,
   inputType: ExpenseDraftInputType.TEXT,
   documentType: null,
   rawText: 'almuerzo 25 soles con yape',

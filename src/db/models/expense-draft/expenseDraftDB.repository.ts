@@ -53,6 +53,15 @@ export class ExpenseDraftDBRepository {
     return expenseDraft ? this.serializer.toDto(expenseDraft) : null
   }
 
+  // The open expenses of one list of screenshots (P21), in the order they arrived
+  async findOpenByBatch(chatId: string, batchId: string): Promise<ExpenseDraftDbDto[]> {
+    const expenseDrafts = await this.prisma.expenseDraft.findMany({
+      where: { chatId, batchId, status: { in: OPEN_EXPENSE_DRAFT_STATUSES } },
+      orderBy: [{ createdAt: 'asc' }, { itemIndex: 'asc' }],
+    })
+    return expenseDrafts.map((expenseDraft) => this.serializer.toDto(expenseDraft))
+  }
+
   async update(id: string, data: UpdateExpenseDraftDbDto): Promise<ExpenseDraftDbDto> {
     try {
       const expenseDraft = await this.prisma.expenseDraft.update({
@@ -126,6 +135,25 @@ export class ExpenseDraftDBRepository {
       where: { operationNumber, status: ExpenseDraftStatus.SAVED, id: { not: excludeId } },
     })
     return count > 0
+  }
+
+  // P21: the same card, day and amount already registered or pending (overlapping screenshots), last 60 days
+  findSameCardDayAmount(
+    { id, paymentMethodId, amount, spentAt }: { id: string; paymentMethodId: string; amount: number; spentAt: Date },
+    since: Date,
+  ): Promise<Pick<ExpenseDraftDbDto, 'id' | 'description' | 'merchant'>[]> {
+    const dayStart = new Date(`${spentAt.toISOString().slice(0, 10)}T00:00:00.000Z`)
+    return this.prisma.expenseDraft.findMany({
+      where: {
+        id: { not: id },
+        paymentMethodId,
+        amount: { gte: amount - 0.005, lte: amount + 0.005 },
+        spentAt: { gte: dayStart, lt: new Date(dayStart.getTime() + 24 * 60 * 60_000) },
+        status: { in: [ExpenseDraftStatus.SAVED, ExpenseDraftStatus.PENDING_REVIEW, ...OPEN_EXPENSE_DRAFT_STATUSES] },
+        createdAt: { gte: since },
+      },
+      select: { id: true, description: true, merchant: true },
+    })
   }
 
   // /cancelar: close every open expense draft of the chat

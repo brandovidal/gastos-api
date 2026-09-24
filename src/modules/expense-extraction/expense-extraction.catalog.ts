@@ -37,6 +37,7 @@ export function buildExtractionCatalog({ people, paymentMethods, categories }: C
       paymentType: method.type as PaymentMethodType,
       showInBot: method.showInBot,
       billingCloseDay: method.billingCloseDay,
+      isPrimary: method.isPrimary,
     })),
     ...categories.map((category, index) => ({
       ref: ref(CatalogKind.CATEGORY, index),
@@ -62,7 +63,8 @@ export function buildExtractionCatalog({ people, paymentMethods, categories }: C
     'paymentMethods:',
     lines(
       CatalogKind.PAYMENT_METHOD,
-      (entry) => `${entry.ref} ${entry.name} [${entry.paymentType}]${aliasText(entry.aliases)}`,
+      (entry) =>
+        `${entry.ref} ${entry.name} [${entry.paymentType}]${entry.isPrimary ? ' [primary]' : ''}${aliasText(entry.aliases)}`,
     ),
     'categories:',
     lines(CatalogKind.CATEGORY, (entry) => `${entry.ref} ${entry.name}`),
@@ -73,6 +75,18 @@ export function buildExtractionCatalog({ people, paymentMethods, categories }: C
 
 export function findDefaultPerson(catalog: ExtractionCatalog): CatalogEntry | null {
   return catalog.entries.find((entry) => entry.kind === CatalogKind.PERSON && entry.isDefault) ?? null
+}
+
+// The card of bank screenshots that do not show which one (D47: IO)
+export function findPrimaryCard(catalog: ExtractionCatalog): CatalogEntry | null {
+  return (
+    catalog.entries.find(
+      (entry) =>
+        entry.kind === CatalogKind.PAYMENT_METHOD &&
+        entry.isPrimary &&
+        entry.paymentType === PaymentMethodType.CREDIT_CARD,
+    ) ?? null
+  )
 }
 
 export function findCatalogEntryById(catalog: ExtractionCatalog, id: string | null): CatalogEntry | null {

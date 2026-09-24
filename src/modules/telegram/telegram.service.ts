@@ -3,7 +3,11 @@ import { ConfigService } from '@nestjs/config'
 
 import { ChannelMessageType } from '@/commons/constants/conversation.constant'
 import { ExpenseDraftChannel } from '@/commons/constants/expense-draft.constant'
-import { INTERRUPTED_DRAFT_MIN_AGE_MS, SHUTDOWN_DRAIN_TIMEOUT_MS } from '@/commons/constants/telegram.constant'
+import {
+  ALBUM_WAIT_MS,
+  INTERRUPTED_DRAFT_MIN_AGE_MS,
+  SHUTDOWN_DRAIN_TIMEOUT_MS,
+} from '@/commons/constants/telegram.constant'
 import { KeyedQueue } from '@/commons/helpers/keyed-queue.helper'
 import { TelegramConfig } from '@/settings/settings.model'
 import { TelegramClient } from '@/providers/telegram/telegram.client'
@@ -30,10 +34,18 @@ const MIME_BY_EXTENSION: Record<string, string> = {
   wav: 'audio/wav',
 }
 
+interface PendingAlbum {
+  updates: MappedTelegramUpdate[]
+  timer: NodeJS.Timeout
+  done: Promise<void>
+  flush: () => void
+}
+
 @Injectable()
 export class TelegramService implements OnModuleInit, OnApplicationBootstrap, BeforeApplicationShutdown {
   private readonly logger = new Logger(TelegramService.name)
   private readonly queue = new KeyedQueue()
+  private readonly albums = new Map<string, PendingAlbum>()
 
   constructor(
     private readonly configService: ConfigService,
@@ -59,6 +71,7 @@ export class TelegramService implements OnModuleInit, OnApplicationBootstrap, Be
 
   // Let queued messages finish (AI calls included) before the process exits
   async beforeApplicationShutdown() {
+    for (const album of [...this.albums.values()]) album.flush()
     const drained = await this.queue.drain(SHUTDOWN_DRAIN_TIMEOUT_MS)
     if (!drained) this.logger.warn('[beforeApplicationShutdown] exiting with messages still in process')
   }
@@ -73,7 +86,42 @@ export class TelegramService implements OnModuleInit, OnApplicationBootstrap, Be
       return null
     }
 
+    if (mapped.mediaGroupId) return this.collectAlbum(mapped, mapped.mediaGroupId)
     return this.queue.run(mapped.message.chatId, () => this.process(mapped))
+  }
+
+  // Each photo of an album is its own update: keep them until none arrives for ALBUM_WAIT_MS and handle them as one
+  // message, so the chat gets one list instead of one summary per photo
+  private collectAlbum(mapped: MappedTelegramUpdate, groupId: string): Promise<void> {
+    const key = `${mapped.message.chatId}:${groupId}`
+    const pending = this.albums.get(key)
+    if (pending) {
+      pending.updates.push(mapped)
+      pending.timer.refresh()
+      return pending.done
+    }
+
+    let resolve!: () => void
+    const done = new Promise<void>((settle) => (resolve = settle))
+    const album: PendingAlbum = {
+      updates: [mapped],
+      done,
+      timer: setTimeout(() => album.flush(), ALBUM_WAIT_MS),
+      flush: () => {
+        clearTimeout(album.timer)
+        this.albums.delete(key)
+        const [first] = album.updates
+        const message = {
+          ...first.message,
+          album: album.updates
+            .sort((a, b) => Number(a.message.messageId) - Number(b.message.messageId))
+            .map(({ message: { messageId, media, text } }) => ({ messageId, media: media!, text })),
+        }
+        void this.queue.run(message.chatId, () => this.process({ message })).then(resolve, resolve)
+      },
+    }
+    this.albums.set(key, album)
+    return done
   }
 
   private async process({ message, callbackQueryId, sourceMessageId }: MappedTelegramUpdate): Promise<void> {

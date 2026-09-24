@@ -39,6 +39,17 @@ describe('bot action codec', () => {
     })
   })
 
+  it.each([BotAction.SAVE_ALL, BotAction.REVIEW_ALL, BotAction.LATER_ALL])(
+    'should round-trip the "%s" button of a list of screenshots with its batch uuid',
+    (name) => {
+      const payload = { name, draftId: '0b6f5a1e-7c4d-4f7e-9a51-3d2f0c8e1b27' }
+      const data = encodeBotAction(payload)
+
+      expect(Buffer.byteLength(data)).toBeLessThanOrEqual(64)
+      expect(decodeBotAction(data)).toEqual(payload)
+    },
+  )
+
   it.each(['', 'unknown:id', 'ok', `set:${FILE_ID}`, `set:${FILE_ID}:zz:value`, 'payp:batch'])(
     'should reject "%s"',
     (data) => {

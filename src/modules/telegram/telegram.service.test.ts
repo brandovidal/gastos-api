@@ -158,6 +158,48 @@ describe('TelegramService', () => {
     await expect(downloader('file-7')).resolves.toMatchObject({ mimeType: 'audio/ogg' })
   })
 
+  it('should wait for every photo of an album and handle them as one message (P21)', async () => {
+    vi.useFakeTimers()
+    try {
+      mockConversation.handle.mockResolvedValue({ replies: [{ text: '📋 2 gastos' }] })
+      const [first, second] = TELEGRAM_UPDATES.album
+
+      const done = service.enqueue(second)
+      service.enqueue(first)
+      await vi.advanceTimersByTimeAsync(1_000)
+      expect(mockConversation.handle).not.toHaveBeenCalled()
+
+      await vi.advanceTimersByTimeAsync(1_500)
+      await done
+
+      expect(mockConversation.handle).toHaveBeenCalledTimes(1)
+      expect(mockConversation.handle.mock.calls[0][0]).toMatchObject({
+        messageId: '15',
+        album: [
+          { messageId: '14', media: { uniqueId: 'AQADalbum1-x' } },
+          { messageId: '15', media: { uniqueId: 'AQADalbum2-x' } },
+        ],
+      })
+      expect(mockClient.sendMessage).toHaveBeenCalledTimes(1)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('should not lose an album that is still waiting when the app shuts down', async () => {
+    vi.useFakeTimers()
+    try {
+      mockConversation.handle.mockResolvedValue({ replies: [] })
+      service.enqueue(TELEGRAM_UPDATES.album[0])
+
+      await service.beforeApplicationShutdown()
+
+      expect(mockConversation.handle).toHaveBeenCalledTimes(1)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('should show "typing" while an image is read', async () => {
     mockConversation.handle.mockResolvedValue({ replies: [] })
 

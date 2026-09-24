@@ -9,6 +9,7 @@ export interface MappedTelegramUpdate {
   message: ChannelMessage
   callbackQueryId?: string // must be answered right away
   sourceMessageId?: number // message with the pressed button, edited by "edit" replies
+  mediaGroupId?: string // photos of one album arrive as separate updates with the same id
 }
 
 // "/resumen@my_bot extra" -> "resumen"
@@ -48,6 +49,7 @@ export function mapTelegramUpdate({
         media,
         ...(message.caption?.trim() ? { text: message.caption.trim() } : {}),
       },
+      ...(message.media_group_id ? { mediaGroupId: message.media_group_id } : {}),
     }
   }
 

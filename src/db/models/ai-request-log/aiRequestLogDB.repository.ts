@@ -14,7 +14,8 @@ export class AiRequestLogDBRepository {
   }
 
   // Free tiers limit requests per day and model, failed requests included
-  async countSince(provider: AiProvider, model: string, since: Date): Promise<number> {
-    return this.prisma.aiRequestLog.count({ where: { provider, model, createdAt: { gte: since } } })
+  // success narrows it to the calls that worked (the local OCR counts what it solved without the AI)
+  async countSince(provider: AiProvider, model: string, since: Date, success?: boolean): Promise<number> {
+    return this.prisma.aiRequestLog.count({ where: { provider, model, createdAt: { gte: since }, success } })
   }
 }

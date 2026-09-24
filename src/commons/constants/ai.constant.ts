@@ -1,12 +1,16 @@
 export enum AiProvider {
   GEMINI = 'gemini',
   GROQ = 'groq',
+  LOCAL = 'local', // OCR of bank screenshots (P21): logged like the AI to count what it saved
 }
 
 export enum AiOperation {
   EXTRACT = 'extract',
   TRANSCRIBE = 'transcribe',
+  RECOGNIZE = 'recognize', // local OCR + templates (D63)
 }
+
+export const OCR_MODEL = 'tesseract'
 
 export enum AiInputPartType {
   TEXT = 'text',
@@ -38,6 +42,7 @@ export const AI_QUOTA_USAGE_THRESHOLD = 0.9
 export const AI_QUOTA_TIME_ZONES: Record<AiProvider, string> = {
   [AiProvider.GEMINI]: 'America/Los_Angeles',
   [AiProvider.GROQ]: 'UTC',
+  [AiProvider.LOCAL]: 'America/Lima', // no quota: only for /uso
 }
 
 export const DEFAULT_AI_TIMEOUT_MS = 20_000

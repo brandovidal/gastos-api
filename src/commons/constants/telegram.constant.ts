@@ -13,6 +13,9 @@ export const TELEGRAM_RETRY_DELAY_MS = 1_000
 // A longer flood wait is not worth blocking the chat queue: fail and let the user retry
 export const TELEGRAM_MAX_RETRY_AFTER_SECONDS = 30
 
+// The photos of an album arrive as separate updates within a second: wait this long after the last one (P21)
+export const ALBUM_WAIT_MS = 1_500
+
 // Shutdown waits this long for the chat queues (Railway sends SIGTERM on each deploy)
 export const SHUTDOWN_DRAIN_TIMEOUT_MS = 10_000
 // On startup, drafts without extraction older than this were interrupted by the restart (newer ones may still

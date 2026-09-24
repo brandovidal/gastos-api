@@ -27,6 +27,7 @@ const paymentMethod = (overrides: Partial<PaymentMethodDbDto>): PaymentMethodDbD
   aliases: [],
   isActive: true,
   showInBot: true,
+  isPrimary: false,
   billingCloseDay: null,
   paymentDueDay: null,
   color: null,

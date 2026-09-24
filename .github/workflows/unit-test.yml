@@ -34,7 +34,7 @@ jobs:
 
       - name: Create test env
         # Tests never call R2 (D58): files go to a local folder
-        run: cp .env.example .env.test && sed -i 's/^STORAGE_ENV=.*/STORAGE_ENV=test/' .env.test
+        run: cp .env.example .env.test && sed -i -e 's/^STORAGE_ENV=.*/STORAGE_ENV=test/' -e 's/^OCR_ENABLED=.*/OCR_ENABLED=false/' .env.test
 
       - name: Run Unit Tests
         run: pnpm test:ci

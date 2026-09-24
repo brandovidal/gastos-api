@@ -48,6 +48,7 @@ model PaymentMethod {
   aliases         String   @default("[]") // JSON array of lowercase aliases used by the AI
   isActive        Boolean  @default(true)
   showInBot       Boolean  @default(true) // offered as a quick reply button in the bot
+  isPrimary       Boolean  @default(false) // the card of screenshots that do not show which one (D47): IO
   billingCloseDay Int? // credit cards only
   paymentDueDay   Int? // credit cards only
   color           String?
@@ -144,6 +145,7 @@ model ExpenseDraft {
   chatId          String
   messageId       String
   itemIndex       Int            @default(0) // several expenses in the same message
+  batchId         String? // screenshots answered with one list (P21): an album or an image with several expenses
   inputType       String // ExpenseDraftInputType
   documentType    String? // ExpenseDraftDocumentType
   rawText         String? // message text or audio transcription
@@ -188,6 +190,7 @@ model ExpenseDraft {
   @@index([channel, chatId, status])
   @@index([channel, chatId, mediaUniqueId])
   @@index([fileId])
+  @@index([batchId])
   @@index([destination, status, spentAt])
   @@map("bot_expense_drafts")
 }

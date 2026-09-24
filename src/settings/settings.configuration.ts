@@ -1,3 +1,5 @@
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import * as process from 'process'
 
 import {
@@ -29,6 +31,11 @@ export default () => ({
     r2SecretAccessKey: process.env.R2_SECRET_ACCESS_KEY,
     r2Bucket: process.env.R2_BUCKET ?? 'kogane',
     localDir: process.env.STORAGE_LOCAL_DIR ?? '.data/storage',
+  },
+  // Local OCR of bank screenshots (P21, D63); OCR_ENABLED=false sends every screenshot to the AI
+  ocr: {
+    enabled: process.env.OCR_ENABLED !== 'false',
+    cacheDir: process.env.OCR_CACHE_DIR ?? join(tmpdir(), 'kogane-tesseract'),
   },
   db: {
     url: process.env.DATABASE_URL,

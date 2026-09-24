@@ -18,6 +18,10 @@ export enum ExpenseDraftDocumentType {
   INVOICE = 'invoice',
   BANK_STATEMENT = 'bank_statement',
   BANKING_SCREENSHOT = 'banking_screenshot',
+  // Read by the local OCR templates (P21, D63): same values as RecognizedScreen
+  IO_PURCHASE_DETAIL = 'io_purchase_detail',
+  IO_CATEGORY_SUMMARY = 'io_category_summary',
+  BANK_MOVEMENT = 'bank_movement',
 }
 
 export enum ExpenseDraftStatus {

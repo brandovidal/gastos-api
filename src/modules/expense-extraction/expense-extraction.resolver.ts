@@ -7,7 +7,12 @@ import {
   REQUIRED_FIELDS_BY_DESTINATION,
 } from '@/commons/constants/expense-extraction.constant'
 
-import { findCatalogEntry, findCatalogEntryById, findDefaultPerson } from './expense-extraction.catalog'
+import {
+  findCatalogEntry,
+  findCatalogEntryById,
+  findDefaultPerson,
+  findPrimaryCard,
+} from './expense-extraction.catalog'
 import {
   ExtractedExpense,
   ExtractionCatalog,
@@ -63,6 +68,13 @@ export function applyPaymentMethodRule(
     return { ...fields, destination: ExpenseDestination.DAILY }
   }
   return fields
+}
+
+// D47: a card expense read from a screenshot without its card belongs to the primary card (IO)
+export function withPrimaryCard(expense: ResolvedExpense, catalog: ExtractionCatalog): ResolvedExpense {
+  if (expense.destination !== ExpenseDestination.CREDIT_CARD || expense.paymentMethodId) return expense
+  const primary = findPrimaryCard(catalog)
+  return primary ? completeExpense({ ...expense, paymentMethodId: primary.id }, expense.confidence, catalog) : expense
 }
 
 // Recomputed after every AI extraction or local correction
