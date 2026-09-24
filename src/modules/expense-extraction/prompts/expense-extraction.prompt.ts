@@ -40,6 +40,9 @@ ${JSON.stringify(draft)}
 - installment: "current/total" (e.g. "cuota 2 de 6" -> "2/6"). period: biweekly, monthly, quarterly, semiannual or annual.
   receivable/payable in installments ("en 3 cuotas"): installment "1/3" and amount = one installment (total / 3 when
   only the total is given).
+- Shared expenses ("compartido con dany", "a medias con dany", "con dany y yo", "dany paga 20", "la tercera parte"):
+  the user paid it all, so personRef is the user (default) and "shares" lists the others with ratio (0.5, 0.33, 0.2)
+  or a fixed amount. Without a split said, everyone pays the same. Otherwise "shares": null.
 - description: short concept or service name (e.g. "Netflix", "Almuerzo"), without amount, date or payment words.
 - merchant, operationNumber: only when visible (receipts). notes: other useful details.
 - confidence: a number from 0 to 1 for every non-null field, using the same keys as the output.

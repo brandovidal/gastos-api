@@ -93,6 +93,16 @@ export const TEXTS = {
   notAnExpense: '🤔 No encontré un gasto en tu mensaje. Prueba con algo como <i>almuerzo 25 soles con yape</i>.',
   askCorrection: '✏️ Escribe la corrección como quieras (ej: <i>eran 30 soles y fue con la oh</i>).',
   askInstallmentAmount: '✏️ ¿Cuánto es cada cuota? (ej: <i>170.50</i>)',
+  askShare: (name: string) => `✏️ ¿Cuánto te debe ${escapeHtml(name)}? (ej: <i>20</i>, <i>30%</i> o <i>la mitad</i>)`,
+  notShared: '👥 Ya no se comparte: se guardará completo a tu nombre.',
+  shareReplaced: '↩️ Reparto actualizado abajo.',
+  shareTooMuch: (name: string, total: string) =>
+    `${escapeHtml(name)} no puede deber más que el total (${total}). Escribe un monto, un porcentaje (<i>30%</i>) o <i>la mitad</i>.`,
+  shareNotUnderstood:
+    'No entendí la parte. Escribe un monto (<i>20</i>), un porcentaje (<i>30%</i>) o <i>la mitad</i>.',
+  editUsage: '✏️ Dime qué gasto buscar: <i>/editar netflix</i>, <i>/editar dany 64</i> o <i>/editar io 22/09</i>.',
+  editCancelled: '❌ <b>Edición cancelada</b>. El gasto quedó como estaba.',
+  editLocked: '🔒 Ese gasto tiene deudas con abonos: edita la deuda en la web (Préstamos y deudas).',
   unreadable: (names: string[]) =>
     `⚠️ No pude leer: ${names.map(escapeHtml).join(', ')}. Mándalos en otra captura o escríbelos.`,
   receivedNotDebt: (sender: string, amount: number, currency: string | null) =>
@@ -174,23 +184,10 @@ export function formatSummary(expenseDraft: ExpenseDraftDbDto, catalog: Extracti
   ].filter(Boolean)
 
   return [
-    `🧾 <b>${escapeHtml(expenseDraft.description ?? 'Sin concepto')}</b>${mark(ExpenseField.DESCRIPTION)} — ${formatAmount(expenseDraft.amount, expenseDraft.currency)}${mark(ExpenseField.AMOUNT)}`,
+    `🧾 <b>${escapeHtml(expenseDraft.description ?? 'Sin concepto')}</b>${mark(ExpenseField.DESCRIPTION)} — ${formatAmount(expenseDraft.amount, expenseDraft.currency)}${mark(ExpenseField.AMOUNT)}${expenseDraft.sharedWith ? ' (pagas tú)' : ''}`,
     `👤 ${nameOf(catalog, expenseDraft.personId)}${mark(ExpenseField.PERSON)}   ${payment}   📂 ${nameOf(catalog, expenseDraft.categoryId)}${mark(ExpenseField.CATEGORY)}`,
     `📅 ${details.join(' · ')}`,
-    formatShared(expenseDraft, catalog),
-  ]
-    .filter(Boolean)
-    .join('\n')
-}
-
-// "👥 Compartido con Danery: tu parte S/ 60.00 · cada uno te debe S/ 60.00" (P17)
-function formatShared(expenseDraft: ExpenseDraftDbDto, catalog: ExtractionCatalog): string | null {
-  const { sharedWith, amount, currency } = expenseDraft
-  if (!sharedWith?.personIds.length || amount == null) return null
-  const { share, own } = sharesOf(amount, sharedWith)
-  const names = sharedWith.personIds.map((id) => nameOf(catalog, id)).join(', ')
-  const each = sharedWith.personIds.length > 1 ? 'cada uno te debe' : 'te debe'
-  return `👥 Compartido con ${names}: tu parte ${formatAmount(own, currency)} · ${each} ${formatAmount(share, currency)}`
+  ].join('\n')
 }
 
 const button = (label: string, name: BotAction, draftId: string, field?: string, value?: string): BotButton => ({
@@ -285,10 +282,25 @@ export function buildExpenseReply(expenseDraft: ExpenseDraftDbDto, catalog: Extr
     }
   }
 
+  // /editar (D76): the copy of a saved expense is saved over it or dropped, never sent to Borrador
+  if (expenseDraft.status === ExpenseDraftStatus.EDITING) {
+    return {
+      text: `✏️ <b>Editando</b>\n${summary}`,
+      buttons: [
+        [
+          button('✅ Guardar cambios', BotAction.SAVE, expenseDraft.id),
+          button('✏️ Editar', BotAction.EDIT, expenseDraft.id),
+        ],
+        [button('❌ Cancelar', BotAction.DISCARD, expenseDraft.id)],
+      ],
+      edit,
+    }
+  }
+
   return {
     text: summary,
     buttons: [
-      [button('✅ Guardar', BotAction.SAVE, expenseDraft.id), button('✏️ Corregir', BotAction.EDIT, expenseDraft.id)],
+      [button('✅ Guardar', BotAction.SAVE, expenseDraft.id), button('✏️ Editar', BotAction.EDIT, expenseDraft.id)],
       [
         button('📝 Borrador', BotAction.LATER, expenseDraft.id),
         button('❌ Descartar', BotAction.DISCARD, expenseDraft.id),
@@ -298,13 +310,130 @@ export function buildExpenseReply(expenseDraft: ExpenseDraftDbDto, catalog: Extr
   }
 }
 
+// ==================== Shared expenses (D73, D75) ====================
+
+// Buttons of each person in the split message: "shr:<draftId>:<person index>:<value>"
+export enum ShareChoice {
+  HALF = 'h',
+  THIRD = 't',
+  TWENTY = 'p20',
+  AMOUNT = 'm', // asks the amount or percentage in the next message
+  REMOVE = 'x',
+}
+
+export const SHARE_CHOICE_RATIOS: Partial<Record<ShareChoice, number>> = {
+  [ShareChoice.HALF]: 1 / 2,
+  [ShareChoice.THIRD]: 1 / 3,
+  [ShareChoice.TWENTY]: 0.2,
+}
+
+const percentOf = (part: number, total: number) => (total ? `${Math.round((part / total) * 100)} %` : '')
+
+// The second message of a shared expense (D75): what each person will owe, editable apart from the expense;
+// ✅ Guardar of the expense saves both
+export function buildShareReply(expenseDraft: ExpenseDraftDbDto, catalog: ExtractionCatalog, edit = false): BotReply {
+  const { sharedWith, amount, currency } = expenseDraft
+  const total = amount ?? 0
+  const { parts, own } = sharesOf(total, sharedWith ?? { shares: [] })
+  const lines = parts.map(
+    (part) =>
+      `• ${nameOf(catalog, part.personId)} te debe ${formatAmount(part.amount, currency)} (${percentOf(part.amount, total)})`,
+  )
+  const each = expenseDraft.installment ? ' por cuota' : ''
+  return {
+    text: [
+      `👥 <b>Reparto</b>: pagas tú ${formatAmount(total, currency)}${each}`,
+      ...lines,
+      `Tu parte: ${formatAmount(own, currency)}`,
+      '<i>Se guarda con ✅ Guardar del gasto.</i>',
+    ].join('\n'),
+    trackShareOf: expenseDraft.id,
+    // Two rows per person, so the name is not cut: "Danery ½ · ⅓ · 20 %" and "✏️ Editar · 🗑️ Quitar"
+    buttons: parts.flatMap((part, index) => {
+      const choice = (label: string, value: ShareChoice) =>
+        button(label, BotAction.SHARE, expenseDraft.id, String(index), value)
+      const name = findCatalogEntryById(catalog, part.personId)?.name ?? '—'
+      return [
+        [choice(`${name} ½`, ShareChoice.HALF), choice('⅓', ShareChoice.THIRD), choice('20 %', ShareChoice.TWENTY)],
+        [choice(`✏️ Editar (${name})`, ShareChoice.AMOUNT), choice(`🗑️ Quitar (${name})`, ShareChoice.REMOVE)],
+      ]
+    }),
+    edit,
+  }
+}
+
+// The split message once the expense is closed (D75): what was saved, without buttons
+export function buildClosedShareReply(
+  expenseDraft: ExpenseDraftDbDto,
+  catalog: ExtractionCatalog,
+  target: { editMessageId?: string; edit?: boolean },
+): BotReply {
+  const { sharedWith, amount, currency, status } = expenseDraft
+  const total = amount ?? 0
+  const { parts, own } = sharesOf(total, sharedWith ?? { shares: [] })
+  const title =
+    status === ExpenseDraftStatus.SAVED
+      ? '✅ <b>Reparto guardado</b>'
+      : status === ExpenseDraftStatus.PENDING_REVIEW
+        ? '📝 <b>Reparto en borrador</b>'
+        : '❌ <b>Reparto descartado</b>'
+  return {
+    text: [
+      title,
+      ...parts.map(
+        (part) =>
+          `• ${nameOf(catalog, part.personId)} te debe ${formatAmount(part.amount, currency)} (${percentOf(part.amount, total)})`,
+      ),
+      `Tu parte: ${formatAmount(own, currency)}`,
+    ].join('\n'),
+    ...target,
+  }
+}
+
+// "Danery te debe S/ 32.00" for the saved notice
+export function formatSharedDebts(expenseDraft: ExpenseDraftDbDto, catalog: ExtractionCatalog): string | null {
+  if (!expenseDraft.sharedWith || expenseDraft.amount == null) return null
+  const { parts } = sharesOf(expenseDraft.amount, expenseDraft.sharedWith)
+  const debts = parts
+    .filter((part) => part.amount > 0)
+    .map((part) => `${nameOf(catalog, part.personId)} te debe ${formatAmount(part.amount, expenseDraft.currency)}`)
+  return debts.length ? debts.join(' · ') : null
+}
+
+// ==================== /editar (D76) ====================
+
+export function buildSavedSearchReply(
+  results: ExpenseDraftDbDto[],
+  query: string,
+  catalog: ExtractionCatalog,
+): BotReply {
+  if (!results.length) return { text: `🔎 No encontré gastos guardados con «${escapeHtml(query)}».` }
+  const lines = results.map(
+    (expenseDraft, index) =>
+      `${index + 1}. ${formatDate(expenseDraft.spentAt)} <b>${escapeHtml(expenseDraft.description ?? 'Sin concepto')}</b> — ${formatAmount(expenseDraft.amount, expenseDraft.currency)} · ${expenseDraft.destination ? DESTINATION_LABELS[expenseDraft.destination as ExpenseDestination] : ''} · ${nameOf(catalog, expenseDraft.paymentMethodId)}`,
+  )
+  return {
+    text: ['🔎 <b>¿Cuál editas?</b>', ...lines].join('\n'),
+    buttons: [results.map((expenseDraft, index) => button(`✏️ ${index + 1}`, BotAction.EDIT_SAVED, expenseDraft.id))],
+  }
+}
+
 // Final state of an expense: same summary, no buttons
 export function buildClosedReply(
   prefix: string,
   expenseDraft: ExpenseDraftDbDto,
   catalog: ExtractionCatalog,
 ): BotReply {
-  return { text: `${prefix}\n${formatSummary(expenseDraft, catalog)}`, edit: true }
+  const shared = formatSharedLine(expenseDraft, catalog)
+  return { text: [prefix, formatSummary(expenseDraft, catalog), ...(shared ? [shared] : [])].join('\n'), edit: true }
+}
+
+// "👥 Brenda te debe S/ 19.50 · Danery te debe S/ 19.50 · tu parte S/ 26.00" under a closed summary (D75)
+function formatSharedLine(expenseDraft: ExpenseDraftDbDto, catalog: ExtractionCatalog): string | null {
+  const debts = formatSharedDebts(expenseDraft, catalog)
+  if (!debts || !expenseDraft.sharedWith || expenseDraft.amount == null) return null
+  const { own } = sharesOf(expenseDraft.amount, expenseDraft.sharedWith)
+  return `👥 ${debts} · tu parte ${formatAmount(own, expenseDraft.currency)}`
 }
 
 // A new message after ✅ Guardar / 📝 Borrador: the summary is edited in place (no notification), this one arrives at
@@ -313,12 +442,13 @@ export function buildSavedNotice(
   expenseDraft: ExpenseDraftDbDto,
   destinationLabel: string,
   installments: InstallmentsCreated | null = null,
+  sharedDebts: string | null = null,
 ): BotReply {
   const created = installments
     ? `\n📆 Cuotas 1/${installments.total} a ${installments.total}/${installments.total} (${formatPeriod(installments.from)} – ${formatPeriod(installments.to)}).`
     : ''
   return {
-    text: `✅ Guardado: ${conceptOf(expenseDraft)} en ${destinationLabel}.${created}\nVer: /ultimos · /resumen`,
+    text: `✅ Guardado: ${conceptOf(expenseDraft)} en ${destinationLabel}.${sharedDebts ? `\n👥 ${sharedDebts}.` : ''}${created}\nVer: /ultimos · /resumen`,
   }
 }
 

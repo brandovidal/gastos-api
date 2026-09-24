@@ -1,6 +1,7 @@
 import { ConfigService } from '@nestjs/config'
 
 import { CategoryBudgetNotFoundException } from '@/commons/exceptions/budget/category-budget-not-found.exception'
+import { SavedExpenseLockedException } from '@/commons/exceptions/expense/saved-expense-locked.exception'
 import { ExpenseDestination } from '@/commons/constants/expense.constant'
 import { ExpenseDBRepository } from '@/db/models/expense/expenseDB.repository'
 import { PrismaService } from '@/db/prisma/prisma.service'
@@ -104,5 +105,101 @@ describe('CategoryBudgetDBRepository (integration)', () => {
     expect(await prisma.debt.findMany({ where: { personId }, select: { description: true, amount: true } })).toEqual([
       { description: 'Cena (compartido)', amount: 60 },
     ])
+  })
+
+  // D73 + D76: a shared card purchase keeps the total, counts your part and is replaced as a whole by an edit
+  it('should count only your part of a shared expense and replace its rows when an edit is saved', async () => {
+    const draft = (messageId: string) =>
+      prisma.expenseDraft.create({
+        data: { channel: 'web', chatId: 'budget', messageId: `${messageId}-${suffix}`, inputType: 'manual', personId },
+      })
+    const original = await draft('shared')
+    const row = { description: 'Tv', amount: 200, othersShare: 100, personId, categoryId, paymentMethodId }
+    const debt = {
+      direction: 'owed_to_me',
+      description: 'Tv (compartido)',
+      amount: 100,
+      personId,
+      originDraftId: original.id,
+    }
+
+    await expenses.saveFromExpenseDraft(original.id, {
+      destination: ExpenseDestination.CREDIT_CARD,
+      data: { ...row, installment: '1/2', paymentMonth: 3, paymentYear: 2033 },
+      nextInstallments: [
+        { ...row, installment: '2/2', paymentMonth: 4, paymentYear: 2033, originDraftId: original.id },
+      ],
+      sharedDebts: [
+        { ...debt, installment: '1/2', paymentMonth: 3, paymentYear: 2033 },
+        { ...debt, installment: '2/2', paymentMonth: 4, paymentYear: 2033 },
+      ],
+    })
+    const march = await expenses.findSpentByCategory(3, 2033, personId)
+    expect(march.find((line) => line.categoryId === categoryId)?.total).toBe(100)
+
+    // the edit keeps only one row, not shared
+    const copy = await draft('shared-edit')
+    await expenses.saveFromExpenseDraft(
+      copy.id,
+      {
+        destination: ExpenseDestination.CREDIT_CARD,
+        data: { ...row, othersShare: 0, amount: 180, paymentMonth: 3, paymentYear: 2033 },
+        nextInstallments: [],
+      },
+      original.id,
+    )
+
+    const rows = await prisma.creditCardExpense.findMany({ where: { description: 'Tv' } })
+    expect(rows.map((card) => [card.amount, card.draftId])).toEqual([[180, copy.id]])
+    expect(await prisma.debt.count({ where: { description: 'Tv (compartido)' } })).toBe(0)
+    expect((await prisma.expenseDraft.findUnique({ where: { id: original.id } }))?.status).toBe('discarded')
+    expect((await prisma.expenseDraft.findUnique({ where: { id: copy.id } }))?.status).toBe('saved')
+  })
+
+  it('should not replace a saved expense whose debts have payments', async () => {
+    const original = await prisma.expenseDraft.create({
+      data: { channel: 'web', chatId: 'budget', messageId: `paid-${suffix}`, inputType: 'manual', personId },
+    })
+    await expenses.saveFromExpenseDraft(original.id, {
+      destination: ExpenseDestination.DAILY,
+      data: {
+        description: 'Pizza',
+        amount: 90,
+        othersShare: 45,
+        personId,
+        paymentMethodId,
+        spentAt: new Date('2033-05-01'),
+      },
+      sharedDebts: [
+        {
+          direction: 'owed_to_me',
+          description: 'Pizza (compartido)',
+          amount: 45,
+          personId,
+          originDraftId: original.id,
+          paymentMonth: 5,
+          paymentYear: 2033,
+        },
+      ],
+    })
+    const [paidDebt] = await prisma.debt.findMany({ where: { originDraftId: original.id } })
+    await prisma.debtPayment.create({
+      data: { debtId: paidDebt.id, amount: 45, paidAt: new Date('2033-05-02'), confirmedAt: new Date() },
+    })
+    const copy = await prisma.expenseDraft.create({
+      data: { channel: 'web', chatId: 'budget', messageId: `paid-edit-${suffix}`, inputType: 'manual', personId },
+    })
+
+    await expect(
+      expenses.saveFromExpenseDraft(
+        copy.id,
+        {
+          destination: ExpenseDestination.DAILY,
+          data: { description: 'Pizza', amount: 100, personId, paymentMethodId, spentAt: new Date('2033-05-01') },
+        },
+        original.id,
+      ),
+    ).rejects.toBeInstanceOf(SavedExpenseLockedException)
+    expect(await prisma.dailyExpense.count({ where: { description: 'Pizza' } })).toBe(1)
   })
 })

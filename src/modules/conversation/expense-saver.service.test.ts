@@ -44,7 +44,7 @@ describe('ExpenseSaverService', () => {
   it('should save a day-to-day expense in exp_daily_expenses with its payment method and date', async () => {
     await service.save(buildExpenseDraft({ destination: ExpenseDestination.DAILY }))
 
-    expect(mockExpenseDBRepository.saveFromExpenseDraft).toHaveBeenCalledWith(FILE_ID, expect.anything())
+    expect(mockExpenseDBRepository.saveFromExpenseDraft).toHaveBeenCalledWith(FILE_ID, expect.anything(), undefined)
     expect(savedInput()).toEqual({
       destination: ExpenseDestination.DAILY,
       data: expect.objectContaining({
@@ -78,7 +78,7 @@ describe('ExpenseSaverService', () => {
       },
     })
 
-    expect(mockExpenseDBRepository.saveFromExpenseDraft).toHaveBeenCalledWith(FILE_ID, expect.anything())
+    expect(mockExpenseDBRepository.saveFromExpenseDraft).toHaveBeenCalledWith(FILE_ID, expect.anything(), undefined)
     expect(savedInput()).toEqual({
       destination: ExpenseDestination.FIXED_COST,
       data: expect.objectContaining({
@@ -305,19 +305,24 @@ describe('ExpenseSaverService', () => {
     })
   })
 
-  describe('shared expenses (P17)', () => {
-    it('should keep the user part as the expense and create what the other one owes, in the same month', async () => {
-      await service.save(
+  describe('shared expenses (D73)', () => {
+    it('should keep the total the user paid, what the other one owes, and her debt in the same month', async () => {
+      const saved = await service.save(
         buildExpenseDraft({
           destination: ExpenseDestination.DAILY,
           description: 'Cena',
           amount: 120,
           personId: 'person-brando',
-          sharedWith: { personIds: ['person-danery'], parts: 2 },
+          sharedWith: { shares: [{ personId: 'person-danery', ratio: 0.5 }] },
         }),
       )
 
-      expect(savedInput().data).toMatchObject({ description: 'Cena', amount: 60, amountInPen: 60 })
+      expect(savedInput().data).toMatchObject({
+        description: 'Cena',
+        amount: 120,
+        othersShare: 60,
+        personId: 'person-brando',
+      })
       expect(savedInput().sharedDebts).toEqual([
         {
           direction: DebtDirection.OWED_TO_ME,
@@ -326,47 +331,59 @@ describe('ExpenseSaverService', () => {
           currency: 'PEN',
           personId: 'person-danery',
           installment: null,
+          originDraftId: FILE_ID,
           paymentMonth: 9,
           paymentYear: 2026,
         },
       ])
+      // the budget counts only the user's part
+      expect(saved.budget?.amount).toBe(60)
     })
 
-    it('should split in thirds "entre 3" and let the user keep the cents left', async () => {
-      await service.save(
-        buildExpenseDraft({
-          destination: ExpenseDestination.DAILY,
-          amount: 100,
-          sharedWith: { personIds: ['person-danery', 'person-juan'], parts: 3 },
-        }),
-      )
-
-      expect(savedInput().data.amount).toBe(33.34)
-      expect(savedInput().sharedDebts.map((debt: { amount: number }) => debt.amount)).toEqual([33.33, 33.33])
-    })
-
-    it('should keep the user part of a platform and charge the sister her part that month (D72)', async () => {
+    it('should charge the sister her part of a platform the user pays (D72, D73)', async () => {
       await service.save(
         buildExpenseDraft({
           destination: ExpenseDestination.SUBSCRIPTION,
           period: SubscriptionPeriod.MONTHLY,
           description: 'Netflix',
-          amount: 52.9,
+          amount: 64,
           personId: 'person-brando',
-          sharedWith: { personIds: ['person-brenda'], parts: 2 },
+          sharedWith: { shares: [{ personId: 'person-brenda', amount: 20 }] },
         }),
       )
 
-      expect(savedInput().data).toMatchObject({ description: 'Netflix', amount: 26.45, personId: 'person-brando' })
+      expect(savedInput().data).toMatchObject({ amount: 64, othersShare: 20, personId: 'person-brando' })
       expect(savedInput().sharedDebts).toEqual([
-        expect.objectContaining({
-          direction: DebtDirection.OWED_TO_ME,
-          description: 'Netflix (compartido)',
-          amount: 26.45,
-          personId: 'person-brenda',
-          paymentMonth: 9,
-          paymentYear: 2026,
+        expect.objectContaining({ description: 'Netflix (compartido)', amount: 20, personId: 'person-brenda' }),
+      ])
+    })
+
+    it('should share every installment of a card purchase and link them all to the draft', async () => {
+      mockPaymentMethodDBRepository.findById.mockResolvedValue({ id: 'method-ohpay', billingCloseDay: 10 })
+
+      await service.save(
+        buildExpenseDraft({
+          destination: ExpenseDestination.CREDIT_CARD,
+          paymentMethodId: 'method-ohpay',
+          installment: '1/2',
+          amount: 100,
+          spentAt: new Date('2026-09-05T00:00:00.000Z'),
+          sharedWith: { shares: [{ personId: 'person-danery', ratio: 0.5 }] },
         }),
+      )
+
+      expect(savedInput().data).toMatchObject({ amount: 100, othersShare: 50, paymentMonth: 9 })
+      expect(savedInput().nextInstallments).toEqual([
+        expect.objectContaining({ installment: '2/2', othersShare: 50, paymentMonth: 10, originDraftId: FILE_ID }),
+      ])
+      expect(
+        savedInput().sharedDebts.map((debt: { installment: string; paymentMonth: number }) => [
+          debt.installment,
+          debt.paymentMonth,
+        ]),
+      ).toEqual([
+        ['1/2', 9],
+        ['2/2', 10],
       ])
     })
 
@@ -375,12 +392,22 @@ describe('ExpenseSaverService', () => {
         buildExpenseDraft({
           destination: ExpenseDestination.RECEIVABLE,
           amount: 100,
-          sharedWith: { personIds: ['person-danery'], parts: 2 },
+          sharedWith: { shares: [{ personId: 'person-danery', ratio: 0.5 }] },
         }),
       )
 
       expect(savedInput().data.amount).toBe(100)
       expect(savedInput().sharedDebts).toBeUndefined()
+    })
+
+    it('should replace the rows of the saved expense an edit copy comes from (D76)', async () => {
+      await service.save(buildExpenseDraft({ replacesDraftId: 'draft-original' }))
+
+      expect(mockExpenseDBRepository.saveFromExpenseDraft).toHaveBeenCalledWith(
+        FILE_ID,
+        expect.anything(),
+        'draft-original',
+      )
     })
   })
 

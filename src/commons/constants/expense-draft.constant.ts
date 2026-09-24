@@ -31,14 +31,18 @@ export enum ExpenseDraftStatus {
   PENDING_REVIEW = 'pending_review', // Borrador (D50): kept for later from the chat, or expired without confirming
   DISCARDED = 'discarded',
   FAILED = 'failed',
+  EDITING = 'editing', // /editar (D76): a copy of a saved expense; saving it replaces the original rows
 }
 
-// Statuses of the expense draft the bot is still talking about with the user
-export const OPEN_EXPENSE_DRAFT_STATUSES = [ExpenseDraftStatus.DRAFT, ExpenseDraftStatus.AWAITING_CONFIRMATION]
+// A new expense the bot is still talking about with the user; after 30 minutes it goes to Borrador
+export const NEW_EXPENSE_DRAFT_STATUSES = [ExpenseDraftStatus.DRAFT, ExpenseDraftStatus.AWAITING_CONFIRMATION]
+
+// Statuses of the expense draft the bot is still talking about with the user (an edit of a saved one included)
+export const OPEN_EXPENSE_DRAFT_STATUSES = [...NEW_EXPENSE_DRAFT_STATUSES, ExpenseDraftStatus.EDITING]
 
 // Borrador (D50): everything still pending review, listed by /borrador and GET /v1/drafts
 export const REVIEW_EXPENSE_DRAFT_STATUSES = [
-  ...OPEN_EXPENSE_DRAFT_STATUSES,
+  ...NEW_EXPENSE_DRAFT_STATUSES,
   ExpenseDraftStatus.PENDING_REVIEW,
   ExpenseDraftStatus.FAILED,
 ]

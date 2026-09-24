@@ -129,3 +129,39 @@ export function matchCatalogEntry(catalog: ExtractionCatalog, kind: CatalogKind,
 
   return best?.entry ?? null
 }
+
+// Edits (insert, delete, replace) that turn a into b
+function levenshtein(a: string, b: string): number {
+  let previous = Array.from({ length: b.length + 1 }, (_, index) => index)
+  for (let i = 1; i <= a.length; i++) {
+    const current = [i]
+    for (let j = 1; j <= b.length; j++) {
+      current[j] = Math.min(previous[j] + 1, current[j - 1] + 1, previous[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1))
+    }
+    previous = current
+  }
+  return previous[b.length]
+}
+
+const MIN_FUZZY_LENGTH = 5
+const MAX_FUZZY_DISTANCE = 2
+
+// A whole name of the catalog, or one written or transcribed a little differently ("Danary" → Danery, D74).
+// Only names of 5+ letters are compared loosely, and only when a single entry is that close.
+export function findCatalogEntryByName(
+  catalog: ExtractionCatalog,
+  kind: CatalogKind,
+  name: string,
+): CatalogEntry | null {
+  const target = normalizeText(name)
+  const entries = catalog.entries.filter((entry) => entry.kind === kind)
+  const terms = (entry: CatalogEntry) => [entry.name, ...entry.aliases].map(normalizeText).filter(Boolean)
+
+  const exact = entries.find((entry) => terms(entry).includes(target))
+  if (exact || target.length < MIN_FUZZY_LENGTH) return exact ?? null
+
+  const close = entries.filter((entry) =>
+    terms(entry).some((term) => term.length >= MIN_FUZZY_LENGTH && levenshtein(term, target) <= MAX_FUZZY_DISTANCE),
+  )
+  return close.length === 1 ? close[0] : null
+}

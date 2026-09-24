@@ -23,6 +23,7 @@ const mockPrismaService = {
     update: vi.fn(),
     updateMany: vi.fn(),
   },
+  $transaction: vi.fn((operations: Promise<unknown>[]) => Promise.all(operations)),
 }
 
 describe('ExpenseDraftDBRepository', () => {
@@ -86,7 +87,10 @@ describe('ExpenseDraftDBRepository', () => {
         where: {
           channel: ExpenseDraftChannel.TELEGRAM,
           chatId: '123456',
-          status: { in: [ExpenseDraftStatus.DRAFT, ExpenseDraftStatus.AWAITING_CONFIRMATION] },
+          // an edit of a saved expense is open too (D76)
+          status: {
+            in: [ExpenseDraftStatus.DRAFT, ExpenseDraftStatus.AWAITING_CONFIRMATION, ExpenseDraftStatus.EDITING],
+          },
           updatedAt: { gte: updatedAfter },
         },
         orderBy: { updatedAt: 'desc' },
@@ -130,6 +134,16 @@ describe('ExpenseDraftDBRepository', () => {
           updatedAt: { lt: before },
         },
         data: { status: ExpenseDraftStatus.PENDING_REVIEW, pendingField: null },
+      })
+      // a stale edit is dropped: the saved expense stays as it was (D76)
+      expect(mockPrismaService.expenseDraft.updateMany).toHaveBeenCalledWith({
+        where: {
+          channel: ExpenseDraftChannel.TELEGRAM,
+          chatId: '123456',
+          status: ExpenseDraftStatus.EDITING,
+          updatedAt: { lt: before },
+        },
+        data: { status: ExpenseDraftStatus.DISCARDED, pendingField: null },
       })
     })
   })

@@ -76,9 +76,12 @@ export const draftResponseSchema = z.object({
   paymentMethodId: nullableString,
   categoryId: nullableString,
   sharedWith: z
-    .object({ personIds: z.array(z.string()), parts: z.number().int() })
+    .object({
+      shares: z.array(z.object({ personId: z.string(), ratio: z.number().optional(), amount: z.number().optional() })),
+    })
     .nullable()
-    .describe('Shared expense (P17): the user and personIds split the amount in `parts` equal parts'),
+    .describe('Shared expense (D73): the user paid it all; each person owes a ratio of the total or an amount'),
+  replacesDraftId: nullableString.describe('/editar (D76): the saved draft this copy replaces'),
   confidence: z.record(z.string(), z.number()),
   missingFields: z.array(z.string()),
   confirmedAt: dateTimeSchema.nullable(),

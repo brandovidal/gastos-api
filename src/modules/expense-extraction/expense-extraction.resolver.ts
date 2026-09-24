@@ -6,6 +6,7 @@ import {
   LOW_CONFIDENCE_THRESHOLD,
   REQUIRED_FIELDS_BY_DESTINATION,
 } from '@/commons/constants/expense-extraction.constant'
+import { ExpenseShare, SharedExpense } from '@/db/models/expense-draft/expenseDraftDB.dto'
 
 import {
   findCatalogEntry,
@@ -46,7 +47,24 @@ export function resolveExpense(raw: ExtractedExpense, catalog: ExtractionCatalog
     notes: raw.notes,
   }
 
-  return completeExpense(fields, toFieldConfidence(raw.confidence), catalog)
+  const sharedWith = resolveShares(raw, catalog)
+  // The payer is the user: a person named in the shares is someone who owes, not whose expense it is
+  if (sharedWith?.shares.some((share) => share.personId === fields.personId)) {
+    fields.personId = findDefaultPerson(catalog)?.id ?? fields.personId
+  }
+
+  return { ...completeExpense(fields, toFieldConfidence(raw.confidence), catalog), sharedWith }
+}
+
+// D74: the shares of the AI with catalog people; parts without a known person, or with nothing to pay, are dropped
+function resolveShares(raw: ExtractedExpense, catalog: ExtractionCatalog): SharedExpense | null {
+  const shares = (raw.shares ?? []).flatMap((share): ExpenseShare[] => {
+    const person = findCatalogEntry(catalog, CatalogKind.PERSON, share.personRef)
+    if (!person || person.isDefault) return []
+    if (share.amount != null) return [{ personId: person.id, amount: share.amount }]
+    return share.ratio ? [{ personId: person.id, ratio: share.ratio }] : []
+  })
+  return shares.length ? { shares } : null
 }
 
 // The payment method decides between day-to-day and credit card expenses:

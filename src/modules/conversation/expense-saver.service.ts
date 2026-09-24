@@ -48,8 +48,8 @@ function withInstallments<T extends Record<string, unknown>>(
   return { data, nextInstallments }
 }
 
-// Destinations whose amount can be shared ("cena 120 con dany, mitad"; a platform shared with the sister, charged every
-// month, D72); debts cannot
+// Destinations whose amount can be shared (D73): the row keeps the total the user paid, othersShare what the others owe
+// and each one gets a debt; debts themselves cannot be shared
 const SHAREABLE_DESTINATIONS: string[] = [
   ExpenseDestination.DAILY,
   ExpenseDestination.FIXED_COST,
@@ -57,40 +57,58 @@ const SHAREABLE_DESTINATIONS: string[] = [
   ExpenseDestination.CREDIT_CARD,
 ]
 
-function sharedParts(expenseDraft: ExpenseDraftDbDto) {
-  const { sharedWith, destination, amount } = expenseDraft
-  if (!sharedWith?.personIds.length || amount == null || !destination) return null
-  return SHAREABLE_DESTINATIONS.includes(destination) ? sharesOf(amount, sharedWith) : null
+type Row = Record<string, unknown> & { amount: number }
+
+// Rows created with the draft besides its own (installments after the first, shared parts) point to it, so /editar
+// can replace them all (D76)
+function withOrigin(input: SaveExpenseDbDto, draftId: string): SaveExpenseDbDto {
+  if (!('nextInstallments' in input) || !input.nextInstallments.length) return input
+  return {
+    ...input,
+    nextInstallments: input.nextInstallments.map((row) => ({ ...row, originDraftId: draftId })),
+  } as SaveExpenseDbDto
 }
 
-// One debt per person (owed to me) and per installment, in the same payment month as the expense row it comes from
+// The user paid it all (D73): every row keeps its amount and othersShare; each person owes their part of each row
+// (one debt per person and per installment, in the payment month of that row)
 function withSharedDebts(input: SaveExpenseDbDto, expenseDraft: ExpenseDraftDbDto): SaveExpenseDbDto {
-  const parts = sharedParts(expenseDraft)
-  if (!parts || !expenseDraft.sharedWith) return input
+  const { sharedWith, destination } = expenseDraft
+  if (!sharedWith?.shares.length || !destination || !SHAREABLE_DESTINATIONS.includes(destination)) return input
 
-  const rows: { installment?: string | null; period: PaymentPeriod }[] =
+  const rows: Row[] = [input.data as Row, ...(('nextInstallments' in input ? input.nextInstallments : []) as Row[])]
+  const periodOf = (row: Row): PaymentPeriod =>
     input.destination === ExpenseDestination.DAILY
-      ? [{ period: paymentPeriodOf(new Date(input.data.spentAt).toISOString().slice(0, 10)) }]
-      : [input.data, ...('nextInstallments' in input ? input.nextInstallments : [])].map((row) => ({
-          installment: 'installment' in row ? (row.installment as string | null) : null,
-          period: { paymentMonth: row.paymentMonth as number, paymentYear: row.paymentYear as number },
-        }))
+      ? paymentPeriodOf(new Date(row.spentAt as Date).toISOString().slice(0, 10))
+      : { paymentMonth: row.paymentMonth as number, paymentYear: row.paymentYear as number }
+  const withShare = (row: Row) => ({ ...row, othersShare: sharesOf(row.amount, sharedWith).othersShare })
 
-  const sharedDebts = expenseDraft.sharedWith.personIds.flatMap((personId) =>
-    rows.map(({ installment, period }) => ({
-      direction: DebtDirection.OWED_TO_ME,
-      description: `${expenseDraft.description} (compartido)`,
-      amount: parts.share,
-      currency: expenseDraft.currency ?? Currency.PEN,
-      personId,
-      installment: installment ?? null,
-      ...period,
-    })),
+  const sharedDebts = rows.flatMap((row) =>
+    sharesOf(row.amount, sharedWith)
+      .parts.filter((part) => part.amount > 0)
+      .map((part) => ({
+        direction: DebtDirection.OWED_TO_ME,
+        description: `${expenseDraft.description} (compartido)`,
+        amount: part.amount,
+        currency: expenseDraft.currency ?? Currency.PEN,
+        personId: part.personId,
+        installment: (row.installment as string | null | undefined) ?? null,
+        originDraftId: expenseDraft.id,
+        ...periodOf(row),
+      })),
   )
-  return { ...input, sharedDebts }
+  return {
+    ...input,
+    data: withShare(input.data as Row),
+    ...('nextInstallments' in input ? { nextInstallments: (input.nextInstallments as Row[]).map(withShare) } : {}),
+    sharedDebts,
+  } as SaveExpenseDbDto
 }
 
-// Subscriptions are card charges (D46) and debts are not spending: only these count for the budget, in PEN
+// What the user pays of a row: the total minus what others owe of it (D73)
+const ownAmount = (data: { amount: number; othersShare?: number }) =>
+  Math.round((data.amount - (data.othersShare ?? 0)) * 100) / 100
+
+// Subscriptions are card charges (D46) and debts are not spending: only these count for the budget, in PEN (your part)
 function budgetImpact(input: SaveExpenseDbDto): BudgetImpact | null {
   const { destination, data } = input
   if ((data.currency ?? Currency.PEN) !== Currency.PEN) return null
@@ -100,7 +118,7 @@ function budgetImpact(input: SaveExpenseDbDto): BudgetImpact | null {
         personId: data.personId,
         categoryId: data.categoryId ?? null,
         period: paymentPeriodOf(new Date(data.spentAt).toISOString().slice(0, 10)),
-        amount: data.amount,
+        amount: ownAmount(data),
       }
     case ExpenseDestination.FIXED_COST:
     case ExpenseDestination.CREDIT_CARD:
@@ -108,7 +126,7 @@ function budgetImpact(input: SaveExpenseDbDto): BudgetImpact | null {
         personId: data.personId,
         categoryId: data.categoryId ?? null,
         period: { paymentMonth: data.paymentMonth, paymentYear: data.paymentYear },
-        amount: data.amount,
+        amount: ownAmount(data),
       }
     default:
       return null
@@ -139,8 +157,12 @@ export class ExpenseSaverService {
   async save(expenseDraft: ExpenseDraftDbDto): Promise<SavedExpense> {
     this.assertComplete(expenseDraft)
 
-    const input = withSharedDebts(await this.buildInput(expenseDraft), expenseDraft)
-    const saved = await this.expenseDBRepository.saveFromExpenseDraft(expenseDraft.id, input)
+    const input = withSharedDebts(withOrigin(await this.buildInput(expenseDraft), expenseDraft.id), expenseDraft)
+    const saved = await this.expenseDBRepository.saveFromExpenseDraft(
+      expenseDraft.id,
+      input,
+      expenseDraft.replacesDraftId ?? undefined,
+    )
     await this.keepFile(expenseDraft.fileId)
     return { ...saved, installments: installmentsCreated(input), budget: budgetImpact(input) }
   }
@@ -164,8 +186,8 @@ export class ExpenseSaverService {
   private async buildInput(expenseDraft: ExpenseDraftDbDto): Promise<SaveExpenseDbDto> {
     const { destination } = expenseDraft
     const description = expenseDraft.description as string
-    // A shared expense keeps only the user's part (P17); the others' parts become debts (withSharedDebts)
-    const amount = sharedParts(expenseDraft)?.own ?? (expenseDraft.amount as number)
+    // A shared expense keeps the total the user paid (D73); the others' parts become debts (withSharedDebts)
+    const amount = expenseDraft.amount as number
     const personId = expenseDraft.personId as string
 
     const currency = expenseDraft.currency ?? Currency.PEN

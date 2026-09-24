@@ -23,12 +23,15 @@ const parseCommand = (text: string) => text.slice(1).split(/\s+/)[0].toLowerCase
 
 // Mensajes in kogane-app (D49, D57): the web is one more channel of the same ConversationService as Telegram.
 // The web chat gets JSON: files made for the bot (Excel / PDF) are downloaded from Préstamos y deudas instead
+// Edits of earlier Telegram messages (a split message closed on save) have no place in the web chat either
 function withoutDocuments(result: ConversationResult): ConversationResult {
   return {
     ...result,
-    replies: result.replies.map(({ document, ...reply }) =>
-      document ? { ...reply, text: `${reply.text}\nDescárgalo desde Préstamos y deudas.` } : reply,
-    ),
+    replies: result.replies
+      .filter((reply) => !reply.editMessageId)
+      .map(({ document, trackShareOf: _trackShareOf, ...reply }) =>
+        document ? { ...reply, text: `${reply.text}\nDescárgalo desde Préstamos y deudas.` } : reply,
+      ),
   }
 }
 

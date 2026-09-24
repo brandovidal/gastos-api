@@ -51,6 +51,17 @@ export const extractedExpenseSchema = z.object({
   merchant: z.string().nullable(),
   operationNumber: z.string().nullable(),
   notes: z.string().nullable(),
+  // Shared (D74): the other people and their part (ratio of the total or a fixed amount); the payer is personRef
+  shares: z
+    .array(
+      z.object({
+        personRef: z.string(),
+        ratio: z.number().min(0).max(1).nullable(),
+        amount: z.number().positive().nullable(),
+      }),
+    )
+    .nullable()
+    .optional(),
   confidence: confidenceSchema,
 })
 

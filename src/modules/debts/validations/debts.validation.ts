@@ -71,6 +71,7 @@ export const debtResponseSchema = z.object({
   personId: z.string(),
   notes: z.string().nullable(),
   draftId: z.string().nullable(),
+  originDraftId: z.string().nullable().describe('The expense draft that created it (installments, shared parts, D73)'),
   createdAt: dateTimeSchema,
   updatedAt: dateTimeSchema,
 })

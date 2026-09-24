@@ -4,6 +4,7 @@ import { PrismaService } from '@/db/prisma/prisma.service'
 import { DebtDirection, OPEN_DEBT_STATUSES } from '@/commons/constants/debt.constant'
 import { Currency, ExpenseDestination } from '@/commons/constants/expense.constant'
 import { ExpenseDraftStatus } from '@/commons/constants/expense-draft.constant'
+import { SavedExpenseLockedException } from '@/commons/exceptions/expense/saved-expense-locked.exception'
 
 import { CategorySpentDbDto, MonthlyTotalDbDto, SaveExpenseDbDto } from './expenseDB.dto'
 
@@ -13,9 +14,15 @@ type Transaction = Parameters<Parameters<PrismaService['$transaction']>[0]>[0]
 export class ExpenseDBRepository {
   constructor(private readonly prisma: PrismaService) {}
 
-  // Creates the expense and marks its ExpenseDraft as saved in one transaction
-  async saveFromExpenseDraft(draftId: string, input: SaveExpenseDbDto): Promise<{ id: string }> {
+  // Creates the expense and marks its ExpenseDraft as saved in one transaction. With replacesDraftId (/editar, D76) the
+  // rows of that saved draft (its record, installments and shared debts) are deleted first and it stops being saved.
+  async saveFromExpenseDraft(
+    draftId: string,
+    input: SaveExpenseDbDto,
+    replacesDraftId?: string,
+  ): Promise<{ id: string }> {
     return this.prisma.$transaction(async (tx) => {
+      if (replacesDraftId) await this.deleteRowsOf(tx, replacesDraftId)
       const record = await this.createRecord(tx, draftId, input)
       if (input.sharedDebts?.length) await tx.debt.createMany({ data: input.sharedDebts })
 
@@ -28,13 +35,13 @@ export class ExpenseDBRepository {
     })
   }
 
-  // PEN spent per category in a month (P19): day to day by date, fixed costs and cards by payment month. Subscriptions
+  // PEN spent per category in a month (P19), your part of shared expenses only (D73): day to day by date, fixed costs and cards by payment month. Subscriptions
   // are left out: their charge is already a card expense (D46). categoryId null: expenses without category.
   // With personId, only that person's expenses (the budget counts only yours, D71)
   async findSpentByCategory(month: number, year: number, personId?: string): Promise<CategorySpentDbDto[]> {
     const person = personId ? { personId } : {}
     const period = { paymentMonth: month, paymentYear: year, currency: Currency.PEN, ...person }
-    const aggregate = { by: ['categoryId'] as ['categoryId'], _sum: { amount: true } } as const
+    const aggregate = { by: ['categoryId'] as ['categoryId'], _sum: { amount: true, othersShare: true } } as const
     const [daily, fixedCosts, creditCards] = await Promise.all([
       this.prisma.dailyExpense.groupBy({
         ...aggregate,
@@ -50,7 +57,9 @@ export class ExpenseDBRepository {
 
     const totals = new Map<string | null, number>()
     for (const row of [...daily, ...fixedCosts, ...creditCards]) {
-      totals.set(row.categoryId, (totals.get(row.categoryId) ?? 0) + (row._sum.amount ?? 0))
+      // Your part (D73): what others owe of a shared expense is not your spending
+      const own = (row._sum.amount ?? 0) - (row._sum.othersShare ?? 0)
+      totals.set(row.categoryId, (totals.get(row.categoryId) ?? 0) + own)
     }
     return [...totals].map(([categoryId, total]) => ({ categoryId, total }))
   }
@@ -117,6 +126,22 @@ export class ExpenseDBRepository {
       select: { amount: true, amountInPen: true },
     })
     return Math.round(rows.reduce((sum, row) => sum + (row.amountInPen ?? row.amount), 0) * 100) / 100
+  }
+
+  private async deleteRowsOf(tx: Transaction, draftId: string) {
+    const linked = { OR: [{ draftId }, { originDraftId: draftId }] }
+    const paid = await tx.debtPayment.count({ where: { debt: linked } })
+    if (paid) throw new SavedExpenseLockedException({ draftId })
+
+    await tx.debt.deleteMany({ where: linked })
+    await tx.creditCardExpense.deleteMany({ where: linked })
+    await tx.dailyExpense.deleteMany({ where: { draftId } })
+    await tx.fixedCost.deleteMany({ where: { draftId } })
+    await tx.subscription.deleteMany({ where: { draftId } })
+    await tx.expenseDraft.update({
+      where: { id: draftId },
+      data: { status: ExpenseDraftStatus.DISCARDED, pendingField: null },
+    })
   }
 
   private async createRecord(tx: Transaction, draftId: string, input: SaveExpenseDbDto) {

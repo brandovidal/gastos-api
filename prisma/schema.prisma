@@ -4,9 +4,9 @@
 // Table prefixes by use: cat_ catalogs · bud_ budget · exp_ expenses · bot_ chat bot · ai_ AI usage · imp_ imports (P14)
 
 generator client {
-  provider     = "prisma-client"
-  output       = "../src/generated/prisma"
-  moduleFormat = "cjs"
+  provider            = "prisma-client"
+  output              = "../src/generated/prisma"
+  moduleFormat        = "cjs"
   // Without it the extension is inferred from tsconfig.json, which the Docker install step does not have yet:
   // the image then imports "./internal/class.ts" and crashes on start (P10, 2026-09-23)
   importFileExtension = ""
@@ -190,7 +190,9 @@ model ExpenseDraft {
   paymentMethod   PaymentMethod? @relation(fields: [paymentMethodId], references: [id])
   categoryId      String?
   category        Category?      @relation(fields: [categoryId], references: [id])
-  sharedWith      String? // JSON { personIds, parts }: "cena 120 con dany, mitad" (P17); each one owes amount / parts
+  sharedWith      String? // JSON { shares: [{ personId, ratio?, amount? }] }: who owes a part of what the user paid (D73, D74)
+  replacesDraftId String? // /editar (D76): this copy replaces the rows of that saved draft when it is saved
+  shareMessageId  String? // the split message in the channel (D75): closed with its summary when the expense is saved
   confidence      String         @default("{}") // JSON { field: 0..1 }
   missingFields   String         @default("[]") // JSON [field]
   confirmedAt     DateTime?
@@ -243,6 +245,7 @@ model DailyExpense {
   id              String        @id @default(cuid())
   description     String
   amount          Float
+  othersShare     Float         @default(0) // what other people owe of this expense (shared, D73)
   currency        String        @default("PEN")
   exchangeRate    Float?
   amountInPen     Float?
@@ -276,6 +279,7 @@ model FixedCost {
   id              String         @id @default(cuid())
   description     String
   amount          Float
+  othersShare     Float          @default(0) // what other people owe of this expense (shared, D73)
   currency        String         @default("PEN")
   exchangeRate    Float?
   amountInPen     Float?
@@ -310,6 +314,7 @@ model Subscription {
   id              String         @id @default(cuid())
   description     String
   amount          Float
+  othersShare     Float          @default(0) // what other people owe of this expense (shared, D73)
   currency        String         @default("PEN")
   exchangeRate    Float?
   amountInPen     Float?
@@ -342,6 +347,7 @@ model CreditCardExpense {
   id              String        @id @default(cuid())
   description     String
   amount          Float
+  othersShare     Float         @default(0) // what other people owe of this expense (shared, D73)
   currency        String        @default("PEN")
   exchangeRate    Float?
   amountInPen     Float?
@@ -358,6 +364,7 @@ model CreditCardExpense {
   paymentYear     Int
   processDate     DateTime?
   notes           String?
+  originDraftId   String? // the draft that also created this row (installments after the first, D73)
   draftId         String?       @unique
   draft           ExpenseDraft? @relation(fields: [draftId], references: [id])
   createdAt       DateTime      @default(now())
@@ -365,6 +372,7 @@ model CreditCardExpense {
 
   @@index([paymentMethodId, paymentMonth, paymentYear])
   @@index([personId])
+  @@index([originDraftId])
   @@index([paymentStatus])
   @@map("exp_credit_card_expenses")
 }
@@ -373,32 +381,34 @@ model CreditCardExpense {
 // owed_to_me = someone owes the user; i_owe = the user owes someone. paidAmount is the sum of confirmed payments and
 // status follows it (DebtStatus); "late" and "not started" are computed from the payment month, never stored.
 model Debt {
-  id           String        @id @default(cuid())
-  direction    String // DebtDirection
-  description  String
-  amount       Float // of this installment
-  currency     String        @default("PEN")
-  exchangeRate Float?
-  amountInPen  Float?
-  installment  String? // "n/m"
-  paymentMonth Int
-  paymentYear  Int
-  dueDate      DateTime?
-  status       String        @default("pending") // DebtStatus
-  paidAmount   Float         @default(0)
-  paidDate     DateTime?
-  personId     String
-  person       Person        @relation(fields: [personId], references: [id])
-  notes        String?
-  draftId      String?       @unique // the chat draft it came from (first installment only)
-  draft        ExpenseDraft? @relation(fields: [draftId], references: [id])
-  createdAt    DateTime      @default(now())
-  updatedAt    DateTime      @updatedAt
+  id            String        @id @default(cuid())
+  direction     String // DebtDirection
+  description   String
+  amount        Float // of this installment
+  currency      String        @default("PEN")
+  exchangeRate  Float?
+  amountInPen   Float?
+  installment   String? // "n/m"
+  paymentMonth  Int
+  paymentYear   Int
+  dueDate       DateTime?
+  status        String        @default("pending") // DebtStatus
+  paidAmount    Float         @default(0)
+  paidDate      DateTime?
+  personId      String
+  person        Person        @relation(fields: [personId], references: [id])
+  notes         String?
+  originDraftId String? // the draft that also created this row (installments, shared parts, D73)
+  draftId       String?       @unique // the chat draft it came from (first installment only)
+  draft         ExpenseDraft? @relation(fields: [draftId], references: [id])
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
 
   payments DebtPayment[]
 
   @@index([personId, direction, status])
   @@index([paymentYear, paymentMonth])
+  @@index([originDraftId])
   @@map("exp_debts")
 }
 

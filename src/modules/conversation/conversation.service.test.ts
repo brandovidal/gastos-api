@@ -15,6 +15,7 @@ import { ExpenseDraftChannel, ExpenseDraftStatus } from '@/commons/constants/exp
 import { ExpenseField } from '@/commons/constants/expense-extraction.constant'
 import { DuplicateExpenseDraftException } from '@/commons/exceptions/expense-draft/duplicate-expense-draft.exception'
 import { StoredFileExpiredException } from '@/commons/exceptions/stored-file/stored-file-expired.exception'
+import { SavedExpenseLockedException } from '@/commons/exceptions/expense/saved-expense-locked.exception'
 import { ExpenseExtractionFailedException } from '@/commons/exceptions/expense-extraction/expense-extraction-failed.exception'
 import { ExpenseDraftDBRepository } from '@/db/models/expense-draft/expenseDraftDB.repository'
 import { ExpenseDBRepository } from '@/db/models/expense/expenseDB.repository'
@@ -58,6 +59,8 @@ const mockExpenseDraftDB = {
   findSameCardDayAmount: vi.fn(),
   parkMessage: vi.fn(),
   findOpenByBatch: vi.fn(),
+  searchSaved: vi.fn(),
+  createEditCopy: vi.fn(),
 }
 const mockExpenseDB = { findMonthlyTotals: vi.fn() }
 const mockMediaDownloader = { download: vi.fn() }
@@ -1472,19 +1475,235 @@ describe('ConversationService', () => {
   })
 
   describe('shared expenses and money received (P17)', () => {
-    it('should send only the expense to the AI and keep who shares it', async () => {
+    it('should send only the expense to the AI and show the split in a second message (D75)', async () => {
       mockExtraction.extract.mockResolvedValue({
         expenses: [buildResolvedExpense({ description: 'Cena', amount: 120 })],
       })
+      const half = { shares: [{ personId: 'person-danery', ratio: 0.5 }] }
+      mockExpenseDraftDB.update.mockImplementation(async (id, data) =>
+        buildExpenseDraft({ id, description: 'Cena', amount: 120, ...data }),
+      )
 
       const { replies } = await service.handle(textMessage('cena 120 con dany, mitad'))
 
       expect(mockExtraction.extract).toHaveBeenCalledWith(expect.objectContaining({ text: 'cena 120' }))
-      expect(mockExpenseDraftDB.update).toHaveBeenCalledWith(
-        'file-0',
-        expect.objectContaining({ sharedWith: { personIds: ['person-danery'], parts: 2 } }),
+      expect(mockExpenseDraftDB.update).toHaveBeenCalledWith('file-0', expect.objectContaining({ sharedWith: half }))
+      expect(replies).toHaveLength(2)
+      expect(replies[0].text).toContain('🧾 <b>Cena</b> — S/ 120.00 (pagas tú)')
+      expect(replies[1].text).toContain('👥 <b>Reparto</b>: pagas tú S/ 120.00')
+      expect(replies[1].text).toContain('• Danery te debe S/ 60.00 (50 %)')
+      expect(replies[1].text).toContain('Tu parte: S/ 60.00')
+      expect(replies[1].buttons?.map((row) => row.map((button) => `${button.label}=${button.data}`))).toEqual([
+        ['Danery ½=shr:file-0:0:h', '⅓=shr:file-0:0:t', '20 %=shr:file-0:0:p20'],
+        ['✏️ Editar (Danery)=shr:file-0:0:m', '🗑️ Quitar (Danery)=shr:file-0:0:x'],
+      ])
+    })
+
+    it('should show the split only after the expense is complete (card, period…)', async () => {
+      mockExtraction.extract.mockResolvedValue({
+        expenses: [buildResolvedExpense({ description: 'HBO', amount: 28, period: null, missingFields: ['period'] })],
+      })
+      const pending = {
+        description: 'HBO',
+        amount: 28,
+        destination: ExpenseDestination.SUBSCRIPTION,
+        missingFields: ['period'],
+        pendingField: 'period',
+        status: 'draft',
+      }
+      mockExpenseDraftDB.update.mockImplementation(async (id, data) => buildExpenseDraft({ id, ...pending, ...data }))
+
+      const first = await service.handle(textMessage('hbo 28 con dany a medias'))
+      expect(first.replies).toHaveLength(1)
+      expect(first.replies[0].text).toContain('¿Cada cuánto se paga?')
+
+      // the period button completes it: the summary is edited and the split arrives after it
+      mockExpenseDraftDB.findById.mockResolvedValue(
+        buildExpenseDraft({ ...pending, sharedWith: { shares: [{ personId: 'person-danery', ratio: 0.5 }] } }),
       )
-      expect(replies[0].text).toContain('👥 Compartido con Danery: tu parte S/ 60.00 · te debe S/ 60.00')
+      mockExpenseDraftDB.update.mockImplementation(async (id, data) =>
+        buildExpenseDraft({
+          id,
+          ...pending,
+          sharedWith: { shares: [{ personId: 'person-danery', ratio: 0.5 }] },
+          ...data,
+        }),
+      )
+      const { replies } = await service.handle(action(BotAction.SET_FIELD, ExpenseField.PERIOD, 'monthly'))
+
+      expect(replies).toHaveLength(2)
+      expect(replies[0].edit).toBe(true)
+      expect(replies[1].text).toContain('Danery te debe S/ 14.00 (50 %)')
+    })
+
+    it("should change one person's part from the split message, editing only that message", async () => {
+      mockExpenseDraftDB.findById.mockResolvedValue(
+        buildExpenseDraft({ amount: 64, sharedWith: { shares: [{ personId: 'person-danery', ratio: 0.5 }] } }),
+      )
+      mockExpenseDraftDB.update.mockImplementation(async (id, data) => buildExpenseDraft({ id, amount: 64, ...data }))
+
+      const { replies } = await service.handle({
+        ...action(BotAction.SHARE),
+        action: { name: BotAction.SHARE, draftId: FILE_ID, field: '0', value: 't' },
+      })
+
+      expect(mockExpenseDraftDB.update).toHaveBeenCalledWith(FILE_ID, {
+        sharedWith: { shares: [{ personId: 'person-danery', ratio: 1 / 3 }] },
+      })
+      expect(replies[0]).toMatchObject({ edit: true, text: expect.stringContaining('Danery te debe S/ 21.33 (33 %)') })
+    })
+
+    it('should ask and read a typed part after ✏️ of the split message', async () => {
+      const shared = { shares: [{ personId: 'person-danery', ratio: 0.5 }] }
+      mockExpenseDraftDB.findById.mockResolvedValue(buildExpenseDraft({ amount: 64, sharedWith: shared }))
+
+      const asked = await service.handle({
+        ...action(BotAction.SHARE),
+        action: { name: BotAction.SHARE, draftId: FILE_ID, field: '0', value: 'm' },
+      })
+      expect(mockExpenseDraftDB.update).toHaveBeenCalledWith(FILE_ID, { pendingField: 'share:0' })
+      // the split message becomes the question, so its old buttons go away
+      expect(asked.replies[0]).toMatchObject({ edit: true, text: expect.stringContaining('¿Cuánto te debe Danery?') })
+
+      mockExpenseDraftDB.findOpenByChat.mockResolvedValue(
+        buildExpenseDraft({ amount: 64, sharedWith: shared, pendingField: 'share:0' }),
+      )
+      mockExpenseDraftDB.update.mockImplementation(async (id, data) => buildExpenseDraft({ id, amount: 64, ...data }))
+      const { replies } = await service.handle(textMessage('20'))
+
+      expect(mockExpenseDraftDB.update).toHaveBeenLastCalledWith(FILE_ID, {
+        sharedWith: { shares: [{ personId: 'person-danery', amount: 20 }] },
+        pendingField: null,
+      })
+      expect(replies[0].text).toContain('Danery te debe S/ 20.00')
+    })
+
+    it('should stop sharing when the last person is removed', async () => {
+      mockExpenseDraftDB.findById.mockResolvedValue(
+        buildExpenseDraft({ sharedWith: { shares: [{ personId: 'person-danery', ratio: 0.5 }] } }),
+      )
+
+      const { replies } = await service.handle({
+        ...action(BotAction.SHARE),
+        action: { name: BotAction.SHARE, draftId: FILE_ID, field: '0', value: 'x' },
+      })
+
+      expect(mockExpenseDraftDB.update).toHaveBeenCalledWith(FILE_ID, { sharedWith: null })
+      expect(replies[0].text).toContain('Ya no se comparte')
+    })
+
+    it('should share the open expense when the message only says the split (D74)', async () => {
+      // /editar netflix → "compartido con dany a medias": Netflix was saved as Danery's
+      mockExpenseDraftDB.findOpenByChat.mockResolvedValue(
+        buildExpenseDraft({ id: 'draft-copy', status: 'editing', amount: 64, personId: 'person-danery' }),
+      )
+      mockExpenseDraftDB.update.mockImplementation(async (id, data) =>
+        buildExpenseDraft({ id, status: 'editing', amount: 64, ...data }),
+      )
+
+      const { replies } = await service.handle(textMessage('compartido con dany a medias'))
+
+      expect(mockExtraction.extract).not.toHaveBeenCalled()
+      expect(mockExpenseDraftDB.update).toHaveBeenCalledWith('draft-copy', {
+        sharedWith: { shares: [{ personId: 'person-danery', ratio: 0.5 }] },
+        personId: 'person-brando',
+        pendingField: null,
+      })
+      expect(replies[1].text).toContain('Danery te debe S/ 32.00 (50 %)')
+    })
+
+    it('should close the split message with what was saved and show it under the saved summary', async () => {
+      mockExpenseDraftDB.findById.mockResolvedValue(
+        buildExpenseDraft({
+          amount: 65,
+          shareMessageId: '901',
+          sharedWith: {
+            shares: [
+              { personId: 'person-danery', ratio: 0.3 },
+              { personId: 'person-brando', ratio: 0.3 },
+            ],
+          },
+        }),
+      )
+
+      const { replies } = await service.handle(action(BotAction.SAVE))
+
+      expect(replies[0].text).toContain('👥 Danery te debe S/ 19.50 · Brando te debe S/ 19.50 · tu parte S/ 26.00')
+      expect(replies[1]).toEqual({
+        editMessageId: '901',
+        text: '✅ <b>Reparto guardado</b>\n• Danery te debe S/ 19.50 (30 %)\n• Brando te debe S/ 19.50 (30 %)\nTu parte: S/ 26.00',
+      })
+    })
+
+    it('should answer an old split button of a saved expense with the final split, without buttons', async () => {
+      mockExpenseDraftDB.findById.mockResolvedValue(
+        buildExpenseDraft({
+          status: 'saved',
+          amount: 20,
+          sharedWith: { shares: [{ personId: 'person-danery', ratio: 0.5 }] },
+        }),
+      )
+
+      const { replies } = await service.handle({
+        ...action(BotAction.SHARE),
+        action: { name: BotAction.SHARE, draftId: FILE_ID, field: '0', value: 't' },
+      })
+
+      expect(mockExpenseDraftDB.update).not.toHaveBeenCalled()
+      expect(replies[0]).toMatchObject({ edit: true, text: expect.stringContaining('✅ <b>Reparto guardado</b>') })
+      expect(replies[0].buttons).toBeUndefined()
+    })
+
+    it.each([
+      ['10', { amount: 10 }, 'Danery te debe S/ 10.00 (50 %)'],
+      ['50', { ratio: 0.5 }, 'Danery te debe S/ 10.00 (50 %)'], // above the total of S/ 20: a percentage
+    ])('should read "%s" typed after ✏️ Editar against the total', async (text, share, line) => {
+      mockExpenseDraftDB.findOpenByChat.mockResolvedValue(
+        buildExpenseDraft({
+          amount: 20,
+          pendingField: 'share:0',
+          shareMessageId: '902',
+          sharedWith: { shares: [{ personId: 'person-danery', ratio: 1 / 3 }] },
+        }),
+      )
+      mockExpenseDraftDB.update.mockImplementation(async (id, data) =>
+        buildExpenseDraft({ id, amount: 20, shareMessageId: '902', ...data }),
+      )
+
+      const { replies } = await service.handle(textMessage(text))
+
+      expect(mockExpenseDraftDB.update).toHaveBeenCalledWith(FILE_ID, {
+        sharedWith: { shares: [{ personId: 'person-danery', ...share }] },
+        pendingField: null,
+      })
+      // the old split message (now the question) is closed and a new one comes
+      expect(replies[0]).toEqual({ text: '↩️ Reparto actualizado abajo.', editMessageId: '902' })
+      expect(replies[1]).toMatchObject({ text: expect.stringContaining(line), trackShareOf: FILE_ID })
+    })
+
+    it('should not accept more than the total after ✏️ Editar', async () => {
+      mockExpenseDraftDB.findOpenByChat.mockResolvedValue(
+        buildExpenseDraft({
+          amount: 20,
+          pendingField: 'share:0',
+          sharedWith: { shares: [{ personId: 'person-danery', ratio: 0.5 }] },
+        }),
+      )
+
+      const { replies } = await service.handle(textMessage('150'))
+
+      expect(mockExpenseDraftDB.update).not.toHaveBeenCalled()
+      expect(replies[0].text).toContain('Danery no puede deber más que el total (S/ 20.00)')
+    })
+
+    it('should tell who owes what when a shared expense is saved', async () => {
+      mockExpenseDraftDB.findById.mockResolvedValue(
+        buildExpenseDraft({ amount: 64, sharedWith: { shares: [{ personId: 'person-danery', ratio: 0.5 }] } }),
+      )
+
+      const { replies } = await service.handle(action(BotAction.SAVE))
+
+      expect(replies[1].text).toContain('👥 Danery te debe S/ 32.00.')
     })
 
     it('should propose a payment of what the sender owes for a "Te yapearon" screenshot', async () => {
@@ -1584,6 +1803,106 @@ describe('ConversationService', () => {
       })
 
       expect(replies).toEqual([])
+    })
+  })
+
+  describe('/editar (D76)', () => {
+    const saved = buildExpenseDraft({
+      id: 'draft-saved',
+      status: 'saved',
+      description: 'Netflix',
+      amount: 64,
+      personId: 'person-brando',
+      paymentMethodId: 'method-ohpay',
+      destination: ExpenseDestination.SUBSCRIPTION,
+    })
+
+    it('should find saved expenses by concept, amount and catalog names, with a ✏️ button each', async () => {
+      mockExpenseDraftDB.searchSaved.mockResolvedValue([saved])
+
+      const { replies } = await service.handle({ ...command(BotCommand.EDIT), text: '/editar netflix 64 la oh' })
+
+      expect(mockExpenseDraftDB.searchSaved).toHaveBeenCalledWith(
+        ExpenseDraftChannel.TELEGRAM,
+        CHAT_ID,
+        expect.objectContaining({ text: 'netflix', amount: 64, paymentMethodId: 'method-ohpay' }),
+        5,
+      )
+      expect(replies[0].text).toContain('1. 22/09/2026 <b>Netflix</b> — S/ 64.00 · Plataforma · OhPay')
+      expect(replies[0].buttons).toEqual([[{ label: '✏️ 1', data: 'eds:draft-saved' }]])
+    })
+
+    it('should explain how to search and say when nothing matches', async () => {
+      expect((await service.handle(command(BotCommand.EDIT))).replies[0].text).toContain('/editar netflix')
+
+      mockExpenseDraftDB.searchSaved.mockResolvedValue([])
+      const { replies } = await service.handle({ ...command(BotCommand.EDIT), text: '/editar pizza' })
+      expect(replies[0].text).toContain('No encontré gastos guardados con «pizza»')
+    })
+
+    it('should open an editing copy with "Guardar cambios" and leave the saved one untouched', async () => {
+      mockExpenseDraftDB.findById.mockResolvedValue(saved)
+      mockExpenseDraftDB.createEditCopy.mockResolvedValue({
+        ...saved,
+        id: 'draft-copy',
+        status: 'editing',
+        replacesDraftId: 'draft-saved',
+      })
+
+      const { replies } = await service.handle({
+        ...action(BotAction.EDIT_SAVED),
+        action: { name: BotAction.EDIT_SAVED, draftId: 'draft-saved' },
+      })
+
+      expect(mockExpenseDraftDB.discardOpenByChat).toHaveBeenCalledWith(ExpenseDraftChannel.TELEGRAM, CHAT_ID)
+      expect(mockExpenseDraftDB.createEditCopy).toHaveBeenCalledWith(saved, expect.stringMatching(/^edit:/))
+      expect(replies[0].text).toContain('✏️ <b>Editando</b>')
+      expect(replies[0].buttons?.flat().map((button) => button.label)).toEqual([
+        '✅ Guardar cambios',
+        '✏️ Editar',
+        '❌ Cancelar',
+      ])
+    })
+
+    it('should keep the copy in editing when it is corrected', async () => {
+      mockExpenseDraftDB.findOpenByChat.mockResolvedValue({ ...saved, id: 'draft-copy', status: 'editing' })
+      mockExtraction.parseLocalCorrection.mockResolvedValue({ amount: 70 })
+
+      await service.handle(textMessage('monto 70'))
+
+      expect(mockExpenseDraftDB.update).toHaveBeenCalledWith(
+        'draft-copy',
+        expect.objectContaining({ amount: 70, status: 'editing' }),
+      )
+    })
+
+    it('should drop the copy with ❌ Cancelar', async () => {
+      mockExpenseDraftDB.findById.mockResolvedValue({ ...saved, id: 'draft-copy', status: 'editing' })
+
+      const { replies } = await service.handle(action(BotAction.DISCARD))
+
+      expect(replies[0].text).toContain('Edición cancelada')
+    })
+
+    it('should not replace an expense whose debts have payments', async () => {
+      mockExpenseDraftDB.findById.mockResolvedValue({ ...saved, id: 'draft-copy', status: 'editing' })
+      mockSaver.save.mockRejectedValue(new SavedExpenseLockedException())
+
+      const { replies } = await service.handle(action(BotAction.SAVE))
+
+      expect(replies[0].text).toContain('tiene deudas con abonos')
+    })
+
+    it('should not open a result that is no longer saved', async () => {
+      mockExpenseDraftDB.findById.mockResolvedValue({ ...saved, status: 'discarded' })
+
+      const result = await service.handle({
+        ...action(BotAction.EDIT_SAVED),
+        action: { name: BotAction.EDIT_SAVED, draftId: 'draft-saved' },
+      })
+
+      expect(result.replies).toEqual([])
+      expect(mockExpenseDraftDB.createEditCopy).not.toHaveBeenCalled()
     })
   })
 })

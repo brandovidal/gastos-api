@@ -31,13 +31,19 @@ import { CatalogKind, ExpenseField } from '@/commons/constants/expense-extractio
 import { DateHelper } from '@/commons/helpers/date.helper'
 import { DuplicateExpenseDraftException } from '@/commons/exceptions/expense-draft/duplicate-expense-draft.exception'
 import { StoredFileExpiredException } from '@/commons/exceptions/stored-file/stored-file-expired.exception'
+import { SavedExpenseLockedException } from '@/commons/exceptions/expense/saved-expense-locked.exception'
 import { ExpenseDraftDBRepository } from '@/db/models/expense-draft/expenseDraftDB.repository'
-import { ExpenseDraftDbDto } from '@/db/models/expense-draft/expenseDraftDB.dto'
+import { ExpenseDraftDbDto, SharedExpense, UpdateExpenseDraftDbDto } from '@/db/models/expense-draft/expenseDraftDB.dto'
 import { ExpenseDBRepository } from '@/db/models/expense/expenseDB.repository'
 import { PaymentMethodDBRepository } from '@/db/models/payment-method/paymentMethodDB.repository'
 import { ExpenseExtractionService } from '@/modules/expense-extraction/expense-extraction.service'
 import { completeExpense, withPrimaryCard } from '@/modules/expense-extraction/expense-extraction.resolver'
-import { findCatalogEntryById, matchCatalogEntry } from '@/modules/expense-extraction/expense-extraction.catalog'
+import {
+  findCatalogEntryById,
+  findDefaultPerson,
+  matchCatalogEntry,
+  normalizeText,
+} from '@/modules/expense-extraction/expense-extraction.catalog'
 import { DebtsService } from '@/modules/debts/debts.service'
 import { RecognitionService } from '@/modules/recognition/recognition.service'
 import { BudgetService } from '@/modules/budget/budget.service'
@@ -58,7 +64,8 @@ import { sameMerchant } from './duplicate.helper'
 import { formatReconciliation } from './recognition.messages'
 import { BUDGET_TEXTS, formatBudget, formatBudgetAlert, formatForecast } from './budget.messages'
 import { parseMonthArg } from './month-arg.parser'
-import { parseSharedExpense, SharedExpenseMatch } from './shared-expense.parser'
+import { parseShare, parseShareCorrection, parseSharedExpense, SharedExpenseMatch } from './shared-expense.parser'
+import { parseSavedSearch } from './saved-search.parser'
 import {
   buildInstallmentPickerReply,
   buildPaymentProposalReply,
@@ -86,6 +93,12 @@ import {
   buildExpenseReply,
   buildDraftReplies,
   buildHelpReply,
+  buildSavedSearchReply,
+  buildClosedShareReply,
+  buildShareReply,
+  formatSharedDebts,
+  SHARE_CHOICE_RATIOS,
+  ShareChoice,
   commandButtons,
   withCommandButtons,
   buildNewPaymentMethodReply,
@@ -101,10 +114,34 @@ import {
   BudgetImpact,
   ChannelMessage,
   ConversationResult,
+  SavedExpense,
 } from './dto/conversation.types'
 
 // Overlapping screenshots are compared against what was registered in this window (P21)
 const DUPLICATE_LOOKBACK_DAYS = 60
+
+// /editar (D76): corrections keep the copy in EDITING (they would make it a new draft otherwise)
+const keepEditing = (expenseDraft: ExpenseDraftDbDto, update: UpdateExpenseDraftDbDto): UpdateExpenseDraftDbDto =>
+  expenseDraft.status === ExpenseDraftStatus.EDITING && update.status !== ExpenseDraftStatus.DISCARDED
+    ? { ...update, status: ExpenseDraftStatus.EDITING }
+    : update
+
+// ✏️ of the split message (D75): an amount up to the total is an amount; above it and up to 100 it can only be a
+// percentage ("50" of S/ 20 is 50 %); above both it cannot be owed
+const SHARE_OVER_TOTAL = 'over-total'
+function shareOfTotal(
+  share: ReturnType<typeof parseShare>,
+  total: number,
+): ReturnType<typeof parseShare> | typeof SHARE_OVER_TOTAL {
+  if (!share || share.amount == null || share.amount <= total) return share
+  return share.amount <= 100 ? { ratio: share.amount / 100 } : SHARE_OVER_TOTAL
+}
+
+// Split message ✏️ (D75): "share:<person index>" while the bot waits for that person's part
+const SHARE_FIELD_PREFIX = 'share:'
+
+// /editar: results shown at most
+const SAVED_SEARCH_LIMIT = 5
 
 // Closed-for-now expenses of Borrador that accept only Retomar and Descartar
 const PARKED_STATUSES = [ExpenseDraftStatus.PENDING_REVIEW, ExpenseDraftStatus.FAILED]
@@ -157,12 +194,21 @@ export class ConversationService {
     const active = await this.findActive(message)
 
     if (active) {
+      // "compartido con dany a medias": shares the open expense (D74); the user becomes the payer
+      const split = parseShareCorrection(text, await this.expenseExtractionService.loadCatalog())
+      if (split && !active.pendingField?.startsWith(SHARE_FIELD_PREFIX)) return this.shareOpenExpense(active, split)
+
       if (active.pendingField === FREE_CORRECTION_FIELD) {
-        return [await this.correctWithAi(active, text)]
+        return this.correctWithAi(active, text)
       }
 
       if (active.pendingField?.startsWith(CARD_DAYS_FIELD_PREFIX)) {
         return this.saveCardDays(active, text)
+      }
+
+      // ✏️ of the split message: "20", "30%", "la mitad" for that person (D75)
+      if (active.pendingField?.startsWith(SHARE_FIELD_PREFIX)) {
+        return this.setShareFromText(active, text)
       }
 
       // Answer to the pending question, or a correction that starts with a keyword ("monto 30")
@@ -172,7 +218,7 @@ export class ConversationService {
       )
 
       if (correction) {
-        return [await this.applyCorrection(active, correction)]
+        return this.applyCorrection(active, correction)
       }
 
       // Asked for the payment method and got a name we do not know: offer to add it
@@ -421,6 +467,7 @@ export class ConversationService {
       })
       const reply = await this.withDuplicateWarning(updated, this.replyFor(updated, catalog, edit && index === 0))
       replies.push(index === 0 && heard ? { ...reply, text: `${heard}${reply.text}` } : reply)
+      replies.push(...this.shareReplies(updated, catalog))
     }
 
     return [...replies, ...unreadableReplies]
@@ -491,19 +538,22 @@ export class ConversationService {
     expenseDraft: ExpenseDraftDbDto,
     correction: Partial<ResolvedExpenseFields>,
     edit = false,
-  ): Promise<BotReply> {
+  ): Promise<BotReply[]> {
     // What the user says is certain: corrected fields lose their ❓
     const confidence = { ...expenseDraft.confidence }
     for (const field of Object.keys(correction)) confidence[field] = 1
 
     const catalog = await this.expenseExtractionService.loadCatalog()
     const expense = completeExpense({ ...toExpenseFields(expenseDraft), ...correction }, confidence, catalog)
-    const updated = await this.expenseDraftDBRepository.update(expenseDraft.id, toExpenseDraftUpdate(expense))
+    const updated = await this.expenseDraftDBRepository.update(
+      expenseDraft.id,
+      keepEditing(expenseDraft, toExpenseDraftUpdate(expense)),
+    )
 
-    return this.replyFor(updated, catalog, edit)
+    return [this.replyFor(updated, catalog, edit), ...this.shareRepliesAfter(expenseDraft, updated, catalog)]
   }
 
-  private async correctWithAi(expenseDraft: ExpenseDraftDbDto, text: string): Promise<BotReply> {
+  private async correctWithAi(expenseDraft: ExpenseDraftDbDto, text: string): Promise<BotReply[]> {
     try {
       const { expenses } = await this.expenseExtractionService.extract({
         text,
@@ -512,8 +562,12 @@ export class ConversationService {
       })
 
       if (expenses[0]) {
-        const updated = await this.expenseDraftDBRepository.update(expenseDraft.id, toExpenseDraftUpdate(expenses[0]))
-        return this.replyFor(updated, await this.expenseExtractionService.loadCatalog())
+        const updated = await this.expenseDraftDBRepository.update(
+          expenseDraft.id,
+          keepEditing(expenseDraft, toExpenseDraftUpdate(expenses[0])),
+        )
+        const catalog = await this.expenseExtractionService.loadCatalog()
+        return [this.replyFor(updated, catalog), ...this.shareRepliesAfter(expenseDraft, updated, catalog)]
       }
     } catch (error) {
       this.logger.warn(`[correctWithAi] extraction failed: ${(error as Error).message}`)
@@ -521,7 +575,7 @@ export class ConversationService {
 
     // Leave correction mode so the next message is handled normally
     await this.expenseDraftDBRepository.update(expenseDraft.id, { pendingField: expenseDraft.missingFields[0] ?? null })
-    return { text: TEXTS.correctionFailed }
+    return [{ text: TEXTS.correctionFailed }]
   }
 
   // ✅ Guardar todos saves the complete ones and leaves repeated or incomplete ones in Borrador; 📝 Revisar uno por
@@ -601,6 +655,7 @@ export class ConversationService {
       })
       return { replies }
     }
+    if (action.name === BotAction.EDIT_SAVED) return this.startEdit(message, action.draftId)
     if (DEBT_PAYMENT_ACTIONS.includes(action.name)) return this.handleDebtPaymentAction(action)
     if (BATCH_ACTIONS.includes(action.name)) return this.handleBatchAction(message.chatId, action)
 
@@ -613,6 +668,12 @@ export class ConversationService {
     const isParked = status !== undefined && PARKED_STATUSES.includes(status)
     const allowed =
       isOwn && (isOpen || (isParked && (action.name === BotAction.RESUME || action.name === BotAction.DISCARD)))
+
+    // A button of a split message whose expense is already closed: that message shows what was kept, no buttons
+    if (expenseDraft && isOwn && !isOpen && action.name === BotAction.SHARE && expenseDraft.sharedWith) {
+      const catalog = await this.expenseExtractionService.loadCatalog()
+      return { replies: [buildClosedShareReply(expenseDraft, catalog, { edit: true })], notice: TEXTS.alreadyProcessed }
+    }
 
     if (!expenseDraft || !allowed) {
       return { replies: [], notice: TEXTS.alreadyProcessed }
@@ -649,15 +710,27 @@ export class ConversationService {
           status: ExpenseDraftStatus.PENDING_REVIEW,
           pendingField: null,
         })
-        return { replies: [buildClosedReply('📝 <b>En borrador</b>', updated, catalog), buildParkedNotice(updated)] }
+        return {
+          replies: [
+            buildClosedReply('📝 <b>En borrador</b>', updated, catalog),
+            ...this.closeShare(updated, catalog),
+            buildParkedNotice(updated),
+          ],
+        }
       }
       case BotAction.DISCARD: {
         const updated = await this.expenseDraftDBRepository.update(expenseDraft.id, {
           status: ExpenseDraftStatus.DISCARDED,
           pendingField: null,
         })
+        // /editar: dropping the copy leaves the saved expense as it was
+        if (expenseDraft.status === ExpenseDraftStatus.EDITING) {
+          return { replies: [{ text: TEXTS.editCancelled, edit: true }, ...this.closeShare(updated, catalog)] }
+        }
         return { replies: [buildClosedReply('❌ <b>Descartado</b>', updated, catalog)] }
       }
+      case BotAction.SHARE:
+        return this.setShareFromButton(expenseDraft, action, catalog)
       case BotAction.RESUME:
         return { replies: await this.resume(expenseDraft, catalog), notice: TEXTS.resumed }
       case BotAction.NEW_PAYMENT_METHOD:
@@ -665,7 +738,7 @@ export class ConversationService {
       case BotAction.SET_FIELD: {
         const correction = this.toFieldCorrection(action, catalog)
         if (!correction) return { replies: [], notice: TEXTS.alreadyProcessed }
-        return { replies: [await this.applyCorrection(expenseDraft, correction, true)] }
+        return { replies: await this.applyCorrection(expenseDraft, correction, true) }
       }
       default:
         return { replies: [] }
@@ -703,7 +776,7 @@ export class ConversationService {
       return [created, { text: TEXTS.askCardDays }]
     }
 
-    return [created, next]
+    return [created, ...next]
   }
 
   private async saveCardDays(expenseDraft: ExpenseDraftDbDto, text: string): Promise<BotReply[]> {
@@ -719,7 +792,7 @@ export class ConversationService {
     // Back to the normal flow: next missing field or the confirmation buttons
     const next = await this.applyCorrection(expenseDraft, { paymentMethodId })
 
-    return [{ text: TEXTS.cardDaysSaved(card.name) }, next]
+    return [{ text: TEXTS.cardDaysSaved(card.name) }, ...next]
   }
 
   // Values from quick reply buttons are checked again: the button may be older than the catalog
@@ -795,6 +868,8 @@ export class ConversationService {
         return [await this.debtsCommand(this.commandArgs(message))]
       case BotCommand.COLLECT:
         return [{ text: await this.collectCommand(this.commandArgs(message)) }]
+      case BotCommand.EDIT:
+        return [await this.searchSaved(message)]
       case BotCommand.BUDGET: {
         const today = DateHelper.todayIn(APP_TIME_ZONE)
         const period = parseMonthArg(this.commandArgs(message), today)
@@ -921,14 +996,25 @@ export class ConversationService {
     catalog: ExtractionCatalog,
     edit = true,
   ): Promise<ConversationResult> {
-    const { installments, budget } = await this.expenseSaverService.save(expenseDraft)
+    let result: SavedExpense
+    try {
+      result = await this.expenseSaverService.save(expenseDraft)
+    } catch (error) {
+      if (error instanceof SavedExpenseLockedException) return { replies: [{ text: TEXTS.editLocked }] }
+      throw error
+    }
+    const { installments, budget } = result
     const saved = { ...expenseDraft, status: ExpenseDraftStatus.SAVED }
     const label = DESTINATION_LABELS[expenseDraft.destination as ExpenseDestination]
     const closed = buildClosedReply(`✅ <b>Guardado en ${label}</b>`, saved, catalog)
-    const notice = buildSavedNotice(saved, label, installments)
+    const notice = buildSavedNotice(saved, label, installments, formatSharedDebts(expenseDraft, catalog))
     const alert = await this.budgetAlert(budget)
     return {
-      replies: [{ ...closed, edit }, alert ? { ...notice, text: `${alert}\n${notice.text}` } : notice],
+      replies: [
+        { ...closed, edit },
+        ...this.closeShare(saved, catalog),
+        alert ? { ...notice, text: `${alert}\n${notice.text}` } : notice,
+      ],
       notice: TEXTS.saved,
     }
   }
@@ -949,6 +1035,141 @@ export class ConversationService {
       this.logger.warn(`[budgetAlert] ${(error as Error).message}`)
       return null
     }
+  }
+
+  // The split message of a shared expense (D75), once the expense is complete (card, period… chosen): what each
+  // one owes depends on them. None for discarded or saved ones.
+  private shareReplies(expenseDraft: ExpenseDraftDbDto, catalog: ExtractionCatalog): BotReply[] {
+    const closed = [ExpenseDraftStatus.DISCARDED, ExpenseDraftStatus.SAVED] as string[]
+    return expenseDraft.sharedWith?.shares.length &&
+      !expenseDraft.missingFields.length &&
+      !closed.includes(expenseDraft.status)
+      ? this.newShareMessage(expenseDraft, catalog)
+      : []
+  }
+
+  // A new split message; the previous one (if the channel told us its id) loses its buttons, so only one is editable
+  private newShareMessage(expenseDraft: ExpenseDraftDbDto, catalog: ExtractionCatalog): BotReply[] {
+    const previous: BotReply[] = expenseDraft.shareMessageId
+      ? [{ text: TEXTS.shareReplaced, editMessageId: expenseDraft.shareMessageId }]
+      : []
+    return [...previous, buildShareReply(expenseDraft, catalog)]
+  }
+
+  // The split message of a closed expense (saved, in Borrador, discarded) shows what was kept, without buttons (D75)
+  private closeShare(expenseDraft: ExpenseDraftDbDto, catalog: ExtractionCatalog): BotReply[] {
+    return expenseDraft.shareMessageId && expenseDraft.sharedWith
+      ? [buildClosedShareReply(expenseDraft, catalog, { editMessageId: expenseDraft.shareMessageId })]
+      : []
+  }
+
+  // Telegram tells the id of a split message it sent (trackShareOf), so it can be closed later
+  async rememberShareMessage(draftId: string, messageId: string): Promise<void> {
+    await this.expenseDraftDBRepository.update(draftId, { shareMessageId: messageId })
+  }
+
+  // After a correction: the split message is sent again only when the expense just became complete or its amount or
+  // installment changed (the parts depend on them); otherwise the one in the chat is still right
+  private shareRepliesAfter(
+    before: ExpenseDraftDbDto,
+    updated: ExpenseDraftDbDto,
+    catalog: ExtractionCatalog,
+  ): BotReply[] {
+    const changed =
+      before.missingFields.length > 0 || before.amount !== updated.amount || before.installment !== updated.installment
+    return changed ? this.shareReplies(updated, catalog) : []
+  }
+
+  private async shareOpenExpense(expenseDraft: ExpenseDraftDbDto, sharedWith: SharedExpense): Promise<BotReply[]> {
+    const catalog = await this.expenseExtractionService.loadCatalog()
+    const payer = findDefaultPerson(catalog)?.id ?? expenseDraft.personId
+    const updated = await this.expenseDraftDBRepository.update(expenseDraft.id, {
+      sharedWith,
+      personId: payer,
+      pendingField: expenseDraft.pendingField === FREE_CORRECTION_FIELD ? null : expenseDraft.pendingField,
+    })
+    return [this.replyFor(updated, catalog), ...this.shareReplies(updated, catalog)]
+  }
+
+  // ½ · ⅓ · 20 % · ✏️ · 🗑️ of one person in the split message: edits that message only
+  private async setShareFromButton(
+    expenseDraft: ExpenseDraftDbDto,
+    { field, value }: BotActionPayload,
+    catalog: ExtractionCatalog,
+  ): Promise<ConversationResult> {
+    const index = Number(field)
+    const shares = expenseDraft.sharedWith?.shares ?? []
+    const share = shares[index]
+    if (!share) return { replies: [], notice: TEXTS.alreadyProcessed }
+
+    if (value === ShareChoice.AMOUNT) {
+      await this.expenseDraftDBRepository.update(expenseDraft.id, { pendingField: `${SHARE_FIELD_PREFIX}${index}` })
+      const name = findCatalogEntryById(catalog, share.personId)?.name ?? '—'
+      // The split message becomes the question: its old buttons go away and the answer brings a new one
+      return { replies: [{ text: TEXTS.askShare(name), edit: true }] }
+    }
+
+    const ratio = SHARE_CHOICE_RATIOS[value as ShareChoice]
+    const next =
+      value === ShareChoice.REMOVE
+        ? shares.filter((_, position) => position !== index)
+        : shares.map((current, position) =>
+            position === index && ratio ? { personId: current.personId, ratio } : current,
+          )
+    const updated = await this.expenseDraftDBRepository.update(expenseDraft.id, {
+      sharedWith: next.length ? { shares: next } : null,
+    })
+    if (!next.length) return { replies: [{ text: TEXTS.notShared, edit: true }] }
+    return { replies: [buildShareReply(updated, catalog, true)] }
+  }
+
+  // The answer to ✏️: "20", "30%", "la mitad", "un tercio"
+  private async setShareFromText(expenseDraft: ExpenseDraftDbDto, text: string): Promise<BotReply[]> {
+    const index = Number((expenseDraft.pendingField as string).slice(SHARE_FIELD_PREFIX.length))
+    const shares = expenseDraft.sharedWith?.shares ?? []
+    const catalog = await this.expenseExtractionService.loadCatalog()
+    const total = expenseDraft.amount ?? 0
+    const parsed = shareOfTotal(parseShare(normalizeText(text).replace(/^s\/\.?\s*/, '')), total)
+    if (!shares[index] || !parsed) return [{ text: TEXTS.shareNotUnderstood }]
+    if (parsed === SHARE_OVER_TOTAL) {
+      const name = findCatalogEntryById(catalog, shares[index].personId)?.name ?? '—'
+      return [{ text: TEXTS.shareTooMuch(name, formatAmount(total, expenseDraft.currency)) }]
+    }
+
+    const next = shares.map((share, position) => (position === index ? { personId: share.personId, ...parsed } : share))
+    const updated = await this.expenseDraftDBRepository.update(expenseDraft.id, {
+      sharedWith: { shares: next },
+      pendingField: expenseDraft.missingFields[0] ?? null,
+    })
+    return this.newShareMessage(updated, catalog)
+  }
+
+  // /editar <texto> (D76): saved expenses matching the amount, date, catalog names and the rest of the text
+  private async searchSaved(message: ChannelMessage): Promise<BotReply> {
+    const args = this.commandArgs(message)
+    if (!args) return { text: TEXTS.editUsage }
+    const catalog = await this.expenseExtractionService.loadCatalog()
+    const filters = parseSavedSearch(args, catalog, DateHelper.todayIn(APP_TIME_ZONE))
+    const results = await this.expenseDraftDBRepository.searchSaved(
+      message.channel,
+      message.chatId,
+      filters,
+      SAVED_SEARCH_LIMIT,
+    )
+    return buildSavedSearchReply(results, args, catalog)
+  }
+
+  // ✏️ of a search result: an EDITING copy with the expense and split messages; the original stays saved
+  private async startEdit(message: ChannelMessage, draftId: string): Promise<ConversationResult> {
+    const original = await this.expenseDraftDBRepository.findById(draftId)
+    if (!original || original.chatId !== message.chatId || original.status !== ExpenseDraftStatus.SAVED) {
+      return { replies: [], notice: TEXTS.alreadyProcessed }
+    }
+    // Only one edit at a time: an unfinished one is dropped
+    await this.expenseDraftDBRepository.discardOpenByChat(message.channel, message.chatId)
+    const copy = await this.expenseDraftDBRepository.createEditCopy(original, `edit:${randomUUID()}`)
+    const catalog = await this.expenseExtractionService.loadCatalog()
+    return { replies: [this.replyFor(copy, catalog), ...this.shareReplies(copy, catalog)] }
   }
 
   private replyFor(expenseDraft: ExpenseDraftDbDto, catalog: ExtractionCatalog, edit = false): BotReply {

@@ -36,6 +36,11 @@ export function decodeBotAction(data: string): BotActionPayload | null {
       : { name: BotAction.NEW_PAYMENT_METHOD, draftId }
   }
 
+  // "shr:<draftId>:<person index>:<choice>": a button of the split message (D75)
+  if (name === BotAction.SHARE) {
+    return fieldCode && value ? { name, draftId, field: fieldCode, value } : null
+  }
+
   // "payp:<batchId>:<debtId>": the installment picked for a debt payment
   if (name === BotAction.PAY_PICK) {
     return fieldCode ? { name, draftId, value: fieldCode } : null

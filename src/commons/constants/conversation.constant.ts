@@ -31,6 +31,10 @@ export enum BotAction {
   INSTALLMENTS_EDIT = 'cuoe',
   // /deudas: "rep:<format>-<personId|all>" sends the debts report as Excel or PDF (D39)
   REPORT = 'rep',
+  // Split message of a shared expense (D75): "shr:<draftId>:<person index>:<ShareChoice>"
+  SHARE = 'shr',
+  // /editar (D76): "eds:<draftId>" of the saved expense to edit
+  EDIT_SAVED = 'eds',
 }
 
 export const BATCH_ACTIONS: string[] = [BotAction.SAVE_ALL, BotAction.REVIEW_ALL, BotAction.LATER_ALL]
@@ -54,6 +58,7 @@ export enum BotCommand {
   COLLECT = 'cobrar', // /cobrar <persona>
   BUDGET = 'presupuesto', // /presupuesto [mes] [año] (P19)
   FORECAST = 'pronostico', // /pronostico: this month at the current pace (P19)
+  EDIT = 'editar', // /editar <texto>: find a saved expense and edit it (D76)
 }
 
 // Descriptions shown in the Telegram command menu (Spanish: user-facing)
@@ -69,6 +74,7 @@ export const BOT_COMMAND_DESCRIPTIONS: Record<BotCommand, string> = {
   [BotCommand.COLLECT]: 'Mensaje para cobrarle a una persona',
   [BotCommand.BUDGET]: 'Gastado vs límite por categoría y excedente',
   [BotCommand.FORECAST]: 'A este ritmo, qué categorías se pasan',
+  [BotCommand.EDIT]: 'Buscar un gasto guardado y editarlo',
 }
 
 export const CALLBACK_SEPARATOR = ':'

@@ -118,6 +118,9 @@ const expenseRecordFields = {
   amountInPen: z.number().nullable(),
   notes: z.string().nullable(),
   draftId: z.string().nullable(),
+  othersShare: z
+    .number()
+    .describe('What other people owe of this expense (shared, D73); your part is amount − othersShare'),
 }
 const paidInMonth = {
   paymentStatus: z.enum(PaymentStatus),
@@ -156,6 +159,7 @@ export const EXPENSE_RESPONSE_SCHEMAS = {
     ...paidInMonth,
     paymentMethodId: z.string(),
     processDate: nullableDate,
+    originDraftId: z.string().nullable().describe('The draft that also created this installment (D73)'),
   }),
   [ExpenseResource.RECURRING]: z.object({
     ...recordFields,

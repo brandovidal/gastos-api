@@ -1,9 +1,26 @@
 import { ExpenseDraft } from '@/generated/prisma/client'
 
-// A shared expense (P17): the user and the people of personIds split it in `parts` equal parts (parts ≥ people + 1)
+// One person's part of what the user paid (D73, D74): a ratio of the total (0.5, 1/3, 0.2) or a fixed amount
+export interface ExpenseShare {
+  personId: string
+  ratio?: number
+  amount?: number
+}
+
+// A shared expense: the user paid it all and each of these people owes their part
 export interface SharedExpense {
-  personIds: string[]
-  parts: number
+  shares: ExpenseShare[]
+}
+
+// /editar (D76): every filter is optional; text looks in the concept
+export interface SavedExpenseFilters {
+  text?: string
+  amount?: number
+  day?: Date
+  personId?: string
+  paymentMethodId?: string
+  categoryId?: string
+  since: Date
 }
 
 export type ExpenseDraftDbDto = Omit<ExpenseDraft, 'confidence' | 'missingFields' | 'sharedWith'> & {

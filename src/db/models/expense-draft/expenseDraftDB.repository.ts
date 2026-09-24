@@ -1,17 +1,25 @@
 import { Injectable } from '@nestjs/common'
 
+import { Prisma } from '@/generated/prisma/client'
+
 import { PrismaService } from '@/db/prisma/prisma.service'
 import { PrismaErrorCode } from '@/commons/constants/database.constant'
 import {
   ExpenseDraftChannel,
   ExpenseDraftStatus,
+  NEW_EXPENSE_DRAFT_STATUSES,
   OPEN_EXPENSE_DRAFT_STATUSES,
 } from '@/commons/constants/expense-draft.constant'
 import { isPrismaError } from '@/commons/helpers/prisma-error.helper'
 import { DuplicateExpenseDraftException } from '@/commons/exceptions/expense-draft/duplicate-expense-draft.exception'
 import { ExpenseDraftNotFoundException } from '@/commons/exceptions/expense-draft/expense-draft-not-found.exception'
 
-import { CreateExpenseDraftDbDto, ExpenseDraftDbDto, UpdateExpenseDraftDbDto } from './expenseDraftDB.dto'
+import {
+  CreateExpenseDraftDbDto,
+  ExpenseDraftDbDto,
+  SavedExpenseFilters,
+  UpdateExpenseDraftDbDto,
+} from './expenseDraftDB.dto'
 import { ExpenseDraftDBSerializer } from './expenseDraftDB.serializer'
 
 @Injectable()
@@ -79,11 +87,18 @@ export class ExpenseDraftDBRepository {
   }
 
   // Open drafts nobody confirmed in time go to Borrador (D50) instead of being lost
+  // Stale new expenses go to Borrador; a stale edit of a saved expense is dropped (the saved one stays as it was)
   async moveStaleOpenToReview(channel: ExpenseDraftChannel, chatId: string, before: Date): Promise<number> {
-    const { count } = await this.prisma.expenseDraft.updateMany({
-      where: { channel, chatId, status: { in: OPEN_EXPENSE_DRAFT_STATUSES }, updatedAt: { lt: before } },
-      data: { status: ExpenseDraftStatus.PENDING_REVIEW, pendingField: null },
-    })
+    const [{ count }] = await this.prisma.$transaction([
+      this.prisma.expenseDraft.updateMany({
+        where: { channel, chatId, status: { in: NEW_EXPENSE_DRAFT_STATUSES }, updatedAt: { lt: before } },
+        data: { status: ExpenseDraftStatus.PENDING_REVIEW, pendingField: null },
+      }),
+      this.prisma.expenseDraft.updateMany({
+        where: { channel, chatId, status: ExpenseDraftStatus.EDITING, updatedAt: { lt: before } },
+        data: { status: ExpenseDraftStatus.DISCARDED, pendingField: null },
+      }),
+    ])
     return count
   }
 
@@ -164,6 +179,62 @@ export class ExpenseDraftDBRepository {
       data: { status: ExpenseDraftStatus.DISCARDED, pendingField: null },
     })
     return count
+  }
+
+  // /editar (D76): saved expenses of the chat that match every given filter, newest first
+  async searchSaved(
+    channel: ExpenseDraftChannel,
+    chatId: string,
+    filters: SavedExpenseFilters,
+    limit: number,
+  ): Promise<ExpenseDraftDbDto[]> {
+    const { text, amount, day, personId, paymentMethodId, categoryId, since } = filters
+    const expenseDrafts = await this.prisma.expenseDraft.findMany({
+      where: {
+        channel,
+        chatId,
+        status: ExpenseDraftStatus.SAVED,
+        confirmedAt: { gte: since },
+        ...(text ? { description: { contains: text } } : {}),
+        ...(amount != null ? { amount: { gte: amount - 0.01, lte: amount + 0.01 } } : {}),
+        ...(day ? { spentAt: { gte: day, lt: new Date(day.getTime() + 86_400_000) } } : {}),
+        ...(personId ? { personId } : {}),
+        ...(paymentMethodId ? { paymentMethodId } : {}),
+        ...(categoryId ? { categoryId } : {}),
+      },
+      orderBy: { confirmedAt: 'desc' },
+      take: limit,
+    })
+    return expenseDrafts.map((expenseDraft) => this.serializer.toDto(expenseDraft))
+  }
+
+  // /editar (D76): an EDITING copy of a saved expense; the original stays saved until the copy is saved
+  async createEditCopy(original: ExpenseDraftDbDto, messageId: string): Promise<ExpenseDraftDbDto> {
+    const {
+      id,
+      messageId: _messageId,
+      itemIndex: _itemIndex,
+      status: _status,
+      pendingField: _pendingField,
+      confirmedAt: _confirmedAt,
+      createdAt: _createdAt,
+      updatedAt: _updatedAt,
+      batchId: _batchId,
+      shareMessageId: _shareMessageId,
+      ...fields
+    } = original
+    const expenseDraft = await this.prisma.expenseDraft.create({
+      data: {
+        ...this.serializer.toUpdateData(fields),
+        channel: original.channel,
+        chatId: original.chatId,
+        inputType: original.inputType,
+        messageId,
+        status: ExpenseDraftStatus.EDITING,
+        replacesDraftId: id,
+      } as Prisma.ExpenseDraftUncheckedCreateInput,
+    })
+    return this.serializer.toDto(expenseDraft)
   }
 
   // /ultimos

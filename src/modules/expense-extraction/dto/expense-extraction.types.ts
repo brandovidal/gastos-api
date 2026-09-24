@@ -3,6 +3,7 @@ import { z } from 'zod'
 import { AiProvider } from '@/commons/constants/ai.constant'
 import { PaymentMethodType } from '@/commons/constants/catalog.constant'
 import { CatalogKind, ExpenseField } from '@/commons/constants/expense-extraction.constant'
+import { SharedExpense } from '@/db/models/expense-draft/expenseDraftDB.dto'
 
 import { extractedExpenseSchema } from '../validations/expense-extraction.validation'
 
@@ -45,6 +46,7 @@ export interface ResolvedExpenseFields {
 }
 
 export interface ResolvedExpense extends ResolvedExpenseFields {
+  sharedWith?: SharedExpense | null // D74: the parts of other people, from the AI (the local parser wins)
   confidence: Record<string, number>
   missingFields: ExpenseField[]
   lowConfidenceFields: ExpenseField[]

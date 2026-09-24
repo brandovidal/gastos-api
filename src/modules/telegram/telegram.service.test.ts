@@ -2,6 +2,8 @@ import { Logger } from '@nestjs/common'
 import { ConfigService } from '@nestjs/config'
 import { vi } from 'vitest'
 
+import { TelegramRequestFailedException } from '@/commons/exceptions/telegram/telegram-request-failed.exception'
+
 import { TelegramClient } from '@/providers/telegram/telegram.client'
 import { ConversationService } from '@/modules/conversation/conversation.service'
 import { FILE_ID } from '@/modules/conversation/mocks/conversation.mock'
@@ -18,7 +20,11 @@ const mockClient = {
   sendChatAction: vi.fn().mockResolvedValue(true),
   downloadFile: vi.fn(),
 }
-const mockConversation = { handle: vi.fn(), recoverInterrupted: vi.fn() }
+const mockConversation = {
+  handle: vi.fn(),
+  recoverInterrupted: vi.fn(),
+  rememberShareMessage: vi.fn().mockResolvedValue(undefined),
+}
 const mockRegistry = { register: vi.fn() }
 
 const chat = { id: 555, type: 'private' }
@@ -93,6 +99,40 @@ describe('TelegramService', () => {
 
     expect(mockClient.sendMessage).toHaveBeenCalledWith('555', '✅ Guardado', undefined)
     expect(mockClient.sendMessage).not.toHaveBeenCalledWith('555', expect.stringContaining('Algo salió mal'))
+  })
+
+  it('should not send a copy when the message is already as the edit wants it (button pressed twice)', async () => {
+    mockConversation.handle.mockResolvedValue({ replies: [{ text: '✅ Guardado', edit: true }], notice: 'Guardado' })
+    mockClient.editMessageText.mockRejectedValueOnce(
+      new TelegramRequestFailedException({
+        method: 'editMessageText',
+        status: 400,
+        reason: 'Bad Request: message is not modified',
+      }),
+    )
+
+    await service.enqueue(buttonUpdate)
+
+    expect(mockClient.sendMessage).not.toHaveBeenCalled()
+  })
+
+  it('should remember the id of a split message and edit an earlier one without sending a copy (D75)', async () => {
+    mockConversation.handle.mockResolvedValue({
+      replies: [
+        { text: '✅ Reparto guardado', editMessageId: '901' },
+        { text: '👥 Reparto', trackShareOf: 'draft-1' },
+      ],
+    })
+    mockClient.editMessageText.mockRejectedValueOnce(new Error('message to edit not found'))
+    mockClient.sendMessage.mockResolvedValueOnce({ message_id: 902 })
+    vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => {})
+
+    await service.enqueue(textUpdate)
+
+    expect(mockClient.editMessageText).toHaveBeenCalledWith('555', 901, '✅ Reparto guardado', undefined)
+    expect(mockClient.sendMessage).toHaveBeenCalledTimes(1)
+    expect(mockClient.sendMessage).toHaveBeenCalledWith('555', '👥 Reparto', undefined)
+    expect(mockConversation.rememberShareMessage).toHaveBeenCalledWith('draft-1', '902')
   })
 
   describe('lifecycle', () => {

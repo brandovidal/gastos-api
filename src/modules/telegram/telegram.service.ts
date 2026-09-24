@@ -1,4 +1,11 @@
-import { BeforeApplicationShutdown, Injectable, Logger, OnApplicationBootstrap, OnModuleInit } from '@nestjs/common'
+import {
+  BeforeApplicationShutdown,
+  HttpException,
+  Injectable,
+  Logger,
+  OnApplicationBootstrap,
+  OnModuleInit,
+} from '@nestjs/common'
 import { ConfigService } from '@nestjs/config'
 
 import { ChannelMessageType } from '@/commons/constants/conversation.constant'
@@ -19,6 +26,13 @@ import { mapTelegramUpdate, MappedTelegramUpdate, toReplyMarkup } from './telegr
 import { TelegramReplyMarkup, TelegramUpdate } from '@/providers/telegram/telegram.types'
 
 const ERROR_TEXT = '⚠️ Algo salió mal procesando tu mensaje. Intenta de nuevo en un momento.'
+
+// editMessageText answers 400 "message is not modified" when the text and buttons are the same
+function isNotModified(error: unknown): boolean {
+  const reason =
+    error instanceof HttpException ? (error.getResponse() as { details?: { reason?: string } }).details?.reason : null
+  return /message is not modified/i.test(reason ?? (error as Error).message ?? '')
+}
 
 // Telegram photos are JPEG; voice notes are .oga; other files keep their extension in file_path
 const MIME_BY_EXTENSION: Record<string, string> = {
@@ -143,10 +157,16 @@ export class TelegramService implements OnModuleInit, OnApplicationBootstrap, Be
 
         if (reply.document) {
           await this.telegramClient.sendDocument(chatId, reply.document, reply.text)
+        } else if (reply.editMessageId) {
+          // Closing an earlier message (a split message on save): nothing new to say if it cannot be edited
+          await this.telegramClient
+            .editMessageText(chatId, Number(reply.editMessageId), reply.text, markup)
+            .catch((error: Error) => this.logger.warn(`[process] earlier message not edited: ${error.message}`))
         } else if (reply.edit && sourceMessageId) {
           await this.editOrSend(chatId, sourceMessageId, reply.text, markup)
         } else {
-          await this.telegramClient.sendMessage(chatId, reply.text, markup)
+          const sent = await this.telegramClient.sendMessage(chatId, reply.text, markup)
+          if (reply.trackShareOf) await this.rememberShareMessage(reply.trackShareOf, sent)
         }
       }
     } catch (error) {
@@ -165,9 +185,21 @@ export class TelegramService implements OnModuleInit, OnApplicationBootstrap, Be
     try {
       await this.telegramClient.editMessageText(chatId, messageId, text, markup)
     } catch (error) {
+      // Same text and buttons (a button pressed twice): the message is already right, a copy would only duplicate it
+      if (isNotModified(error)) return
       this.logger.warn(`[editOrSend] could not edit, sending instead: ${(error as Error).message}`)
       await this.telegramClient.sendMessage(chatId, text, markup)
     }
+  }
+
+  // The id of a split message, so it can be closed when its expense is saved (D75). The message is already out: a
+  // failure only logs
+  private async rememberShareMessage(draftId: string, sent: unknown) {
+    const messageId = (sent as { message_id?: number } | undefined)?.message_id
+    if (!messageId) return
+    await this.conversationService
+      .rememberShareMessage(draftId, String(messageId))
+      .catch((error: Error) => this.logger.warn(`[rememberShareMessage] ${error.message}`))
   }
 
   private async recoverInterrupted() {

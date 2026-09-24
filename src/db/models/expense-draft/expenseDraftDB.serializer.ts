@@ -12,7 +12,7 @@ export class ExpenseDraftDBSerializer {
       ...expenseDraft,
       confidence: JsonHelper.parseObject<Record<string, number>>(expenseDraft.confidence),
       missingFields: JsonHelper.parseArray(expenseDraft.missingFields),
-      sharedWith: expenseDraft.sharedWith ? JsonHelper.parseObject<SharedExpense>(expenseDraft.sharedWith) : null,
+      sharedWith: toSharedExpense(expenseDraft.sharedWith),
     }
   }
 
@@ -26,4 +26,15 @@ export class ExpenseDraftDBSerializer {
       ...(sharedWith !== undefined && { sharedWith: sharedWith ? JsonHelper.stringify(sharedWith) : null }),
     }
   }
+}
+
+// The first format ({ personIds, parts }, D68) is still read: every person owes one of `parts` equal parts
+function toSharedExpense(value: string | null): SharedExpense | null {
+  if (!value) return null
+  const parsed = JsonHelper.parseObject<Partial<SharedExpense> & { personIds?: string[]; parts?: number }>(value)
+  if (Array.isArray(parsed.shares)) return parsed.shares.length ? { shares: parsed.shares } : null
+  if (Array.isArray(parsed.personIds) && parsed.parts) {
+    return { shares: parsed.personIds.map((personId) => ({ personId, ratio: 1 / (parsed.parts as number) })) }
+  }
+  return null
 }

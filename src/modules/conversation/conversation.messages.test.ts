@@ -43,7 +43,7 @@ describe('conversation messages', () => {
 
     expect(reply.buttons?.flat().map((button) => button.label)).toEqual([
       '✅ Guardar',
-      '✏️ Corregir',
+      '✏️ Editar',
       '📝 Borrador',
       '❌ Descartar',
     ])

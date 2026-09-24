@@ -53,6 +53,8 @@ export interface BotReply {
   document?: BotDocument // a file to send (Excel / PDF, D39); channels without files show only the text
   buttons?: BotButton[][]
   edit?: boolean // replace the message that had the pressed button instead of sending a new one
+  editMessageId?: string // edit this earlier message instead (a split message closed on save, D75); no copy if it fails
+  trackShareOf?: string // the split message of this draft: the channel remembers its id (rememberShareMessage)
 }
 
 export interface ConversationResult {

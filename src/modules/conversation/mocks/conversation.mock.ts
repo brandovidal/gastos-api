@@ -48,6 +48,8 @@ export const buildExpenseDraft = (overrides: Partial<ExpenseDraftDbDto> = {}): E
   paymentMethodId: 'method-yape',
   categoryId: 'category-food',
   sharedWith: null,
+  replacesDraftId: null,
+  shareMessageId: null,
   confidence: {},
   missingFields: [],
   confirmedAt: null,

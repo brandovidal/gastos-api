@@ -55,11 +55,22 @@ describe('bot action codec', () => {
     [BotAction.INSTALLMENTS_OK, FILE_ID], // D66
     [BotAction.INSTALLMENTS_EDIT, FILE_ID],
     [BotAction.REPORT, `pdf-${FILE_ID}`], // D39: format and person
+    [BotAction.EDIT_SAVED, FILE_ID], // D76
   ])('should round-trip the "%s" button', (name, draftId) => {
     const data = encodeBotAction({ name, draftId })
 
     expect(Buffer.byteLength(data)).toBeLessThanOrEqual(64)
     expect(decodeBotAction(data)).toEqual({ name, draftId })
+  })
+
+  it('should round-trip a button of the split message with the person index and the choice (D75)', () => {
+    const payload = { name: BotAction.SHARE, draftId: FILE_ID, field: '1', value: 'p20' }
+    const data = encodeBotAction(payload)
+
+    expect(data).toBe(`shr:${FILE_ID}:1:p20`)
+    expect(Buffer.byteLength(data)).toBeLessThanOrEqual(64)
+    expect(decodeBotAction(data)).toEqual(payload)
+    expect(decodeBotAction(`shr:${FILE_ID}`)).toBeNull()
   })
 
   it.each(['', 'unknown:id', 'ok', `set:${FILE_ID}`, `set:${FILE_ID}:zz:value`, 'payp:batch'])(

@@ -37,6 +37,30 @@ describe('resolveExpense', () => {
     expect(expense.spentAt).toBe(today)
   })
 
+  it('should map the shares of a shared expense and make the user the payer (D74)', () => {
+    // "netflix 64 compartido con dany, dany paga 20": the AI put Danery as the person and in the shares
+    const expense = resolveExpense(
+      {
+        ...mockExtractedExpense,
+        personRef: 'p2',
+        shares: [
+          { personRef: 'p2', ratio: null, amount: 20 },
+          { personRef: 'p1', ratio: 0.5, amount: null }, // the user is never someone who owes
+          { personRef: 'p9', ratio: 0.5, amount: null }, // invented
+        ],
+      },
+      catalog,
+      today,
+    )
+
+    expect(expense.sharedWith).toEqual({ shares: [{ personId: 'person-danery', amount: 20 }] })
+    expect(expense.personId).toBe('person-brando')
+  })
+
+  it('should not share an expense without shares', () => {
+    expect(resolveExpense(mockExtractedExpense, catalog, today).sharedWith).toBeNull()
+  })
+
   it('should ask for the destination when the AI did not decide it and the method is not a card', () => {
     expect(resolveExpense(mockExtractedExpense, catalog, today).missingFields).toEqual([ExpenseField.DESTINATION])
   })
