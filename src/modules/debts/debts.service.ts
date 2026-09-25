@@ -3,16 +3,49 @@ import { randomUUID } from 'node:crypto'
 import { Injectable } from '@nestjs/common'
 
 import { APP_TIME_ZONE } from '@/commons/constants/app.constant'
-import { DebtDirection, DebtTiming, toCents } from '@/commons/constants/debt.constant'
+import {
+  DebtDirection,
+  DebtPaymentKind,
+  DebtTiming,
+  OPEN_DEBT_STATUSES,
+  toCents,
+} from '@/commons/constants/debt.constant'
 import { Currency } from '@/commons/constants/expense.constant'
 import { DateHelper } from '@/commons/helpers/date.helper'
 import { allocatePayment, balanceOf, debtTiming } from '@/commons/helpers/debt.helper'
-import { addMonths } from '@/commons/helpers/payment-period.helper'
+import { addMonths, PaymentPeriod } from '@/commons/helpers/payment-period.helper'
 import { DebtPaymentExceedsBalanceException } from '@/commons/exceptions/debt/debt-payment-exceeds-balance.exception'
 import { DebtDBRepository } from '@/db/models/debt/debtDB.repository'
 import { DebtWithPersonDbDto } from '@/db/models/debt/debtDB.dto'
+import { StatementDBRepository } from '@/db/models/statement/statementDB.repository'
 
-import { CreateDebtDto, DebtListQueryDto, DebtPaymentDto, UpdateDebtDto } from './dto/request/debts.dto'
+import {
+  CardCheckQueryDto,
+  CreateDebtDto,
+  DebtBulkDto,
+  DebtListQueryDto,
+  DebtPaymentDto,
+  DebtSummaryQueryDto,
+  UpdateDebtDto,
+} from './dto/request/debts.dto'
+import { DebtBulkAction } from './validations/debts.validation'
+
+// A statement line that reads like interest or a fee (the AI leaves them out; a template may keep them)
+const INTEREST_LINE = /\b(interes|intereses|comision|mora|penalidad|cargo por)\b/
+
+const fold = (text: string) =>
+  text
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+
+// The kind of payment each bulk action registers (D114)
+const KIND_OF_ACTION: Partial<Record<DebtBulkAction, DebtPaymentKind>> = {
+  [DebtBulkAction.PAY]: DebtPaymentKind.PAYMENT,
+  [DebtBulkAction.PREPAID]: DebtPaymentKind.PREPAID,
+  [DebtBulkAction.CASHBACK]: DebtPaymentKind.CASHBACK,
+  [DebtBulkAction.PARTIAL]: DebtPaymentKind.PARTIAL,
+}
 
 // Batch ids travel in Telegram callback_data next to a debt id (64 bytes): keep them short
 const BATCH_ID_LENGTH = 20
@@ -40,10 +73,13 @@ export interface PaymentProposal {
 // Loans and debts (P17, D60): the web API and the bot share this service
 @Injectable()
 export class DebtsService {
-  constructor(private readonly debtDBRepository: DebtDBRepository) {}
+  constructor(
+    private readonly debtDBRepository: DebtDBRepository,
+    private readonly statementDBRepository: StatementDBRepository,
+  ) {}
 
-  async list({ personId, direction, status }: DebtListQueryDto): Promise<DebtView[]> {
-    const debts = await this.debtDBRepository.findMany({ personId, direction, statuses: status ? [status] : undefined })
+  async list({ status, ...filters }: DebtListQueryDto): Promise<DebtView[]> {
+    const debts = await this.debtDBRepository.findMany({ ...filters, statuses: status ? [status] : undefined })
     return debts.map((debt) => this.toView(debt))
   }
 
@@ -57,9 +93,12 @@ export class DebtsService {
     return { ...this.toView(debt), payments: debt.payments }
   }
 
-  // Me debe · le debo · neto per person, in soles (other currencies stay out until they have an exchange rate)
-  async summary(): Promise<PersonDebtSummary[]> {
-    const open = (await this.findOpen()).filter((debt) => debt.currency === Currency.PEN)
+  // Me debe · le debo · neto per person, in soles (other currencies stay out until they have an exchange rate);
+  // with a month, only that one (or every month until it)
+  async summary({ month, year, until }: DebtSummaryQueryDto = {}): Promise<PersonDebtSummary[]> {
+    const open = (await this.debtDBRepository.findMany({ statuses: OPEN_DEBT_STATUSES, month, year, until }))
+      .map((debt) => this.toView(debt))
+      .filter((debt) => debt.currency === Currency.PEN)
     const byPerson = new Map<string, PersonDebtSummary>()
 
     for (const debt of open) {
@@ -106,7 +145,7 @@ export class DebtsService {
     return this.debtDBRepository.delete(id)
   }
 
-  async addPayment(id: string, { amount, paidAt, paymentMethodId, notes }: DebtPaymentDto) {
+  async addPayment(id: string, { amount, kind, paidAt, paymentMethodId, notes }: DebtPaymentDto) {
     const debt = await this.debtDBRepository.findById(id)
     const balance = balanceOf(debt)
     if (toCents(amount) > balance) throw new DebtPaymentExceedsBalanceException({ id, amount, balance })
@@ -116,8 +155,120 @@ export class DebtsService {
       amount: toCents(amount),
       paidAt: paidAt ?? new Date(),
       paymentMethodId: paymentMethodId ?? null,
+      kind: kind ?? (toCents(amount) < balance ? DebtPaymentKind.PARTIAL : DebtPaymentKind.PAYMENT),
       notes: notes ?? null,
     })
+  }
+
+  // Selección múltiple (D115): one action over several debts
+  async bulk({ ids, action, amount, paidAt, paymentMethodId, month, year, force }: DebtBulkDto) {
+    const debts = await this.debtDBRepository.findByIds(ids)
+    const result = { action, affected: 0, paid: 0, excess: 0, skipped: [] as string[] }
+    const open = debts.filter((debt) => balanceOf(debt) > 0)
+    const payment = { paidAt: paidAt ?? new Date(), paymentMethodId: paymentMethodId ?? null }
+
+    switch (action) {
+      case DebtBulkAction.PAY:
+      case DebtBulkAction.PREPAID:
+      case DebtBulkAction.CASHBACK: {
+        result.skipped = debts.filter((debt) => balanceOf(debt) <= 0).map((debt) => debt.id)
+        const allocations = open.map((debt) => ({ debtId: debt.id, amount: balanceOf(debt) }))
+        await this.debtDBRepository.payMany(allocations, { ...payment, kind: KIND_OF_ACTION[action]! })
+        result.affected = allocations.length
+        result.paid = toCents(allocations.reduce((sum, item) => sum + item.amount, 0))
+        break
+      }
+      case DebtBulkAction.PARTIAL: {
+        const { allocations, excess } = allocatePayment(open, amount!)
+        await this.debtDBRepository.payMany(allocations, { ...payment, kind: DebtPaymentKind.PARTIAL })
+        result.affected = allocations.length
+        result.paid = toCents(allocations.reduce((sum, item) => sum + item.amount, 0))
+        result.excess = excess
+        break
+      }
+      case DebtBulkAction.CLONE: {
+        const created = await this.debtDBRepository.createMany(
+          debts.map((debt) => ({
+            direction: debt.direction,
+            description: debt.description,
+            amount: debt.amount,
+            currency: debt.currency,
+            exchangeRate: debt.exchangeRate,
+            amountInPen: debt.amountInPen,
+            installment: debt.installment,
+            personId: debt.personId,
+            paymentMethodId: debt.paymentMethodId,
+            notes: debt.notes,
+            paymentMonth: month!,
+            paymentYear: year!,
+          })),
+        )
+        result.affected = created.length
+        break
+      }
+      case DebtBulkAction.RESET:
+        result.affected = (await this.debtDBRepository.resetMany(debts.map((debt) => debt.id))).length
+        break
+      case DebtBulkAction.CARD:
+        result.affected = await this.debtDBRepository.setCard(
+          debts.map((debt) => debt.id),
+          paymentMethodId ?? null,
+        )
+        break
+      case DebtBulkAction.DELETE: {
+        const paid = force ? new Set<string>() : await this.debtDBRepository.withPayments(ids)
+        result.skipped = [...paid]
+        result.affected = await this.debtDBRepository.deleteMany(ids.filter((id) => !paid.has(id)))
+        break
+      }
+    }
+    return result
+  }
+
+  // Contraste con la tarjeta (D114): what others owe of a card and month vs the statement of that month
+  async cardCheck({ paymentMethodId, month, year }: CardCheckQueryDto) {
+    const period: PaymentPeriod = { paymentMonth: month, paymentYear: year }
+    const [debts, statement, next, expenses] = await Promise.all([
+      this.debtDBRepository.findMany({ direction: DebtDirection.OWED_TO_ME, paymentMethodId, month, year }),
+      this.statementDBRepository.findLatestForCard(paymentMethodId, period),
+      this.statementDBRepository.findLatestForCard(paymentMethodId, addMonths(period, 1)),
+      this.statementDBRepository.findCardExpenses(paymentMethodId, period),
+    ])
+
+    const byPerson = new Map<string, { personId: string; name: string; owed: number; paid: number; balance: number }>()
+    for (const debt of debts) {
+      const row = byPerson.get(debt.personId) ?? {
+        personId: debt.personId,
+        name: debt.person.name,
+        owed: 0,
+        paid: 0,
+        balance: 0,
+      }
+      row.owed = toCents(row.owed + debt.amount)
+      row.paid = toCents(row.paid + debt.paidAmount)
+      row.balance = toCents(row.balance + balanceOf(debt))
+      byPerson.set(debt.personId, row)
+    }
+    const people = [...byPerson.values()].sort((a, b) => b.balance - a.balance)
+    const koganeTotal = toCents(expenses.reduce((sum, expense) => sum + expense.amount, 0))
+    const statementTotal = statement?.totalDue ?? null
+
+    return {
+      paymentMethodId,
+      month,
+      year,
+      statementId: statement?.id ?? null,
+      statementTotal,
+      koganeTotal,
+      unexplained: statementTotal == null ? null : toCents(statementTotal - koganeTotal),
+      othersOwed: toCents(people.reduce((sum, row) => sum + row.owed, 0)),
+      othersPaid: toCents(people.reduce((sum, row) => sum + row.paid, 0)),
+      people,
+      possibleInterest: [statement, next]
+        .flatMap((candidate) => candidate?.rows ?? [])
+        .filter((row) => INTEREST_LINE.test(fold(row.description)))
+        .map((row) => ({ description: row.description, amount: row.amount })),
+    }
   }
 
   deletePayment(id: string, paymentId: string) {

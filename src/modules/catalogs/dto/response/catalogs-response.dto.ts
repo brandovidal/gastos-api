@@ -4,6 +4,7 @@ import { responseDto } from '@/commons/helpers/api-response.helper'
 
 import {
   budgetGroupResponseSchema,
+  cardHolderResponseSchema,
   categoryResponseSchema,
   paymentMethodResponseSchema,
   personResponseSchema,
@@ -17,3 +18,4 @@ export class CategoryResponseDto extends responseDto(categoryResponseSchema) {}
 export class CategoryListResponseDto extends responseDto(z.array(categoryResponseSchema)) {}
 export class BudgetGroupResponseDto extends responseDto(budgetGroupResponseSchema) {}
 export class BudgetGroupListResponseDto extends responseDto(z.array(budgetGroupResponseSchema)) {}
+export class CardHolderListResponseDto extends responseDto(z.array(cardHolderResponseSchema)) {}

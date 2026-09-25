@@ -1,12 +1,19 @@
 import { Injectable, Logger } from '@nestjs/common'
 import { ZodValidationException } from 'nestjs-zod'
 
-import { Currency } from '@/commons/constants/expense.constant'
+import { Currency, PaymentStatus } from '@/commons/constants/expense.constant'
 import { ExpenseRecordDBRepository, ExpenseResource } from '@/db/models/expense-record/expenseRecordDB.repository'
 import { StoredFilesService } from '@/modules/stored-files/stored-files.service'
 
 import { ExpenseListQueryDto } from './dto/request/expenses.dto'
 import { EXPENSE_SCHEMAS } from './validations/expenses.validation'
+
+// Tables with a payment status (day to day has none; templates are not expenses)
+const RESOURCES_WITH_STATUS: ExpenseResource[] = [
+  ExpenseResource.FIXED_COST,
+  ExpenseResource.SUBSCRIPTION,
+  ExpenseResource.CREDIT_CARD,
+]
 
 // CRUD of the expense tables for kogane-app (P7). The bot keeps saving through ExpenseSaverService (drafts).
 @Injectable()
@@ -27,10 +34,12 @@ export class ExpensesService {
   }
 
   create(resource: ExpenseResource, body: unknown) {
-    return this.expenseRecordDBRepository.create(
-      resource,
-      this.withAmountInPen(resource, this.parse(resource, body, false)),
-    )
+    const data = this.parse(resource, body, false)
+    // Every new row starts "No iniciado"; exp_credit_card_expenses still defaults to pending in the database
+    if (RESOURCES_WITH_STATUS.includes(resource) && data.paymentStatus === undefined) {
+      data.paymentStatus = PaymentStatus.NOT_STARTED
+    }
+    return this.expenseRecordDBRepository.create(resource, this.withAmountInPen(resource, data))
   }
 
   update(resource: ExpenseResource, id: string, body: unknown) {

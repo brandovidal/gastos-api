@@ -3,6 +3,8 @@ import { z } from 'zod'
 import { responseDto } from '@/commons/helpers/api-response.helper'
 
 import {
+  cardCheckResponseSchema,
+  debtBulkResponseSchema,
   debtDetailResponseSchema,
   debtResponseSchema,
   debtSummaryResponseSchema,
@@ -14,3 +16,5 @@ export class DebtListResponseDto extends responseDto(z.array(debtViewResponseSch
 export class DebtCreatedResponseDto extends responseDto(z.array(debtResponseSchema)) {}
 export class DebtDetailResponseDto extends responseDto(debtDetailResponseSchema) {}
 export class DebtSummaryResponseDto extends responseDto(z.array(debtSummaryResponseSchema)) {}
+export class DebtBulkResponseDto extends responseDto(debtBulkResponseSchema) {}
+export class CardCheckResponseDto extends responseDto(cardCheckResponseSchema) {}

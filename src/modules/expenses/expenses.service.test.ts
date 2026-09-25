@@ -106,6 +106,27 @@ describe('ExpensesService', () => {
       })
     })
 
+    it('should create every new fixed cost, subscription and card charge as "No iniciado", and never touch it on edit', async () => {
+      const card = {
+        description: 'Zapatillas',
+        amount: 199,
+        currency: 'PEN',
+        personId: 'person-1',
+        paymentMethodId: 'card-io',
+        paymentMonth: 10,
+        paymentYear: 2026,
+      }
+      await service.create(ExpenseResource.CREDIT_CARD, card)
+      await service.create(ExpenseResource.CREDIT_CARD, { ...card, paymentStatus: 'paid' })
+      await service.update(ExpenseResource.CREDIT_CARD, 'cc-1', { amount: 200 })
+
+      expect(mockExpenseRecordDB.create.mock.calls[0][1]).toEqual(
+        expect.objectContaining({ paymentStatus: 'not_started' }),
+      )
+      expect(mockExpenseRecordDB.create.mock.calls[1][1]).toEqual(expect.objectContaining({ paymentStatus: 'paid' }))
+      expect(mockExpenseRecordDB.update.mock.calls[0][2]).not.toHaveProperty('paymentStatus')
+    })
+
     it('should reject a body that does not fit the table', () => {
       expect(() => service.create(ExpenseResource.DAILY, { ...daily, amount: -5 })).toThrow(ZodValidationException)
       expect(mockExpenseRecordDB.create).not.toHaveBeenCalled()

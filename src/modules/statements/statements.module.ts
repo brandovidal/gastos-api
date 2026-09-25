@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common'
 
+import { CardHolderDBModule } from '@/db/models/card-holder/cardHolderDB.module'
 import { PaymentMethodDBModule } from '@/db/models/payment-method/paymentMethodDB.module'
 import { PersonDBModule } from '@/db/models/person/personDB.module'
 import { StatementDBModule } from '@/db/models/statement/statementDB.module'
@@ -12,6 +13,7 @@ import { StatementsService } from './statements.service'
 
 @Module({
   imports: [
+    CardHolderDBModule,
     StatementDBModule,
     PaymentMethodDBModule,
     PersonDBModule,

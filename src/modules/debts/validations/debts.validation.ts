@@ -1,6 +1,6 @@
 import { z } from 'zod'
 
-import { DebtDirection, DebtStatus, DebtTiming } from '@/commons/constants/debt.constant'
+import { DebtDirection, DebtPaymentKind, DebtStatus, DebtTiming } from '@/commons/constants/debt.constant'
 import { Currency } from '@/commons/constants/expense.constant'
 import { dateTimeSchema } from '@/commons/helpers/api-response.helper'
 
@@ -8,10 +8,24 @@ import { dateTimeSchema } from '@/commons/helpers/api-response.helper'
 const date = z.iso.date().transform((value) => new Date(`${value}T00:00:00.000Z`))
 const amount = z.number().positive()
 
+const month = z.coerce.number().int().min(1).max(12)
+const year = z.coerce.number().int().min(2000).max(2100)
+
+// Cobros / Deudas (D111, D114): the month of the header by default; "until" = that month and every earlier one
 export const debtListQuerySchema = z.object({
   personId: z.string().min(1).optional(),
   direction: z.enum(DebtDirection).optional(),
   status: z.enum(DebtStatus).optional(),
+  month: month.optional(),
+  year: year.optional(),
+  until: z.stringbool().optional().describe('With month and year: that month and every earlier one'),
+  paymentMethodId: z.string().min(1).optional().describe('The card the debts were charged on (D114)'),
+})
+
+export const debtSummaryQuerySchema = z.object({
+  month: month.optional(),
+  year: year.optional(),
+  until: z.stringbool().optional(),
 })
 
 const debtFields = {
@@ -23,6 +37,7 @@ const debtFields = {
   paymentMonth: z.number().int().min(1).max(12),
   paymentYear: z.number().int().min(2000).max(2100),
   dueDate: date.nullable().optional(),
+  paymentMethodId: z.string().min(1).nullable().optional().describe('The card it was charged on (D114)'),
   notes: z.string().trim().max(500).nullable().optional(),
 }
 
@@ -46,6 +61,7 @@ export const updateDebtSchema = z
 
 export const debtPaymentSchema = z.object({
   amount,
+  kind: z.enum(DebtPaymentKind).optional().describe('Pago · Abono · Amortizado · Cashback (D114); payment by default'),
   paidAt: date.optional(),
   paymentMethodId: z.string().min(1).nullable().optional(),
   notes: z.string().trim().max(500).nullable().optional(),
@@ -69,6 +85,7 @@ export const debtResponseSchema = z.object({
   paidAmount: z.number(),
   paidDate: dateTimeSchema.nullable(),
   personId: z.string(),
+  paymentMethodId: z.string().nullable(),
   notes: z.string().nullable(),
   draftId: z.string().nullable(),
   originDraftId: z.string().nullable().describe('The expense draft that created it (installments, shared parts, D73)'),
@@ -89,6 +106,7 @@ export const debtPaymentResponseSchema = z.object({
   amount: z.number(),
   paidAt: dateTimeSchema,
   paymentMethodId: z.string().nullable(),
+  kind: z.enum(DebtPaymentKind),
   batchId: z.string().nullable(),
   confirmedAt: dateTimeSchema.nullable(),
   notes: z.string().nullable(),
@@ -105,4 +123,72 @@ export const debtSummaryResponseSchema = z.object({
   net: z.number().describe('Positive: the person owes the user'),
   late: z.number(),
   dueThisMonth: z.number(),
+})
+
+// Selección múltiple (D115): one action over several debts, in one transaction
+export enum DebtBulkAction {
+  PAY = 'pay', // pay the balance of each one
+  PREPAID = 'prepaid', // Amortizado: the balance, before its month
+  CASHBACK = 'cashback', // the bank gave it back
+  PARTIAL = 'partial', // Abono: an amount spread over them, oldest first
+  CLONE = 'clone', // a copy of each one (without payments) in another month
+  RESET = 'reset', // back to "No iniciado": its payments are removed
+  CARD = 'card', // the card they were charged on
+  DELETE = 'delete',
+}
+
+export const debtBulkSchema = z
+  .object({
+    ids: z.array(z.string().min(1)).min(1).max(500),
+    action: z.enum(DebtBulkAction),
+    amount: amount.optional().describe('partial: the amount to spread'),
+    paidAt: date.optional(),
+    paymentMethodId: z.string().min(1).nullable().optional().describe('card: the card; payments: how it was paid'),
+    month: z.number().int().min(1).max(12).optional().describe('clone: the target month'),
+    year: z.number().int().min(2000).max(2100).optional().describe('clone: the target year'),
+    force: z.boolean().optional().describe('delete: also debts with payments'),
+  })
+  .superRefine((body, context) => {
+    const need = (field: keyof typeof body, when: boolean) => {
+      if (when && body[field] == null)
+        context.addIssue({ code: 'custom', path: [field], message: `Required for ${body.action}` })
+    }
+    need('amount', body.action === DebtBulkAction.PARTIAL)
+    need('month', body.action === DebtBulkAction.CLONE)
+    need('year', body.action === DebtBulkAction.CLONE)
+  })
+
+export const debtBulkResponseSchema = z.object({
+  action: z.enum(DebtBulkAction),
+  affected: z.number().int().describe('Debts changed, created or deleted'),
+  paid: z.number().describe('Amount registered as payments'),
+  excess: z.number().describe('partial: what was left over after every balance'),
+  skipped: z.array(z.string()).describe('Debts left out: already paid, or with payments on delete without force'),
+})
+
+// Contraste con la tarjeta (D114): what each person owes on a card in a month vs what the statement billed
+export const cardCheckQuerySchema = z.object({ paymentMethodId: z.string().min(1), month, year })
+
+export const cardCheckResponseSchema = z.object({
+  paymentMethodId: z.string(),
+  month: z.number().int(),
+  year: z.number().int(),
+  statementId: z.string().nullable().describe('The statement of that card and month, when uploaded'),
+  statementTotal: z.number().nullable().describe('What the bank asks to pay'),
+  koganeTotal: z.number().describe('Card expenses registered for that month'),
+  unexplained: z.number().nullable().describe('statementTotal − koganeTotal: interest, fees or charges not registered'),
+  othersOwed: z.number().describe('What other people owe of that card and month'),
+  othersPaid: z.number(),
+  people: z.array(
+    z.object({
+      personId: z.string(),
+      name: z.string(),
+      owed: z.number().describe('Their debts on that card and month'),
+      paid: z.number(),
+      balance: z.number(),
+    }),
+  ),
+  possibleInterest: z
+    .array(z.object({ description: z.string(), amount: z.number() }))
+    .describe('Statement lines of that month or the next that read like interest or fees'),
 })

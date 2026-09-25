@@ -6,6 +6,17 @@ import { dateTimeSchema } from '@/commons/helpers/api-response.helper'
 export const uploadStatementSchema = z.object({
   password: z.string().trim().max(40).optional(),
   paymentMethodId: z.string().min(1).optional(),
+  personId: z.string().min(1).optional(),
+  // multipart sends "true"; the password is saved only if it opened the PDF (D94)
+  savePassword: z.stringbool().optional(),
+})
+
+export const updateStatementSchema = z.object({ personId: z.string().min(1) })
+
+// Selección múltiple (D116): the person of several purchases at once; null goes back to the statement's
+export const assignRowsSchema = z.object({
+  rowIds: z.array(z.string().min(1)).min(1).max(500),
+  personId: z.string().min(1).nullable(),
 })
 
 export const createNewRowsSchema = z.object({
@@ -25,14 +36,19 @@ export const updateRowSchema = z
       .nullable()
       .optional()
       .describe('Your description; empty goes back to the bank text'),
+    personId: z.string().min(1).nullable().optional().describe("Who made it; null goes back to the statement's person"),
   })
-  .refine((body) => body.result !== undefined || body.label !== undefined, 'result or label is required')
+  .refine(
+    (body) => body.result !== undefined || body.label !== undefined || body.personId !== undefined,
+    'result, label or personId is required',
+  )
 
 // ==================== Responses (Swagger / kogane-app types) ====================
 
 const statementFields = {
   id: z.string(),
   paymentMethodId: z.string(),
+  personId: z.string().nullable(),
   cardName: z.string(),
   paymentMonth: z.number().int(),
   paymentYear: z.number().int(),
@@ -60,6 +76,11 @@ export const statementRowResponseSchema = z.object({
   installment: z.string().nullable(),
   result: z.enum(StatementRowResult),
   expenseId: z.string().nullable(),
+  personId: z
+    .string()
+    .nullable()
+    .describe("Who it belongs to: the person of its expense, the one chosen for the row, or the statement's"),
+  debtId: z.string().nullable().describe("The cobro created with it when the purchase is another person's (D116)"),
   createdAt: dateTimeSchema,
 })
 
@@ -74,6 +95,7 @@ export const statementResponseSchema = z.object({
         amount: z.number(),
         processDate: z.string().nullable(),
         installment: z.string().nullable(),
+        personId: z.string(),
       }),
     )
     .describe('Card expenses of the month that are not in the statement'),

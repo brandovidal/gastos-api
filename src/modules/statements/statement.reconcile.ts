@@ -11,6 +11,7 @@ export interface CardExpenseForMatch {
   amount: number
   processDate: string | null // YYYY-MM-DD
   installment: string | null
+  personId?: string // whose expense it is (the Persona of the card boards)
 }
 
 export interface ReconciledRow extends ParsedStatementRow {

@@ -8,6 +8,7 @@ import { ParsedStatement } from './statement.parser'
 export const STATEMENT_INSTRUCTIONS = `You read the text of a Peruvian credit card statement (estado de cuenta).
 Return JSON with:
 - cardName: the card as printed (e.g. "Sip", "American Express Green", "iO", "CMR").
+- holderName: the cardholder's name as printed (titular / cliente), or null.
 - periodEnd: closing date of the billing period (YYYY-MM-DD) or null.
 - dueDate: last day to pay (YYYY-MM-DD) or null.
 - totalDue: total amount to pay of this statement, or null. minimumDue: minimum payment, or null.
@@ -25,6 +26,7 @@ const day = z
 
 export const statementAiSchema = z.object({
   cardName: z.string().nullable(),
+  holderName: z.string().nullable().optional(), // optional: answers recorded before it still parse
   periodEnd: day,
   dueDate: day,
   totalDue: z.number().nullable(),
@@ -55,6 +57,8 @@ export type StatementAiOutput = z.infer<typeof statementAiSchema>
 export function fromAi(output: StatementAiOutput, cardHint: string | null): ParsedStatement {
   return {
     cardHint,
+    holderName: output.holderName ?? null,
+    cardName: output.cardName,
     periodEnd: output.periodEnd,
     dueDate: output.dueDate,
     totalDue: output.totalDue,

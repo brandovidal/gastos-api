@@ -2,9 +2,12 @@ import { Test } from '@nestjs/testing'
 import { vi } from 'vitest'
 
 import { AiOperation } from '@/commons/constants/ai.constant'
+import { PaymentStatus } from '@/commons/constants/expense.constant'
 import { NotificationKind } from '@/commons/constants/notification.constant'
 import { StatementRowResult, StatementSource, StatementStatus } from '@/commons/constants/statement.constant'
+import { StatementPasswordException } from '@/commons/exceptions/statement/statement-password.exception'
 import { StatementUnreadableException } from '@/commons/exceptions/statement/statement-unreadable.exception'
+import { CardHolderDBRepository } from '@/db/models/card-holder/cardHolderDB.repository'
 import { PaymentMethodDBRepository } from '@/db/models/payment-method/paymentMethodDB.repository'
 import { PersonDBRepository } from '@/db/models/person/personDB.repository'
 import { StatementDBRepository } from '@/db/models/statement/statementDB.repository'
@@ -26,7 +29,16 @@ const SIP_LINES = [
   '20/08 20/08 TAMBO VIRREY 35.50',
 ]
 
-const OH = { id: 'oh', name: 'Sip', type: 'credit_card', code: 'OH', billingCloseDay: 10, paymentDueDay: 5 }
+const OH = {
+  id: 'oh',
+  name: 'Sip',
+  aliases: ['oh', 'oh pay'],
+  type: 'credit_card',
+  code: 'OH',
+  isActive: true,
+  billingCloseDay: 10,
+  paymentDueDay: 5,
+}
 
 const mockStatementDB = {
   create: vi.fn(),
@@ -35,13 +47,16 @@ const mockStatementDB = {
   findCardExpenses: vi.fn(),
   createExpenses: vi.fn(),
   updateRow: vi.fn(),
+  assignPerson: vi.fn(),
+  assignRows: vi.fn(),
   delete: vi.fn(),
 }
 const mockPaymentMethods = { findAll: vi.fn(), findById: vi.fn() }
-const mockPeople = { findDefault: vi.fn() }
+const mockPeople = { findDefault: vi.fn(), findActive: vi.fn(), update: vi.fn() }
 const mockExtraction = { generateStructured: vi.fn() }
 const mockFiles = { storeTemporary: vi.fn(), keep: vi.fn() }
 const mockNotifications = { notify: vi.fn() }
+const mockHolders = { findByCard: vi.fn() }
 
 const saved = (rows: Record<string, unknown>[]) => ({
   id: 's1',
@@ -66,11 +81,13 @@ describe('StatementsService', () => {
         { provide: ExpenseExtractionService, useValue: mockExtraction },
         { provide: StoredFilesService, useValue: mockFiles },
         { provide: NotificationsService, useValue: mockNotifications },
+        { provide: CardHolderDBRepository, useValue: mockHolders },
       ],
     }).compile()
     service = module.get(StatementsService)
 
     mockPeople.findDefault.mockResolvedValue({ id: 'me', documentNumber: '44556677' })
+    mockPeople.findActive.mockResolvedValue([{ id: 'me', name: 'Brando', aliases: [] }])
     mockPaymentMethods.findAll.mockResolvedValue([OH, { id: 'yape', type: 'wallet', code: null }])
     mockPaymentMethods.findById.mockResolvedValue(OH)
     mockStatementDB.findCardExpenses.mockResolvedValue([
@@ -86,6 +103,7 @@ describe('StatementsService', () => {
     mockStatementDB.create.mockImplementation(async (data) => ({ id: 's1', ...data }))
     mockFiles.storeTemporary.mockResolvedValue({ id: 'file-1' })
     mockNotifications.notify.mockResolvedValue({})
+    mockHolders.findByCard.mockResolvedValue([])
   })
 
   afterEach(() => {
@@ -197,7 +215,7 @@ describe('StatementsService', () => {
           description: 'TAMBO',
           amount: 35.5,
           amountInPen: 35.5,
-          paymentStatus: 'pending',
+          paymentStatus: PaymentStatus.NOT_STARTED,
           personId: 'me',
           paymentMethodId: 'oh',
           paymentMonth: 9,
@@ -249,11 +267,220 @@ describe('StatementsService', () => {
     ])
   })
 
+  describe('the person of each purchase (D113)', () => {
+    const row = (overrides: Record<string, unknown>) => ({
+      id: 'r1',
+      result: StatementRowResult.NEW,
+      description: 'TAMBO',
+      amount: 35.5,
+      currency: 'PEN',
+      installment: null,
+      date: null,
+      expenseId: null,
+      personId: null,
+      ...overrides,
+    })
+
+    it("should show the expense's person once matched, the chosen one, or the statement's", async () => {
+      mockStatementDB.findCardExpenses.mockResolvedValue([
+        { id: 'e1', description: 'X', amount: 1, processDate: null, installment: null, personId: 'dany' },
+      ])
+      mockStatementDB.findById.mockResolvedValue({
+        ...saved([
+          row({ id: 'matched', result: StatementRowResult.MATCHED, expenseId: 'e1' }),
+          row({ id: 'chosen', personId: 'bruce' }),
+          row({ id: 'plain' }),
+        ]),
+        personId: 'me',
+      })
+
+      const view = await service.get('s1')
+
+      expect(view.rows.map((item) => [item.id, item.personId])).toEqual([
+        ['matched', 'dany'],
+        ['chosen', 'bruce'],
+        ['plain', 'me'],
+      ])
+    })
+
+    it('should save each new purchase with the person chosen for it, else the statement person', async () => {
+      mockStatementDB.findById.mockResolvedValue({
+        ...saved([row({ id: 'r1', personId: 'dany' }), row({ id: 'r2' })]),
+        personId: 'me',
+      })
+
+      await service.createNew('s1')
+
+      expect(mockStatementDB.createExpenses.mock.calls[0][1].map((item) => [item.id, item.data.personId])).toEqual([
+        ['r1', 'dany'],
+        ['r2', 'me'],
+      ])
+    })
+
+    it('should give each purchase of a CMR statement to the section it is under, and the charges to the titular (D116)', async () => {
+      mockPeople.findActive.mockResolvedValue([
+        { id: 'me', name: 'Brando', aliases: [] },
+        { id: 'dany', name: 'Danery', aliases: [] },
+      ])
+      mockPaymentMethods.findAll.mockResolvedValue([
+        {
+          id: 'cmr',
+          name: 'CMR',
+          aliases: [],
+          type: 'credit_card',
+          code: 'CMR',
+          isActive: true,
+          billingCloseDay: 10,
+          paymentDueDay: 5,
+        },
+      ])
+      vi.mocked(readPdfLines).mockResolvedValue([
+        'ESTADO DE CUENTA CMR',
+        'Fecha de cierre 10/09/2026',
+        'Ultimo dia de pago 05/10/2026',
+        'Total a pagar S/ 113.90',
+        'Brando Jesus Vidal Deza Tc: 447410******1810',
+        '15/08 16/08 FALABELLA 20.00',
+        'Danery Vidal Deza Tc: 447410******8835',
+        '20/08 20/08 TOTTIS 80.00',
+        '09/09 09/09 SEGURO DESGRAVAMEN 13.90',
+      ])
+      mockStatementDB.findCardExpenses.mockResolvedValue([])
+
+      await service.upload({ data: Buffer.from('pdf'), paymentMethodId: 'cmr' })
+
+      const { rows } = mockStatementDB.create.mock.calls[0][0]
+      expect(rows.map((item: { description: string; personId: string }) => [item.description, item.personId])).toEqual([
+        ['FALABELLA', 'me'],
+        ['TOTTIS', 'dany'],
+        ['SEGURO DESGRAVAMEN', 'me'],
+      ])
+    })
+
+    it("should also make another person's purchase their cobro on the owner's card (D114, D116)", async () => {
+      mockStatementDB.findById.mockResolvedValue({
+        ...saved([row({ id: 'mine' }), row({ id: 'theirs', personId: 'dany', installment: '2/3' })]),
+        personId: 'me',
+      })
+
+      await service.createNew('s1')
+
+      const [[, created]] = mockStatementDB.createExpenses.mock.calls
+      expect(created[0]).not.toHaveProperty('debt')
+      expect(created[1].debt).toEqual(
+        expect.objectContaining({
+          direction: 'owed_to_me',
+          personId: 'dany',
+          amount: 35.5,
+          paymentMethodId: 'oh',
+          installment: '2/3',
+          paymentMonth: 9,
+          paymentYear: 2026,
+        }),
+      )
+    })
+
+    it('should give several rows to a person at once, only an active one', async () => {
+      mockStatementDB.findById.mockResolvedValue(saved([]))
+      mockPeople.findActive.mockResolvedValue([{ id: 'dany', name: 'Danery', aliases: [] }])
+
+      await service.assignRows('s1', { rowIds: ['r1', 'r2'], personId: 'dany' })
+      expect(mockStatementDB.assignRows).toHaveBeenCalledWith('s1', ['r1', 'r2'], 'dany')
+      await expect(service.assignRows('s1', { rowIds: ['r1'], personId: 'ghost' })).rejects.toBeInstanceOf(
+        StatementUnreadableException,
+      )
+    })
+
+    it('should only let an active person be chosen for a row', async () => {
+      mockStatementDB.findById.mockResolvedValue(saved([]))
+      mockPeople.findActive.mockResolvedValue([{ id: 'dany', name: 'Danery', aliases: [] }])
+
+      await service.updateRow('s1', 'r1', { personId: 'dany' })
+      expect(mockStatementDB.updateRow).toHaveBeenCalledWith('s1', 'r1', expect.objectContaining({ personId: 'dany' }))
+      await expect(service.updateRow('s1', 'r1', { personId: 'ghost' })).rejects.toBeInstanceOf(
+        StatementUnreadableException,
+      )
+    })
+  })
+
   it('should rename a row (empty goes back to the bank text) or ignore it', async () => {
     mockStatementDB.findById.mockResolvedValue(saved([]))
     await service.updateRow('s1', 'r1', { label: '' })
     expect(mockStatementDB.updateRow).toHaveBeenCalledWith('s1', 'r1', { result: undefined, label: null })
     await service.updateRow('s1', 'r1', { result: StatementRowResult.IGNORED })
     expect(mockStatementDB.updateRow).toHaveBeenLastCalledWith('s1', 'r1', { result: 'ignored', label: undefined })
+  })
+
+  describe('password, holder and card (P14)', () => {
+    const DANY = { id: 'dany', name: 'Danery', aliases: ['dany'], documentNumber: '70112233' }
+    const ME = { id: 'me', name: 'Brando', aliases: [], documentNumber: '44556677' }
+    const passwordError = () => new StatementPasswordException({ reason: 'incorrect' })
+    const reasonOf = (promise: Promise<unknown>) =>
+      promise.then(
+        () => null,
+        (error: StatementPasswordException) => (error.getResponse() as { details: { reason: string } }).details.reason,
+      )
+
+    beforeEach(() => {
+      mockPeople.findDefault.mockResolvedValue(ME)
+      mockPeople.findActive.mockResolvedValue([ME, DANY])
+      mockStatementDB.findById.mockImplementation(async () => saved([]))
+    })
+
+    it("should try the saved document numbers until one opens it, and give it to that person's statement", async () => {
+      vi.mocked(readPdfLines).mockImplementation(async (_data, password) => {
+        if (password !== '70112233') throw passwordError()
+        return SIP_LINES
+      })
+
+      await service.upload({ data: Buffer.from('pdf') })
+
+      expect(vi.mocked(readPdfLines).mock.calls.map(([, password]) => password)).toEqual(['44556677', '70112233'])
+      expect(mockStatementDB.create).toHaveBeenCalledWith(expect.objectContaining({ personId: 'dany' }))
+    })
+
+    it('should say the password is missing when nothing saved opens it, and wrong when the typed one fails', async () => {
+      vi.mocked(readPdfLines).mockRejectedValue(passwordError())
+
+      expect(await reasonOf(service.upload({ data: Buffer.from('pdf') }))).toBe('missing')
+      expect(await reasonOf(service.upload({ data: Buffer.from('pdf'), password: '1234' }))).toBe('incorrect')
+    })
+
+    it('should save the typed password as the document number only when asked and when it opened the PDF', async () => {
+      vi.mocked(readPdfLines).mockImplementation(async (_data, password) => {
+        if (password !== '99887766') throw passwordError()
+        return SIP_LINES
+      })
+
+      await service.upload({ data: Buffer.from('pdf'), password: '99887766', personId: 'dany', savePassword: true })
+      await service.upload({ data: Buffer.from('pdf'), password: '99887766', personId: 'dany' })
+
+      expect(mockPeople.update).toHaveBeenCalledTimes(1)
+      expect(mockPeople.update).toHaveBeenCalledWith('dany', { documentNumber: '99887766' })
+    })
+
+    it('should give the statement to the holder it names, and to the chosen person over anything else', async () => {
+      vi.mocked(readPdfLines).mockResolvedValue(['TITULAR: DANERY QUISPE', ...SIP_LINES])
+
+      await service.upload({ data: Buffer.from('pdf') })
+      await service.upload({ data: Buffer.from('pdf'), personId: 'me' })
+
+      expect(mockStatementDB.create.mock.calls.map(([data]) => data.personId)).toEqual(['dany', 'me'])
+    })
+
+    it('should find the card by its name or alias when the text has no known code', async () => {
+      vi.mocked(readPdfLines).mockResolvedValue(SIP_LINES.map((line) => line.replace('TARJETA SIP', 'OH PAY VISA')))
+
+      await service.upload({ data: Buffer.from('pdf') })
+
+      expect(mockStatementDB.create).toHaveBeenCalledWith(expect.objectContaining({ paymentMethodId: 'oh' }))
+    })
+
+    it('should reassign the statement only to an active person', async () => {
+      await service.assignPerson('s1', 'dany')
+      expect(mockStatementDB.assignPerson).toHaveBeenCalledWith('s1', 'dany')
+
+      await expect(service.assignPerson('s1', 'ghost')).rejects.toBeInstanceOf(StatementUnreadableException)
+    })
   })
 })

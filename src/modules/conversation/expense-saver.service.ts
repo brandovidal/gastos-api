@@ -94,6 +94,8 @@ function withSharedDebts(input: SaveExpenseDbDto, expenseDraft: ExpenseDraftDbDt
         currency: expenseDraft.currency ?? Currency.PEN,
         personId: part.personId,
         installment: (row.installment as string | null | undefined) ?? null,
+        // the card (or account) the user paid it with: Cobros contrasts it with the statement (D114)
+        paymentMethodId: (row.paymentMethodId as string | null | undefined) ?? null,
         originDraftId: expenseDraft.id,
         ...periodOf(row),
       })),
@@ -283,7 +285,7 @@ export class ExpenseSaverService {
         const period = card.billingCloseDay
           ? creditCardPaymentPeriod(spentAtIso, card.billingCloseDay)
           : paymentPeriodOf(spentAtIso)
-        const data = { ...expense, paymentMethodId, paymentStatus: PaymentStatus.PENDING, processDate: spentAt }
+        const data = { ...expense, paymentMethodId, paymentStatus: PaymentStatus.NOT_STARTED, processDate: spentAt }
         return { destination, ...withInstallments(data, expenseDraft.installment, period) }
       }
       case ExpenseDestination.RECEIVABLE:

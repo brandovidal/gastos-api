@@ -5,3 +5,9 @@ export enum PaymentMethodType {
   CASH = 'cash',
   BANK_TRANSFER = 'bank_transfer',
 }
+
+// Who holds a credit card (D116): the titular pays the bank; additional cards are other people's purchases on it
+export enum CardHolderRole {
+  TITULAR = 'titular',
+  ADDITIONAL = 'additional',
+}

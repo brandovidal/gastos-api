@@ -39,6 +39,17 @@ describe('notion.mapper', () => {
     expect(detectBase('export.csv', ['Descripción'])).toBeNull()
   })
 
+  it('should import a card row without "Estado de pago" as "No iniciado"', () => {
+    const [mapped] = mapRow(
+      { base: NotionBase.CARD, card: 'CMR' },
+      'cmr.csv',
+      row({ Descripción: 'Uber', Pago: '12.50', 'Mes de pago': 'Setiembre', 'Año de pago': '2026', Persona: 'Danery' }),
+      context,
+    )
+
+    expect(mapped).toMatchObject({ kind: 'expense', value: { data: { paymentStatus: PaymentStatus.NOT_STARTED } } })
+  })
+
   it('should map a card row with its card, person, installment, status and period', () => {
     const [mapped] = mapRow(
       { base: NotionBase.CARD, card: 'CMR' },

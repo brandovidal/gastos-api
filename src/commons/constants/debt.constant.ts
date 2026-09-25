@@ -10,8 +10,17 @@ export enum DebtDirection {
 export enum DebtStatus {
   PENDING = 'pending', // nothing paid
   PARTIAL = 'partial', // part of the installment paid
-  PREPAID = 'prepaid', // fully paid before its payment month
+  PREPAID = 'prepaid', // fully paid before its payment month, or with an "Amortizado" payment
   PAID = 'paid',
+  CASHBACK = 'cashback', // covered by a cashback of the bank (D114)
+}
+
+// What each payment of a debt was (D114): Notion's Pagado · Abonado · Amortizado · Cashback
+export enum DebtPaymentKind {
+  PAYMENT = 'payment',
+  PARTIAL = 'partial',
+  PREPAID = 'prepaid',
+  CASHBACK = 'cashback',
 }
 
 export const OPEN_DEBT_STATUSES = [DebtStatus.PENDING, DebtStatus.PARTIAL]

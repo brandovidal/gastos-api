@@ -3,7 +3,7 @@ import ExcelJS from 'exceljs'
 import PDFDocument from 'pdfkit'
 
 import { APP_TIME_ZONE } from '@/commons/constants/app.constant'
-import { DebtDirection, DebtStatus, DebtTiming } from '@/commons/constants/debt.constant'
+import { DebtDirection, DebtStatus, DebtTiming, OPEN_DEBT_STATUSES } from '@/commons/constants/debt.constant'
 import { REPORT_MIME_TYPES, ReportFormat } from '@/commons/constants/report.constant'
 import { DateHelper } from '@/commons/helpers/date.helper'
 import { DebtsService, DebtView, PersonDebtSummary } from '@/modules/debts/debts.service'
@@ -56,8 +56,18 @@ interface DebtReportData {
 export class ReportsService {
   constructor(private readonly debtsService: DebtsService) {}
 
-  async debts(format: ReportFormat, personId?: string): Promise<ReportFile> {
-    const [summary, detail] = await Promise.all([this.debtsService.summary(), this.debtsService.findOpen(personId)])
+  // Cobros / Deudas (D114): optionally one direction and one payment month, like the page on screen
+  async debts(
+    format: ReportFormat,
+    personId?: string,
+    { direction, month, year }: { direction?: DebtDirection; month?: number; year?: number } = {},
+  ): Promise<ReportFile> {
+    const [summary, detail] = await Promise.all([
+      this.debtsService.summary({ month, year }),
+      this.debtsService
+        .list({ personId, direction, month, year })
+        .then((debts) => debts.filter((debt) => OPEN_DEBT_STATUSES.includes(debt.status as DebtStatus))),
+    ])
     const rows = personId ? summary.filter((row) => row.personId === personId) : summary
     const name = personId ? (rows[0]?.name ?? detail[0]?.person.name ?? 'persona') : 'todas'
     const today = DateHelper.todayIn(APP_TIME_ZONE)

@@ -6,6 +6,8 @@ import { EmptyResponseDto } from '@/commons/helpers/api-response.helper'
 import { ResponseMessage } from '@/commons/decorators/response-message.decorator'
 
 import {
+  CardCheckResponseDto,
+  DebtBulkResponseDto,
   DebtCreatedResponseDto,
   DebtDetailResponseDto,
   DebtListResponseDto,
@@ -13,7 +15,15 @@ import {
   DebtSummaryResponseDto,
 } from './dto/response/debts-response.dto'
 import { DebtsService } from './debts.service'
-import { CreateDebtDto, DebtListQueryDto, DebtPaymentDto, UpdateDebtDto } from './dto/request/debts.dto'
+import {
+  CardCheckQueryDto,
+  CreateDebtDto,
+  DebtBulkDto,
+  DebtListQueryDto,
+  DebtPaymentDto,
+  DebtSummaryQueryDto,
+  UpdateDebtDto,
+} from './dto/request/debts.dto'
 
 // Préstamos y deudas (P17, D60): one row per installment, payments recompute the balance and status
 @ApiRest('debts')
@@ -30,11 +40,30 @@ export class DebtsController {
   }
 
   @Get('summary')
-  @ApiOperation({ summary: 'Per person: owed to me · I owe · net, late and due this month (PEN)' })
+  @ApiOperation({ summary: 'Per person: owed to me · I owe · net, late and due this month (PEN); by month optionally' })
   @ApiOkResponse({ type: DebtSummaryResponseDto })
   @ResponseMessage('DEBTS_SUMMARY', 'Debts summary')
-  summary() {
-    return this.debtsService.summary()
+  summary(@Query() query: DebtSummaryQueryDto) {
+    return this.debtsService.summary(query)
+  }
+
+  @Get('card-check')
+  @ApiOperation({ summary: 'What others owe of a card and month vs the statement of that month (D114)' })
+  @ApiOkResponse({ type: CardCheckResponseDto })
+  @ResponseMessage('DEBTS_CARD_CHECK', 'Card checked')
+  cardCheck(@Query() query: CardCheckQueryDto) {
+    return this.debtsService.cardCheck(query)
+  }
+
+  @Post('bulk')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'One action over several debts: pay, amortize, cashback, spread an abono, clone, reset, card or delete',
+  })
+  @ApiOkResponse({ type: DebtBulkResponseDto })
+  @ResponseMessage('DEBTS_BULK', 'Debts updated')
+  bulk(@Body() body: DebtBulkDto) {
+    return this.debtsService.bulk(body)
   }
 
   @Get(':id')

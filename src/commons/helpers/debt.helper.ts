@@ -1,4 +1,4 @@
-import { DebtStatus, DebtTiming, toCents } from '@/commons/constants/debt.constant'
+import { DebtPaymentKind, DebtStatus, DebtTiming, toCents } from '@/commons/constants/debt.constant'
 
 import { comparePeriods, PaymentPeriod, paymentPeriodOf } from './payment-period.helper'
 
@@ -17,12 +17,20 @@ export interface PaymentAllocation {
 export const balanceOf = ({ amount, paidAmount }: Pick<DebtBalance, 'amount' | 'paidAmount'>) =>
   toCents(Math.max(amount - paidAmount, 0))
 
-// Status after the confirmed payments (D60): Amortizado in Notion = fully paid before its payment month
-export function debtStatusFor(debt: DebtBalance, lastPaidAt: Date | null): DebtStatus {
+// Status after the confirmed payments (D60, D114): the last payment that closed it says how (cashback, amortizado);
+// Amortizado is also a full payment before the payment month
+export function debtStatusFor(
+  debt: DebtBalance,
+  lastPayment: { paidAt: Date; kind?: string | null } | null,
+): DebtStatus {
   const paid = toCents(debt.paidAmount)
   if (paid <= 0) return DebtStatus.PENDING
   if (paid < toCents(debt.amount)) return DebtStatus.PARTIAL
-  if (lastPaidAt && comparePeriods(paymentPeriodOf(lastPaidAt.toISOString()), debt) < 0) return DebtStatus.PREPAID
+  if (lastPayment?.kind === DebtPaymentKind.CASHBACK) return DebtStatus.CASHBACK
+  if (lastPayment?.kind === DebtPaymentKind.PREPAID) return DebtStatus.PREPAID
+  if (lastPayment && comparePeriods(paymentPeriodOf(lastPayment.paidAt.toISOString()), debt) < 0) {
+    return DebtStatus.PREPAID
+  }
   return DebtStatus.PAID
 }
 

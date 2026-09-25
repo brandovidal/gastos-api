@@ -1,4 +1,4 @@
-import { DebtStatus, DebtTiming } from '@/commons/constants/debt.constant'
+import { DebtPaymentKind, DebtStatus, DebtTiming } from '@/commons/constants/debt.constant'
 
 import { allocatePayment, balanceOf, debtStatusFor, debtTiming, DebtBalance } from './debt.helper'
 
@@ -32,7 +32,21 @@ describe('debt helpers', () => {
         DebtStatus.PAID,
       ],
     ])('should be %s', (_case, row, lastPaidAt, expected) => {
-      expect(debtStatusFor(row, lastPaidAt)).toBe(expected)
+      expect(debtStatusFor(row, lastPaidAt ? { paidAt: lastPaidAt } : null)).toBe(expected)
+    })
+
+    it('should follow the kind of the payment that closed it: cashback, or Amortizado even in its month (D114)', () => {
+      const paidInMonth = new Date('2026-09-20T15:00:00Z')
+
+      expect(debtStatusFor(debt({ paidAmount: 400 }), { paidAt: paidInMonth, kind: DebtPaymentKind.CASHBACK })).toBe(
+        DebtStatus.CASHBACK,
+      )
+      expect(debtStatusFor(debt({ paidAmount: 400 }), { paidAt: paidInMonth, kind: DebtPaymentKind.PREPAID })).toBe(
+        DebtStatus.PREPAID,
+      )
+      expect(debtStatusFor(debt({ paidAmount: 100 }), { paidAt: paidInMonth, kind: DebtPaymentKind.CASHBACK })).toBe(
+        DebtStatus.PARTIAL,
+      )
     })
   })
 

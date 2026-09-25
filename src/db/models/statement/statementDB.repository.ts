@@ -9,6 +9,7 @@ import { PaymentPeriod } from '@/commons/helpers/payment-period.helper'
 
 export interface CreateStatementDbDto {
   paymentMethodId: string
+  personId: string
   paymentMonth: number
   paymentYear: number
   periodEnd: Date | null
@@ -54,6 +55,15 @@ export class StatementDBRepository {
     })
   }
 
+  // The last statement read of a card and month, with its rows (Cobros contrasts it with the debts, D114)
+  findLatestForCard(paymentMethodId: string, { paymentMonth, paymentYear }: PaymentPeriod) {
+    return this.prisma.statement.findFirst({
+      where: { paymentMethodId, paymentMonth, paymentYear },
+      orderBy: { createdAt: 'desc' },
+      include: withRows,
+    })
+  }
+
   // The statements of those months (the calendar shows their real total and due date, P20)
   findForPeriods(periods: PaymentPeriod[]): Promise<Statement[]> {
     if (!periods.length) return Promise.resolve([])
@@ -72,18 +82,23 @@ export class StatementDBRepository {
   findCardExpenses(paymentMethodId: string, { paymentMonth, paymentYear }: PaymentPeriod) {
     return this.prisma.creditCardExpense.findMany({
       where: { paymentMethodId, paymentMonth, paymentYear, paymentStatus: { not: PaymentStatus.SKIPPED } },
-      select: { id: true, description: true, amount: true, processDate: true, installment: true },
+      select: { id: true, description: true, amount: true, processDate: true, installment: true, personId: true },
     })
   }
 
   // "Crear nuevos": each new row becomes a pending card expense of the statement month, in one transaction
-  async createExpenses(statementId: string, rows: { id: string; data: Record<string, unknown> }[]): Promise<number> {
+  // Each row becomes a card expense; another person's purchase also becomes their cobro (D116), in the same transaction
+  async createExpenses(
+    statementId: string,
+    rows: { id: string; data: Record<string, unknown>; debt?: Record<string, unknown> }[],
+  ): Promise<number> {
     await this.prisma.$transaction(async (tx) => {
       for (const row of rows) {
         const expense = await tx.creditCardExpense.create({ data: row.data as never, select: { id: true } })
+        const debt = row.debt ? await tx.debt.create({ data: row.debt as never, select: { id: true } }) : null
         await tx.statementRow.update({
           where: { id: row.id },
-          data: { result: StatementRowResult.CREATED, expenseId: expense.id },
+          data: { result: StatementRowResult.CREATED, expenseId: expense.id, debtId: debt?.id ?? null },
         })
       }
       await this.refreshStatus(tx, statementId)
@@ -91,15 +106,36 @@ export class StatementDBRepository {
     return rows.length
   }
 
+  // Selección múltiple (D116): the person of several purchases not saved yet (matched and created ones follow their
+  // expense). Returns how many changed
+  async assignRows(statementId: string, rowIds: string[], personId: string | null): Promise<number> {
+    const { count } = await this.prisma.statementRow.updateMany({
+      where: {
+        statementId,
+        id: { in: rowIds },
+        result: { in: [StatementRowResult.NEW, StatementRowResult.IGNORED] },
+      },
+      data: { personId },
+    })
+    return count
+  }
+
+  // Whose statement it is (P14): reassigned by hand when the PDF did not say or said someone else
+  async assignPerson(id: string, personId: string) {
+    await this.prisma.statement.update({ where: { id }, data: { personId } })
+    return this.findById(id)
+  }
+
   // Ignore a row (a matched one lets its expense go back to "Solo en Kogane"), bring it back, or rename it
   async updateRow(
     statementId: string,
     rowId: string,
-    { result, label }: { result?: StatementRowResult; label?: string | null },
+    { result, label, personId }: { result?: StatementRowResult; label?: string | null; personId?: string | null },
   ) {
     await this.prisma.$transaction(async (tx) => {
       const data = {
         ...(label !== undefined ? { label } : {}),
+        ...(personId !== undefined ? { personId } : {}),
         ...(result ? { result, ...(result === StatementRowResult.IGNORED ? { expenseId: null } : {}) } : {}),
       }
       await tx.statementRow.updateMany({ where: { id: rowId, statementId }, data })

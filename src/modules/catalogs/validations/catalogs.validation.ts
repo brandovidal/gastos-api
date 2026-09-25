@@ -1,6 +1,6 @@
 import { z } from 'zod'
 
-import { PaymentMethodType } from '@/commons/constants/catalog.constant'
+import { CardHolderRole, PaymentMethodType } from '@/commons/constants/catalog.constant'
 import { dateTimeSchema } from '@/commons/helpers/api-response.helper'
 
 const day = z.number().int().min(1).max(31)
@@ -108,4 +108,35 @@ export const budgetGroupResponseSchema = z.object({
   emoji: z.string(),
   percentage: z.number(),
   order: z.number().int(),
+})
+
+// Titular and additional people of a credit card (D116): exactly one titular; last4 as the statement prints it
+export const cardHoldersSchema = z.object({
+  holders: z
+    .array(
+      z.object({
+        personId: z.string().min(1),
+        role: z.enum(CardHolderRole),
+        last4: z
+          .string()
+          .regex(/^\d{4}$/, 'The last 4 digits')
+          .nullable()
+          .optional(),
+      }),
+    )
+    .refine((holders) => holders.filter((holder) => holder.role === CardHolderRole.TITULAR).length === 1, {
+      message: 'Exactly one titular',
+    })
+    .refine((holders) => new Set(holders.map((holder) => holder.personId)).size === holders.length, {
+      message: 'A person only once per card',
+    }),
+})
+
+export const cardHolderResponseSchema = z.object({
+  id: z.string(),
+  paymentMethodId: z.string(),
+  personId: z.string(),
+  role: z.enum(CardHolderRole),
+  last4: z.string().nullable(),
+  person: z.object({ id: z.string(), name: z.string(), aliases: z.array(z.string()) }),
 })

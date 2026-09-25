@@ -227,7 +227,7 @@ export function mapRow(source: BaseFile, file: string, row: CsvRow, context: Map
       data = {
         ...money,
         expenseType: expenseTypeOf(value('Tipo')),
-        paymentStatus: statusFor(value('Estado de pago'), CREDIT_CARD_EXPENSE_STATUSES, PaymentStatus.PENDING),
+        paymentStatus: statusFor(value('Estado de pago'), CREDIT_CARD_EXPENSE_STATUSES, PaymentStatus.NOT_STARTED),
         personId: person(value('Persona')),
         paymentMethodId: card?.id ?? null,
         installment,

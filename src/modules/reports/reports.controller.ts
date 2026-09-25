@@ -23,8 +23,11 @@ export class ReportsController {
       Object.values(REPORT_MIME_TYPES).map((mimeType) => [mimeType, { schema: { type: 'string', format: 'binary' } }]),
     ),
   })
-  async debts(@Query() { format, personId }: DebtReportQueryDto, @Res({ passthrough: true }) response: Response) {
-    const file = await this.reportsService.debts(format, personId)
+  async debts(
+    @Query() { format, personId, direction, month, year }: DebtReportQueryDto,
+    @Res({ passthrough: true }) response: Response,
+  ) {
+    const file = await this.reportsService.debts(format, personId, { direction, month, year })
     response.set({
       'Content-Type': file.mimeType,
       'Content-Disposition': `attachment; filename="${file.filename}"`,

@@ -37,6 +37,7 @@ model Person {
   creditCardExpenses CreditCardExpense[]
   debts              Debt[]
   recurringExpenses  RecurringExpense[]
+  cardHolders        CardHolder[]
 
   @@map("cat_people")
 }
@@ -66,8 +67,26 @@ model PaymentMethod {
   creditCardExpenses CreditCardExpense[]
   recurringExpenses  RecurringExpense[]
   debtPayments       DebtPayment[]
+  debts              Debt[]              @relation("DebtCard")
+  holders            CardHolder[]
 
   @@map("cat_payment_methods")
+}
+
+// Who holds each credit card (P14, D116): the titular and the additional cards. A statement names them (CMR by section
+// "<name> Tc: ******1810", Sip by its TIT/ADIC column) and each purchase goes to its person
+model CardHolder {
+  id              String        @id @default(cuid())
+  paymentMethodId String
+  paymentMethod   PaymentMethod @relation(fields: [paymentMethodId], references: [id], onDelete: Cascade)
+  personId        String
+  person          Person        @relation(fields: [personId], references: [id], onDelete: Cascade)
+  role            String // CardHolderRole: titular · additional
+  last4           String? // last 4 digits of that person's card, as the statement prints them
+  createdAt       DateTime      @default(now())
+
+  @@unique([paymentMethodId, personId])
+  @@map("cat_card_holders")
 }
 
 model Category {
@@ -403,35 +422,39 @@ model CreditCardExpense {
 // owed_to_me = someone owes the user; i_owe = the user owes someone. paidAmount is the sum of confirmed payments and
 // status follows it (DebtStatus); "late" and "not started" are computed from the payment month, never stored.
 model Debt {
-  id            String        @id @default(cuid())
-  direction     String // DebtDirection
-  description   String
-  amount        Float // of this installment
-  currency      String        @default("PEN")
-  exchangeRate  Float?
-  amountInPen   Float?
-  installment   String? // "n/m"
-  paymentMonth  Int
-  paymentYear   Int
-  dueDate       DateTime?
-  status        String        @default("pending") // DebtStatus
-  paidAmount    Float         @default(0)
-  paidDate      DateTime?
-  personId      String
-  person        Person        @relation(fields: [personId], references: [id])
-  notes         String?
-  originDraftId String? // the draft that also created this row (installments, shared parts, D73)
-  draftId       String?       @unique // the chat draft it came from (first installment only)
-  importKey     String?       @unique // fingerprint of the Notion row it was imported from (P14, D90)
-  draft         ExpenseDraft? @relation(fields: [draftId], references: [id])
-  createdAt     DateTime      @default(now())
-  updatedAt     DateTime      @updatedAt
+  id              String         @id @default(cuid())
+  direction       String // DebtDirection
+  description     String
+  amount          Float // of this installment
+  currency        String         @default("PEN")
+  exchangeRate    Float?
+  amountInPen     Float?
+  installment     String? // "n/m"
+  paymentMonth    Int
+  paymentYear     Int
+  dueDate         DateTime?
+  status          String         @default("pending") // DebtStatus
+  paidAmount      Float          @default(0)
+  paidDate        DateTime?
+  personId        String
+  person          Person         @relation(fields: [personId], references: [id])
+  // the card it was charged on (D114): filled from the shared card expense, chosen on manual debts
+  paymentMethodId String?
+  paymentMethod   PaymentMethod? @relation("DebtCard", fields: [paymentMethodId], references: [id])
+  notes           String?
+  originDraftId   String? // the draft that also created this row (installments, shared parts, D73)
+  draftId         String?        @unique // the chat draft it came from (first installment only)
+  importKey       String?        @unique // fingerprint of the Notion row it was imported from (P14, D90)
+  draft           ExpenseDraft?  @relation(fields: [draftId], references: [id])
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
 
   payments DebtPayment[]
 
   @@index([personId, direction, status])
   @@index([paymentYear, paymentMonth])
   @@index([originDraftId])
+  @@index([paymentMethodId, paymentYear, paymentMonth])
   @@map("exp_debts")
 }
 
@@ -445,6 +468,7 @@ model DebtPayment {
   paidAt          DateTime
   paymentMethodId String?
   paymentMethod   PaymentMethod? @relation(fields: [paymentMethodId], references: [id])
+  kind            String         @default("payment") // DebtPaymentKind (D114)
   batchId         String? // one message of the bot can pay several installments
   confirmedAt     DateTime?
   notes           String?
@@ -543,6 +567,7 @@ model NotificationSetting {
 model Statement {
   id              String    @id @default(cuid())
   paymentMethodId String // the card
+  personId        String? // person assigned from the PDF or selected before upload
   paymentMonth    Int
   paymentYear     Int
   periodStart     DateTime?
@@ -575,6 +600,8 @@ model StatementRow {
   installment String? // "n/m"
   result      String // StatementRowResult: matched, new, created, ignored
   expenseId   String? // the card expense it matched or created
+  personId    String? // who made the purchase; null = the statement's person (a card can be used by several people)
+  debtId      String? // the cobro created with the expense when the purchase is another person's (D116)
   createdAt   DateTime  @default(now())
 
   @@index([statementId])

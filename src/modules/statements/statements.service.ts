@@ -1,13 +1,17 @@
 import { Injectable, Logger } from '@nestjs/common'
 
 import { AiOperation } from '@/commons/constants/ai.constant'
-import { toCents } from '@/commons/constants/debt.constant'
+import { DebtDirection, toCents } from '@/commons/constants/debt.constant'
 import { Currency, PaymentStatus } from '@/commons/constants/expense.constant'
 import { NotificationKind, NotificationRefType } from '@/commons/constants/notification.constant'
 import { StatementRowResult, StatementSource, StatementStatus } from '@/commons/constants/statement.constant'
+import { PaymentMethodType } from '@/commons/constants/catalog.constant'
+import { StatementPasswordException } from '@/commons/exceptions/statement/statement-password.exception'
 import { StatementUnreadableException } from '@/commons/exceptions/statement/statement-unreadable.exception'
 import { addMonths, PaymentPeriod } from '@/commons/helpers/payment-period.helper'
+import { CardHolderDBRepository } from '@/db/models/card-holder/cardHolderDB.repository'
 import { PaymentMethodDBRepository } from '@/db/models/payment-method/paymentMethodDB.repository'
+import { PersonDbDto } from '@/db/models/person/personDB.dto'
 import { PersonDBRepository } from '@/db/models/person/personDB.repository'
 import { StatementDBRepository } from '@/db/models/statement/statementDB.repository'
 import { ExpenseExtractionService } from '@/modules/expense-extraction/expense-extraction.service'
@@ -18,12 +22,15 @@ import { MONTH_NAMES } from '@/modules/conversation/conversation.messages'
 import { readPdfLines } from './statement-pdf.reader'
 import { detectCardHint, maskForAi, ParsedStatement, parseStatementLines, templateAddsUp } from './statement.parser'
 import { fromAi, STATEMENT_INSTRUCTIONS, statementAiJsonSchema, statementAiSchema } from './statement.prompt'
+import { assignRowPeople, inferHolder, matchCard, rowHolderHints } from './statement.identity'
 import { CardExpenseForMatch, reconcileStatement } from './statement.reconcile'
 
 export interface StatementUpload {
   data: Buffer
   password?: string | null // when the saved document number does not open it
   paymentMethodId?: string | null // when the text does not say which card
+  personId?: string | null // manual assignment takes precedence over the PDF hint
+  savePassword?: boolean // the typed password becomes the document number of the statement's person (D94)
 }
 
 const day = (isoDay: string | null) => (isoDay ? new Date(`${isoDay}T00:00:00.000Z`) : null)
@@ -33,7 +40,7 @@ const periodOfDay = (isoDay: string): PaymentPeriod => ({
   paymentYear: Number(isoDay.slice(0, 4)),
 })
 
-// Bank statements (P14 block 2, D95): the PDF is opened with the owner's document number (D94), read by a template
+// Bank statements (P14 block 2, D95): the PDF is opened with a saved document number (D94), read by a template
 // or the AI (only its text), saved row by row and reconciled with the card expenses of its payment month
 @Injectable()
 export class StatementsService {
@@ -46,21 +53,46 @@ export class StatementsService {
     private readonly expenseExtractionService: ExpenseExtractionService,
     private readonly storedFilesService: StoredFilesService,
     private readonly notificationsService: NotificationsService,
+    private readonly cardHolderDBRepository: CardHolderDBRepository,
   ) {}
 
-  async upload({ data, password, paymentMethodId }: StatementUpload) {
-    const owner = await this.personDBRepository.findDefault()
-    const lines = await readPdfLines(data, password || owner?.documentNumber)
-    const { parsed, source } = await this.read(lines, owner?.documentNumber ?? null)
+  async upload({ data, password, paymentMethodId, personId, savePassword }: StatementUpload) {
+    const [owner, people] = await Promise.all([
+      this.personDBRepository.findDefault(),
+      this.personDBRepository.findActive(),
+    ])
+    if (personId && !people.some((person) => person.id === personId)) {
+      throw new StatementUnreadableException({ reason: 'selected person not found' })
+    }
+    const opened = await this.openPdf(data, password, personId ?? null, owner, people)
+    const { lines } = opened
+    const { parsed, source } = await this.read(lines, opened.password)
+    // The chosen person, else the holder the PDF names, else whose document number opened it, else the owner
+    const assignedPersonId =
+      personId ?? inferHolder(people, lines, parsed.holderName)?.id ?? opened.personId ?? owner?.id
+    if (!assignedPersonId) throw new StatementUnreadableException({ reason: 'no person to assign' })
+    if (savePassword && password && opened.password === password) {
+      await this.personDBRepository.update(assignedPersonId, { documentNumber: password })
+    }
 
-    const card = await this.cardOf(paymentMethodId ?? null, parsed.cardHint)
+    const card = await this.cardOf(paymentMethodId ?? null, parsed, lines)
     const period = this.periodOf(parsed, card)
-    const expenses = await this.cardExpenses(card.id, period)
+    const [expenses, holders] = await Promise.all([
+      this.cardExpenses(card.id, period),
+      this.cardHolderDBRepository.findByCard(card.id),
+    ])
     const { rows } = reconcileStatement(parsed.rows, expenses)
+    // Whose each purchase is: its section (CMR), its TIT/ADIC mark (Sip) or the titular (D116)
+    const rowPeople = assignRowPeople(rows, rowHolderHints(lines, rows), {
+      titularId: assignedPersonId,
+      holders,
+      people,
+    })
 
     const fileId = await this.keepFile(data)
     const statement = await this.statementDBRepository.create({
       paymentMethodId: card.id,
+      personId: assignedPersonId,
       ...period,
       periodEnd: day(parsed.periodEnd),
       dueDate: day(parsed.dueDate),
@@ -70,7 +102,7 @@ export class StatementsService {
       source,
       fileId,
       status: rows.some((row) => row.result === StatementRowResult.NEW) ? StatementStatus.REVIEW : StatementStatus.DONE,
-      rows: rows.map((row) => ({
+      rows: rows.map((row, index) => ({
         date: day(row.date),
         description: row.description,
         amount: row.amount,
@@ -78,6 +110,7 @@ export class StatementsService {
         installment: row.installment,
         result: row.result,
         expenseId: row.expenseId,
+        personId: rowPeople[index],
       })),
     })
 
@@ -95,9 +128,15 @@ export class StatementsService {
       this.paymentMethodDBRepository.findById(statement.paymentMethodId),
     ])
     const linked = new Set(statement.rows.map((row) => row.expenseId).filter(Boolean))
+    const personOfExpense = new Map(expenses.map((expense) => [expense.id, expense.personId ?? null]))
     const koganeTotal = toCents(expenses.reduce((sum, expense) => sum + expense.amount, 0))
     return {
       ...statement,
+      // Whose each purchase is: its expense's person once matched or created, else the one chosen, else the statement's
+      rows: statement.rows.map((row) => ({
+        ...row,
+        personId: (row.expenseId && personOfExpense.get(row.expenseId)) || row.personId || statement.personId,
+      })),
       cardName: card?.name ?? '',
       missing: expenses.filter((expense) => !linked.has(expense.id)),
       koganeTotal,
@@ -127,7 +166,8 @@ export class StatementsService {
   async createNew(id: string, rowIds?: string[]) {
     const statement = await this.statementDBRepository.findById(id)
     const owner = await this.personDBRepository.findDefault()
-    if (!owner) throw new StatementUnreadableException({ reason: 'no default person' })
+    const statementPersonId = statement.personId ?? owner?.id
+    if (!statementPersonId) throw new StatementUnreadableException({ reason: 'no person to assign' })
     // "Crear todos" takes the new rows; a row chosen by hand is created anyway (matched with an expense of the same
     // name from another month or card, or ignored), but never twice
     const rows = statement.rows.filter((row) =>
@@ -137,35 +177,78 @@ export class StatementsService {
     )
     await this.statementDBRepository.createExpenses(
       id,
-      rows.map((row) => ({
-        id: row.id,
-        data: {
+      rows.map((row) => {
+        const personId = row.personId ?? statementPersonId // the person of that purchase (D113, D116)
+        const common = {
           description: row.label || row.description,
           amount: row.amount,
           currency: row.currency,
           amountInPen: row.currency === Currency.PEN ? row.amount : null,
-          paymentStatus: PaymentStatus.PENDING,
-          personId: owner.id,
           paymentMethodId: statement.paymentMethodId,
           installment: row.installment,
           paymentMonth: statement.paymentMonth,
           paymentYear: statement.paymentYear,
-          processDate: row.date,
-          notes: row.label ? `Del estado de cuenta: ${row.description}` : 'Del estado de cuenta',
-        },
-      })),
+        }
+        // On a card the owner pays, another person's purchase is also what they owe (Cobros, D114, D116)
+        const collect = personId !== owner?.id && statementPersonId === owner?.id
+        return {
+          id: row.id,
+          data: {
+            ...common,
+            paymentStatus: PaymentStatus.NOT_STARTED,
+            personId,
+            processDate: row.date,
+            notes: row.label ? `Del estado de cuenta: ${row.description}` : 'Del estado de cuenta',
+          },
+          ...(collect
+            ? {
+                debt: { ...common, direction: DebtDirection.OWED_TO_ME, personId, notes: 'Cobro del estado de cuenta' },
+              }
+            : {}),
+        }
+      }),
     )
+    return this.get(id)
+  }
+
+  async assignRows(id: string, { rowIds, personId }: { rowIds: string[]; personId: string | null }) {
+    if (personId && !(await this.personDBRepository.findActive()).some((person) => person.id === personId)) {
+      throw new StatementUnreadableException({ reason: 'selected person not found' })
+    }
+    await this.statementDBRepository.findById(id)
+    await this.statementDBRepository.assignRows(id, rowIds, personId)
+    return this.get(id)
+  }
+
+  async assignPerson(id: string, personId: string) {
+    const people = await this.personDBRepository.findActive()
+    if (!people.some((person) => person.id === personId)) {
+      throw new StatementUnreadableException({ reason: 'selected person not found' })
+    }
+    await this.statementDBRepository.assignPerson(id, personId)
     return this.get(id)
   }
 
   async updateRow(
     id: string,
     rowId: string,
-    { result, label }: { result?: StatementRowResult.IGNORED | StatementRowResult.NEW; label?: string | null },
+    {
+      result,
+      label,
+      personId,
+    }: {
+      result?: StatementRowResult.IGNORED | StatementRowResult.NEW
+      label?: string | null
+      personId?: string | null
+    },
   ) {
+    if (personId && !(await this.personDBRepository.findActive()).some((person) => person.id === personId)) {
+      throw new StatementUnreadableException({ reason: 'selected person not found' })
+    }
     await this.statementDBRepository.updateRow(id, rowId, {
       result,
       label: label === undefined ? undefined : label || null,
+      personId,
     })
     return this.get(id)
   }
@@ -174,7 +257,8 @@ export class StatementsService {
     return this.statementDBRepository.delete(id)
   }
 
-  // Template first; the AI reads the masked text when the template does not add up to the total
+  // Template first; the AI reads the masked text (without the password that opened it) when the template does not
+  // add up to the total
   private async read(lines: string[], documentNumber: string | null) {
     const parsed = parseStatementLines(lines)
     if (templateAddsUp(parsed)) return { parsed, source: StatementSource.TEMPLATE }
@@ -199,13 +283,51 @@ export class StatementsService {
     throw new StatementUnreadableException({ reason: 'no movements' })
   }
 
-  private async cardOf(paymentMethodId: string | null, hint: string | null) {
-    const cards = (await this.paymentMethodDBRepository.findAll()).filter((method) => method.type === 'credit_card')
-    const card = paymentMethodId
-      ? cards.find((candidate) => candidate.id === paymentMethodId)
-      : cards.find((candidate) => candidate.code === hint)
+  private async cardOf(paymentMethodId: string | null, parsed: ParsedStatement, lines: string[]) {
+    const cards = (await this.paymentMethodDBRepository.findAll()).filter(
+      (method) => method.type === PaymentMethodType.CREDIT_CARD && (method.isActive || method.id === paymentMethodId),
+    )
+    const card = matchCard(cards, {
+      chosenId: paymentMethodId,
+      hint: parsed.cardHint,
+      cardName: parsed.cardName,
+      lines,
+    })
     if (!card) throw new StatementUnreadableException({ reason: 'card not found: choose it' })
     return card
+  }
+
+  // The typed password, then the document number of the chosen person, of the owner and of everyone else who has one
+  // (D94). A copy of the bytes is read each time, so trying again is safe
+  private async openPdf(
+    data: Buffer,
+    typed: string | null | undefined,
+    personId: string | null,
+    owner: PersonDbDto | null,
+    people: PersonDbDto[],
+  ): Promise<{ lines: string[]; password: string | null; personId: string | null }> {
+    const byId = (id: string | null | undefined) => people.find((person) => person.id === id) ?? null
+    const candidates: { password: string; personId: string | null }[] = []
+    const add = (password: string | null | undefined, candidatePersonId: string | null) => {
+      if (password && !candidates.some((candidate) => candidate.password === password)) {
+        candidates.push({ password, personId: candidatePersonId })
+      }
+    }
+    add(typed, null)
+    add(byId(personId)?.documentNumber, personId)
+    add(owner?.documentNumber, owner?.id ?? null)
+    people.forEach((person) => add(person.documentNumber, person.id))
+
+    if (!candidates.length) return { lines: await readPdfLines(data, null), password: null, personId: null }
+    for (const candidate of candidates) {
+      try {
+        return { lines: await readPdfLines(data, candidate.password), ...candidate }
+      } catch (error) {
+        if (!(error instanceof StatementPasswordException)) throw error
+      }
+    }
+    // Nothing opened it: a typed password was wrong, otherwise the right one is not saved anywhere
+    throw new StatementPasswordException({ reason: typed ? 'incorrect' : 'missing' })
   }
 
   // The statement of month M closes on the closing day of M: its period end says M; without it, the due date (paid

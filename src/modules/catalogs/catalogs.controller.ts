@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, Get, HttpCode, HttpStatus, Param, Patch, Post } from '@nestjs/common'
+import { Body, Controller, Delete, Get, HttpCode, HttpStatus, Param, Patch, Post, Put } from '@nestjs/common'
 import { ApiOkResponse, ApiOperation } from '@nestjs/swagger'
 
 import { ApiRest } from '@/commons/decorators/api-rest.decorator'
@@ -6,6 +6,7 @@ import { PaymentMethodIncompleteException } from '@/commons/exceptions/catalog/p
 import { ResponseMessage } from '@/commons/decorators/response-message.decorator'
 import { BudgetGroupDBRepository } from '@/db/models/budget-group/budgetGroupDB.repository'
 import { CategoryDBRepository } from '@/db/models/category/categoryDB.repository'
+import { CardHolderDBRepository } from '@/db/models/card-holder/cardHolderDB.repository'
 import { PaymentMethodDBRepository } from '@/db/models/payment-method/paymentMethodDB.repository'
 import { PersonDBRepository } from '@/db/models/person/personDB.repository'
 
@@ -14,6 +15,7 @@ import {
   BudgetGroupResponseDto,
   CategoryListResponseDto,
   CategoryResponseDto,
+  CardHolderListResponseDto,
   PaymentMethodListResponseDto,
   PaymentMethodResponseDto,
   PersonListResponseDto,
@@ -22,6 +24,7 @@ import {
 import {
   CreateBudgetGroupDto,
   CreateCategoryDto,
+  CardHoldersDto,
   CreatePaymentMethodDto,
   CreatePersonDto,
   UpdateBudgetGroupDto,
@@ -82,7 +85,26 @@ export class PeopleController {
 @ApiRest('catalogs')
 @Controller('payment-methods')
 export class PaymentMethodsController {
-  constructor(private readonly paymentMethodDBRepository: PaymentMethodDBRepository) {}
+  constructor(
+    private readonly paymentMethodDBRepository: PaymentMethodDBRepository,
+    private readonly cardHolderDBRepository: CardHolderDBRepository,
+  ) {}
+
+  @Get(':id/holders')
+  @ApiOperation({ summary: 'Titular and additional people of a credit card (D116)' })
+  @ApiOkResponse({ type: CardHolderListResponseDto })
+  @ResponseMessage('CARD_HOLDERS_LISTED', 'Card holders listed')
+  holders(@Param('id') id: string) {
+    return this.cardHolderDBRepository.findByCard(id)
+  }
+
+  @Put(':id/holders')
+  @ApiOperation({ summary: 'Replace the titular and additional people of a credit card; statements assign by them' })
+  @ApiOkResponse({ type: CardHolderListResponseDto })
+  @ResponseMessage('CARD_HOLDERS_SAVED', 'Card holders saved')
+  saveHolders(@Param('id') id: string, @Body() { holders }: CardHoldersDto) {
+    return this.cardHolderDBRepository.replace(id, holders)
+  }
 
   @Get()
   @ApiOperation({ summary: 'Payment methods (credit cards included, with their billing days)' })

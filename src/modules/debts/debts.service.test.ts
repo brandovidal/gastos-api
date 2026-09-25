@@ -1,12 +1,14 @@
 import { Test, TestingModule } from '@nestjs/testing'
 import { vi } from 'vitest'
 
-import { DebtDirection, DebtStatus, DebtTiming } from '@/commons/constants/debt.constant'
+import { DebtDirection, DebtPaymentKind, DebtStatus, DebtTiming } from '@/commons/constants/debt.constant'
 import { DebtPaymentExceedsBalanceException } from '@/commons/exceptions/debt/debt-payment-exceeds-balance.exception'
 import { DebtDBRepository } from '@/db/models/debt/debtDB.repository'
 import { DebtWithPersonDbDto } from '@/db/models/debt/debtDB.dto'
+import { StatementDBRepository } from '@/db/models/statement/statementDB.repository'
 
 import { DebtsService } from './debts.service'
+import { DebtBulkAction } from './validations/debts.validation'
 
 const danery = { id: 'person-danery', name: 'Danery' }
 const bruce = { id: 'person-bruce', name: 'Bruce' }
@@ -48,7 +50,14 @@ const mockRepository = {
   findProposal: vi.fn(),
   confirmProposal: vi.fn(),
   discardProposal: vi.fn(),
+  findByIds: vi.fn(),
+  payMany: vi.fn(),
+  resetMany: vi.fn(),
+  setCard: vi.fn(),
+  deleteMany: vi.fn(),
+  withPayments: vi.fn(),
 }
+const mockStatements = { findLatestForCard: vi.fn(), findCardExpenses: vi.fn() }
 
 describe('DebtsService', () => {
   let service: DebtsService
@@ -58,7 +67,11 @@ describe('DebtsService', () => {
     vi.setSystemTime(new Date('2026-09-23T17:00:00Z'))
 
     const module: TestingModule = await Test.createTestingModule({
-      providers: [DebtsService, { provide: DebtDBRepository, useValue: mockRepository }],
+      providers: [
+        DebtsService,
+        { provide: DebtDBRepository, useValue: mockRepository },
+        { provide: StatementDBRepository, useValue: mockStatements },
+      ],
     }).compile()
     service = module.get(DebtsService)
   })
@@ -82,7 +95,7 @@ describe('DebtsService', () => {
   })
 
   it('should total per person: owed to me, I owe, net, late and due this month (soles only)', async () => {
-    mockRepository.findOpen.mockResolvedValue([
+    mockRepository.findMany.mockResolvedValue([
       buildDebt({ paymentMonth: 8 }),
       buildDebt({ id: 'd2', paymentMonth: 9, paidAmount: 100 }),
       buildDebt({ id: 'd3', direction: DebtDirection.I_OWE, amount: 50 }),
@@ -134,8 +147,21 @@ describe('DebtsService', () => {
         amount: 250,
         paidAt: new Date('2026-09-23T17:00:00Z'),
         paymentMethodId: null,
+        kind: DebtPaymentKind.PAYMENT,
         notes: null,
       })
+    })
+
+    it('should call a payment below the balance an abono unless the kind is given (D114)', async () => {
+      mockRepository.findById.mockResolvedValue({ ...buildDebt({ paidAmount: 150 }), payments: [] })
+
+      await service.addPayment('debt-1', { amount: 100 })
+      await service.addPayment('debt-1', { amount: 100, kind: DebtPaymentKind.CASHBACK })
+
+      expect(mockRepository.addPayment.mock.calls.map(([payment]) => payment.kind)).toEqual([
+        DebtPaymentKind.PARTIAL,
+        DebtPaymentKind.CASHBACK,
+      ])
     })
 
     it('should refuse a payment greater than the balance', async () => {
@@ -209,5 +235,95 @@ describe('DebtsService', () => {
       await expect(service.pickInstallment('old', 'sep')).resolves.toBeNull()
       expect(mockRepository.confirmProposal).not.toHaveBeenCalled()
     })
+  })
+
+  describe('selección múltiple (D115)', () => {
+    const open = buildDebt({ id: 'a', amount: 400, paidAmount: 100, paymentMonth: 8 })
+    const newer = buildDebt({ id: 'b', amount: 200, paidAmount: 0, paymentMonth: 9 })
+    const done = buildDebt({ id: 'c', amount: 50, paidAmount: 50, status: DebtStatus.PAID })
+
+    beforeEach(() => mockRepository.findByIds.mockResolvedValue([open, newer, done]))
+
+    it('should pay the balance of each open one with the kind of the action and skip the ones already paid', async () => {
+      const result = await service.bulk({ ids: ['a', 'b', 'c'], action: DebtBulkAction.CASHBACK })
+
+      expect(mockRepository.payMany).toHaveBeenCalledWith(
+        [
+          { debtId: 'a', amount: 300 },
+          { debtId: 'b', amount: 200 },
+        ],
+        expect.objectContaining({ kind: DebtPaymentKind.CASHBACK }),
+      )
+      expect(result).toEqual(expect.objectContaining({ affected: 2, paid: 500, skipped: ['c'] }))
+    })
+
+    it('should spread an abono over the oldest first and give back what is left', async () => {
+      const result = await service.bulk({ ids: ['a', 'b', 'c'], action: DebtBulkAction.PARTIAL, amount: 350 })
+
+      expect(mockRepository.payMany).toHaveBeenCalledWith(
+        [
+          { debtId: 'a', amount: 300 },
+          { debtId: 'b', amount: 50 },
+        ],
+        expect.objectContaining({ kind: DebtPaymentKind.PARTIAL }),
+      )
+      expect(result.excess).toBe(0)
+    })
+
+    it('should clone to another month without payments, keeping person and card', async () => {
+      mockRepository.createMany.mockImplementation(async (rows) => rows)
+      await service.bulk({ ids: ['a'], action: DebtBulkAction.CLONE, month: 12, year: 2026 })
+
+      expect(mockRepository.createMany.mock.calls[0][0][0]).toEqual(
+        expect.objectContaining({ paymentMonth: 12, paymentYear: 2026, personId: open.personId }),
+      )
+      expect(mockRepository.createMany.mock.calls[0][0][0]).not.toHaveProperty('paidAmount')
+    })
+
+    it('should not delete debts with payments unless forced', async () => {
+      mockRepository.withPayments.mockResolvedValue(new Set(['a']))
+      mockRepository.deleteMany.mockResolvedValue(2)
+
+      const result = await service.bulk({ ids: ['a', 'b', 'c'], action: DebtBulkAction.DELETE })
+
+      expect(mockRepository.deleteMany).toHaveBeenCalledWith(['b', 'c'])
+      expect(result.skipped).toEqual(['a'])
+    })
+  })
+
+  it('should contrast what others owe of a card and month with its statement and flag interest lines (D114)', async () => {
+    mockRepository.findMany.mockResolvedValue([
+      buildDebt({ id: 'a', amount: 300, paidAmount: 100 }),
+      buildDebt({ id: 'b', personId: bruce.id, person: bruce, amount: 50 }),
+    ])
+    mockStatements.findLatestForCard
+      .mockResolvedValueOnce({ id: 'st-9', totalDue: 1020, rows: [{ description: 'TAMBO', amount: 20 }] })
+      .mockResolvedValueOnce({
+        id: 'st-10',
+        totalDue: 900,
+        rows: [{ description: 'INTERESES COMPENSATORIOS', amount: 14.3 }],
+      })
+    mockStatements.findCardExpenses.mockResolvedValue([{ amount: 700 }, { amount: 300 }])
+
+    const check = await service.cardCheck({ paymentMethodId: 'cmr', month: 9, year: 2026 })
+
+    expect(mockRepository.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ direction: DebtDirection.OWED_TO_ME, paymentMethodId: 'cmr', month: 9, year: 2026 }),
+    )
+    expect(check).toEqual(
+      expect.objectContaining({
+        statementId: 'st-9',
+        statementTotal: 1020,
+        koganeTotal: 1000,
+        unexplained: 20,
+        othersOwed: 350,
+        othersPaid: 100,
+        possibleInterest: [{ description: 'INTERESES COMPENSATORIOS', amount: 14.3 }],
+      }),
+    )
+    expect(check.people.map((row) => [row.name, row.balance])).toEqual([
+      ['Danery', 200],
+      ['Bruce', 50],
+    ])
   })
 })

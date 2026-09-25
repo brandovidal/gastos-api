@@ -1,10 +1,11 @@
 import { Test, TestingModule } from '@nestjs/testing'
 import { vi } from 'vitest'
 
-import { PaymentMethodType } from '@/commons/constants/catalog.constant'
+import { CardHolderRole, PaymentMethodType } from '@/commons/constants/catalog.constant'
 import { PaymentMethodIncompleteException } from '@/commons/exceptions/catalog/payment-method-incomplete.exception'
 import { BudgetGroupDBRepository } from '@/db/models/budget-group/budgetGroupDB.repository'
 import { CategoryDBRepository } from '@/db/models/category/categoryDB.repository'
+import { CardHolderDBRepository } from '@/db/models/card-holder/cardHolderDB.repository'
 import { PaymentMethodDBRepository } from '@/db/models/payment-method/paymentMethodDB.repository'
 import { PersonDBRepository } from '@/db/models/person/personDB.repository'
 
@@ -14,12 +15,13 @@ import {
   PaymentMethodsController,
   PeopleController,
 } from './catalogs.controller'
-import { createPaymentMethodSchema } from './validations/catalogs.validation'
+import { cardHoldersSchema, createPaymentMethodSchema } from './validations/catalogs.validation'
 
 const people = { findAll: vi.fn(), create: vi.fn(), update: vi.fn(), deactivate: vi.fn() }
 const methods = { findAll: vi.fn(), findById: vi.fn(), createFull: vi.fn(), update: vi.fn(), deactivate: vi.fn() }
 const categories = { findAll: vi.fn(), create: vi.fn(), update: vi.fn(), delete: vi.fn() }
 const groups = { findAll: vi.fn(), create: vi.fn(), update: vi.fn(), delete: vi.fn() }
+const holders = { findByCard: vi.fn(), replace: vi.fn() }
 
 // Catalogs of kogane-app (P7): the controllers hand the validated body to their repository (errors are mapped there)
 describe('Catalogs controllers', () => {
@@ -31,6 +33,7 @@ describe('Catalogs controllers', () => {
       providers: [
         { provide: PersonDBRepository, useValue: people },
         { provide: PaymentMethodDBRepository, useValue: methods },
+        { provide: CardHolderDBRepository, useValue: holders },
         { provide: CategoryDBRepository, useValue: categories },
         { provide: BudgetGroupDBRepository, useValue: groups },
       ],
@@ -88,6 +91,18 @@ describe('Catalogs controllers', () => {
 
     expect(categories.delete).toHaveBeenCalledWith('category-1')
     expect(groups.update).toHaveBeenCalledWith('group-1', { percentage: 40 })
+  })
+
+  it('should keep exactly one titular per card and each person once (D116)', () => {
+    const titular = { personId: 'me', role: CardHolderRole.TITULAR, last4: '1810' }
+    const additional = { personId: 'dany', role: CardHolderRole.ADDITIONAL, last4: '8835' }
+
+    expect(cardHoldersSchema.safeParse({ holders: [titular, additional] }).success).toBe(true)
+    expect(cardHoldersSchema.safeParse({ holders: [additional] }).success).toBe(false)
+    expect(
+      cardHoldersSchema.safeParse({ holders: [titular, { ...titular, role: CardHolderRole.ADDITIONAL }] }).success,
+    ).toBe(false)
+    expect(cardHoldersSchema.safeParse({ holders: [{ ...titular, last4: '18' }] }).success).toBe(false)
   })
 
   describe('cards of Configuración ▸ Cuentas y tarjetas (D97)', () => {

@@ -116,7 +116,7 @@ describe('ExpenseSaverService', () => {
     expect(mockPaymentMethodDBRepository.findById).toHaveBeenCalledWith('method-ohpay')
     expect(savedInput().data).toMatchObject({
       paymentMethodId: 'method-ohpay',
-      paymentStatus: PaymentStatus.PENDING,
+      paymentStatus: PaymentStatus.NOT_STARTED,
       paymentMonth: 10,
       paymentYear: 2026,
       processDate: new Date('2026-09-15T00:00:00.000Z'),
@@ -352,6 +352,7 @@ describe('ExpenseSaverService', () => {
           currency: 'PEN',
           personId: 'person-danery',
           installment: null,
+          paymentMethodId: 'method-yape',
           originDraftId: FILE_ID,
           paymentMonth: 9,
           paymentYear: 2026,

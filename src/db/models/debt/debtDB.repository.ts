@@ -22,6 +22,13 @@ import {
 type Transaction = Parameters<Parameters<PrismaService['$transaction']>[0]>[0]
 
 const WITH_PERSON = { person: { select: { id: true, name: true } } } as const
+
+// That payment month, or every month up to it (Cobros / Deudas, D111)
+function periodFilter(month?: number, year?: number, until?: boolean) {
+  if (!month || !year) return year ? { paymentYear: until ? { lte: year } : year } : {}
+  if (!until) return { paymentMonth: month, paymentYear: year }
+  return { OR: [{ paymentYear: { lt: year } }, { paymentYear: year, paymentMonth: { lte: month } }] }
+}
 // Oldest installment first: the order payments are applied in
 const BY_PERIOD = [{ paymentYear: 'asc' }, { paymentMonth: 'asc' }, { createdAt: 'asc' }] as const
 
@@ -31,12 +38,79 @@ const BY_PERIOD = [{ paymentYear: 'asc' }, { paymentMonth: 'asc' }, { createdAt:
 export class DebtDBRepository {
   constructor(private readonly prisma: PrismaService) {}
 
-  findMany({ personId, direction, statuses }: DebtFilterDbDto): Promise<DebtWithPersonDbDto[]> {
+  findMany({
+    personId,
+    direction,
+    statuses,
+    month,
+    year,
+    until,
+    paymentMethodId,
+  }: DebtFilterDbDto): Promise<DebtWithPersonDbDto[]> {
     return this.prisma.debt.findMany({
-      where: { personId, direction, ...(statuses?.length ? { status: { in: statuses } } : {}) },
+      where: {
+        personId,
+        direction,
+        paymentMethodId,
+        ...(statuses?.length ? { status: { in: statuses } } : {}),
+        ...periodFilter(month, year, until),
+      },
       include: WITH_PERSON,
       orderBy: [...BY_PERIOD],
     })
+  }
+
+  findByIds(ids: string[]): Promise<DebtWithPersonDbDto[]> {
+    return this.prisma.debt.findMany({ where: { id: { in: ids } }, include: WITH_PERSON, orderBy: [...BY_PERIOD] })
+  }
+
+  // Pay the given amounts (the balance or a spread abono) as confirmed payments of one kind, in one transaction
+  payMany(
+    allocations: PaymentAllocation[],
+    { paidAt, kind, paymentMethodId }: { paidAt: Date; kind: string; paymentMethodId: string | null },
+  ): Promise<Debt[]> {
+    return this.prisma.$transaction(async (tx) => {
+      await tx.debtPayment.createMany({
+        data: allocations.map(({ debtId, amount }) => ({
+          debtId,
+          amount,
+          paidAt,
+          kind,
+          paymentMethodId,
+          confirmedAt: new Date(),
+        })),
+      })
+      return Promise.all(allocations.map(({ debtId }) => this.recompute(tx, debtId)))
+    })
+  }
+
+  // Back to "No iniciado": the confirmed payments of these debts go away
+  resetMany(ids: string[]): Promise<Debt[]> {
+    return this.prisma.$transaction(async (tx) => {
+      await tx.debtPayment.deleteMany({ where: { debtId: { in: ids }, confirmedAt: { not: null } } })
+      return Promise.all(ids.map((debtId) => this.recompute(tx, debtId)))
+    })
+  }
+
+  async setCard(ids: string[], paymentMethodId: string | null): Promise<number> {
+    try {
+      return (await this.prisma.debt.updateMany({ where: { id: { in: ids } }, data: { paymentMethodId } })).count
+    } catch (error) {
+      throw toCatalogError(error, 'debts')
+    }
+  }
+
+  async deleteMany(ids: string[]): Promise<number> {
+    return (await this.prisma.debt.deleteMany({ where: { id: { in: ids } } })).count
+  }
+
+  // Confirmed payments per debt, to leave out of a delete without force
+  async withPayments(ids: string[]): Promise<Set<string>> {
+    const rows = await this.prisma.debtPayment.groupBy({
+      by: ['debtId'],
+      where: { debtId: { in: ids }, confirmedAt: { not: null } },
+    })
+    return new Set(rows.map((row) => row.debtId))
   }
 
   findOpen(filter: Omit<DebtFilterDbDto, 'statuses'> = {}): Promise<DebtWithPersonDbDto[]> {
@@ -137,15 +211,18 @@ export class DebtDBRepository {
   // paidAmount = confirmed payments; status from debtStatusFor (D60)
   private async recompute(tx: Transaction, debtId: string): Promise<Debt> {
     const debt = await tx.debt.findUniqueOrThrow({ where: { id: debtId } })
-    const { _sum, _max } = await tx.debtPayment.aggregate({
-      where: { debtId, confirmedAt: { not: null } },
-      _sum: { amount: true },
-      _max: { paidAt: true },
-    })
+    const confirmed = { debtId, confirmedAt: { not: null } }
+    const [{ _sum }, last] = await Promise.all([
+      tx.debtPayment.aggregate({ where: confirmed, _sum: { amount: true } }),
+      tx.debtPayment.findFirst({
+        where: confirmed,
+        orderBy: [{ paidAt: 'desc' }, { createdAt: 'desc' }],
+        select: { paidAt: true, kind: true },
+      }),
+    ])
     const paidAmount = _sum.amount ?? 0
-    const lastPaidAt = _max.paidAt ?? null
-    const status = debtStatusFor({ ...debt, paidAmount }, lastPaidAt)
+    const status = debtStatusFor({ ...debt, paidAmount }, last)
 
-    return tx.debt.update({ where: { id: debtId }, data: { paidAmount, paidDate: lastPaidAt, status } })
+    return tx.debt.update({ where: { id: debtId }, data: { paidAmount, paidDate: last?.paidAt ?? null, status } })
   }
 }

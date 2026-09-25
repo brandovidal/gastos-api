@@ -15,6 +15,7 @@ export type UpdateDebtDbDto = Partial<
     | 'paymentYear'
     | 'dueDate'
     | 'personId'
+    | 'paymentMethodId'
     | 'notes'
   >
 >
@@ -23,6 +24,10 @@ export interface DebtFilterDbDto {
   personId?: string
   direction?: string
   statuses?: string[]
+  month?: number // with year: that payment month (or every one until it, with until)
+  year?: number
+  until?: boolean
+  paymentMethodId?: string
 }
 
 export interface CreateDebtPaymentDbDto {
@@ -30,6 +35,7 @@ export interface CreateDebtPaymentDbDto {
   amount: number
   paidAt: Date
   paymentMethodId?: string | null
+  kind?: string // DebtPaymentKind
   notes?: string | null
 }
 

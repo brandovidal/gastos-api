@@ -17,6 +17,8 @@ export interface ParsedStatementRow {
 
 export interface ParsedStatement {
   cardHint: string | null // catalog code of the card the text names: OH (Sip), AMEX, IO, CMR
+  holderName?: string | null // the cardholder the AI read (the template leaves it to the holder lines)
+  cardName?: string | null // the card as the AI read it
   periodEnd: string | null
   dueDate: string | null
   totalDue: number | null

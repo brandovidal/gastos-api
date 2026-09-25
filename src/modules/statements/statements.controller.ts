@@ -20,7 +20,13 @@ import { ApiRest } from '@/commons/decorators/api-rest.decorator'
 import { ResponseMessage } from '@/commons/decorators/response-message.decorator'
 import { EmptyResponseDto } from '@/commons/helpers/api-response.helper'
 
-import { CreateNewRowsDto, UpdateRowDto, UploadStatementDto } from './dto/request/statements.dto'
+import {
+  AssignRowsDto,
+  CreateNewRowsDto,
+  UpdateRowDto,
+  UpdateStatementDto,
+  UploadStatementDto,
+} from './dto/request/statements.dto'
 import { StatementListResponseDto, StatementResponseDto } from './dto/response/statements-response.dto'
 import { StatementsService } from './statements.service'
 
@@ -42,6 +48,14 @@ export class StatementsController {
         file: { type: 'string', format: 'binary', description: 'Statement PDF (≤ 15 MB)' },
         password: { type: 'string', description: 'Only when the saved document number does not open it' },
         paymentMethodId: { type: 'string', description: 'Only when the statement does not say which card' },
+        personId: {
+          type: 'string',
+          description: 'Optional person override; otherwise detected from the statement holder',
+        },
+        savePassword: {
+          type: 'boolean',
+          description: 'Save the typed password as the document number of the statement person (if it opened it)',
+        },
       },
     },
   })
@@ -67,6 +81,23 @@ export class StatementsController {
   @ResponseMessage('STATEMENT_FOUND', 'Statement found')
   get(@Param('id') id: string) {
     return this.statementsService.get(id)
+  }
+
+  @Patch(':id')
+  @ApiOperation({ summary: 'Assign the statement to another person' })
+  @ApiOkResponse({ type: StatementResponseDto })
+  @ResponseMessage('STATEMENT_UPDATED', 'Statement updated')
+  update(@Param('id') id: string, @Body() { personId }: UpdateStatementDto) {
+    return this.statementsService.assignPerson(id, personId)
+  }
+
+  @Post(':id/rows/assign')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Give several purchases not saved yet to a person (the additional card or who pays it)' })
+  @ApiOkResponse({ type: StatementResponseDto })
+  @ResponseMessage('STATEMENT_ROWS_ASSIGNED', 'Rows assigned')
+  assignRows(@Param('id') id: string, @Body() body: AssignRowsDto) {
+    return this.statementsService.assignRows(id, body)
   }
 
   @Post(':id/create-new')
