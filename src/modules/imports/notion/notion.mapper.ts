@@ -22,6 +22,7 @@ import {
   paymentStatusOf,
   percentOf,
   periodOf,
+  yearNear,
 } from './notion.values'
 
 // One Notion board (P14, D90) → rows of the API tables. Pure: the importer loads the catalog and saves.
@@ -51,6 +52,7 @@ export interface ExpenseImport {
   year: number
   amount: number
   currency: string
+  summaries: { month: number; year: number }[] // the Resumen pages the row is linked to (what Notion adds up)
   file: string
   line: number
 }
@@ -65,6 +67,7 @@ export interface MonthlyBudgetImport {
   year: number
   salary: number
   limitPercent: number
+  notionSpent: number | null // "Gastos" of the Resumen page, to check the import against it
 }
 
 export interface ImportIssue {
@@ -163,16 +166,30 @@ export function mapRow(source: BaseFile, file: string, row: CsvRow, context: Map
         },
       ]
     }
-    return [{ kind: 'budget', value: { ...period, salary, limitPercent: percentOf(value('Porcentaje')) ?? 100 } }]
+    const limitPercent = percentOf(value('Porcentaje')) ?? 100
+    return [{ kind: 'budget', value: { ...period, salary, limitPercent, notionSpent: moneyOf(value('Gastos')) } }]
   }
 
   // Every expense board: description, amount, payment month and year
   const description = value('Descripción')
   const amount = moneyOf(value(source.base === NotionBase.SUBSCRIPTION ? 'Monto' : 'Pago'))
+  // "💵 Resumen" → "Resumen Setiembre 2026 (https://app.notion.com/p/Resumen-Setiembre-2026-…)"
+  const summaryColumn = Object.keys(row.values).find((column) => normalizeText(column).includes('resumen'))
+  const summaries = (summaryColumn ? value(summaryColumn).split(/\),\s*/) : [])
+    .map((link) => monthYearOf(link.split('(')[0]))
+    .filter((period) => period != null)
+  if (summaries.length > 1)
+    issue(`«${description}» está enlazada a ${summaries.length} Resúmenes: Notion la suma en cada uno`, false)
+  // Rows without an amount are Notion placeholders (empty rows, next month's template): skipped with a warning
+  if (amount == null || amount === 0) {
+    issue(description ? `sin monto, se omite: «${description}»` : 'fila vacía, se omite', false)
+    return issues
+  }
   const month = monthOf(value('Mes de pago'))
-  const year = Number(value('Año de pago')) || null
+  // Old rows have the month but not the year: it comes from the closest date of the row
+  const rowDate = dateOf(value('Fecha proceso')) ?? dateOf(value('Fecha pago')) ?? dateOf(value('Fecha limite'))
+  const year = Number(value('Año de pago')) || (month ? yearNear(month, rowDate) : null)
   if (!description) issue('sin descripción')
-  if (amount == null || amount === 0) issue(`sin monto: «${description}»`)
   if (!month || !year) issue(`sin mes o año de pago: «${description}»`)
 
   const person = (name: string) => {
@@ -323,6 +340,7 @@ export function mapRow(source: BaseFile, file: string, row: CsvRow, context: Map
         year: year!,
         amount: amount!,
         currency,
+        summaries,
         file,
         line: row.line,
       },

@@ -17,6 +17,7 @@ import { ReportsModule } from '@/modules/reports/reports.module'
 import { CalendarModule } from '@/modules/calendar/calendar.module'
 import { NotificationQueueModule } from '@/modules/notifications/notification-queue.module'
 import { NotificationsModule } from '@/modules/notifications/notifications.module'
+import { ImportsModule } from '@/modules/imports/imports.module'
 import { StatementsModule } from '@/modules/statements/statements.module'
 
 @Module({
@@ -41,6 +42,7 @@ import { StatementsModule } from '@/modules/statements/statements.module'
     CalendarModule,
     NotificationsModule,
     StatementsModule,
+    ImportsModule,
   ],
   controllers: [],
   providers: [],

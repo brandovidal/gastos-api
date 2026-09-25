@@ -559,3 +559,56 @@ model StatementRow {
   @@index([statementId])
   @@map("imp_statement_rows")
 }
+
+// Every Notion import (P14, D90, D104): a preview until it is applied from the web (or make import-notion CONFIRM=yes)
+model ImportBatch {
+  id        String    @id @default(cuid())
+  source    String    @default("notion")
+  sourceDir String // folder or uploaded file names
+  status    String    @default("preview") // ImportBatchStatus: preview, applied, discarded
+  files     Int
+  created   Int
+  updated   Int // the row changed in Notion since the last import
+  unchanged Int // same row as the last import: not touched, so edits made in Kogane stay
+  summary   String    @default("{}") // JSON: files read and the month-by-month check against the Notion Resumen
+  appliedAt DateTime?
+  createdAt DateTime  @default(now())
+
+  rows ImportRow[]
+
+  @@index([status])
+  @@map("imp_batches")
+}
+
+// One Notion row of a batch: the CSV as it came, what it becomes in Kogane and, once applied, the row it created
+model ImportRow {
+  id          String      @id @default(cuid())
+  batchId     String
+  batch       ImportBatch @relation(fields: [batchId], references: [id], onDelete: Cascade)
+  source      String      @default("notion")
+  importKey   String? // same as the importKey of the Kogane row (null for issues)
+  kind        String      @default("expense") // ImportRowKind: expense, group, budget, issue
+  status      String      @default("new") // ImportRowStatus: new, changed, unchanged, blocked, warning
+  message     String? // why it is blocked or the warning
+  file        String
+  line        Int
+  base        String? // NotionBase
+  targetTable String? // creditCardExpense, fixedCost, subscription, debt, budgetGroup, monthlyBudget
+  targetId    String? // set when applied
+  destination String? // "Tarjetas ▸ IO · Setiembre 2026": where it goes, for the preview
+  description String?
+  amount      Float?
+  currency    String?
+  month       Int?
+  year        Int?
+  data        String      @default("{}") // JSON of the Kogane row to write
+  paidAt      DateTime? // a debt paid in Notion gets one payment of this day
+  raw         String // JSON of the CSV row (column → value)
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+
+  @@index([batchId, kind, status])
+  @@index([importKey])
+  @@index([targetTable, targetId])
+  @@map("imp_rows")
+}

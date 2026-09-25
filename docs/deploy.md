@@ -155,6 +155,10 @@ Plan gratis: 10 GB, 1 M escrituras y 10 M lecturas al mes, sin cobro de salida.
 2. GitHub → **Actions → Deploy → Run workflow** (o push a `main`).
 3. Revisar que pasen los 3 jobs; Railway despliega cuando terminan (Wait for CI).
 
+## 5b. Importar Notion en producción (P14, una sola vez)
+
+Pasos y qué revisar en [`import-notion.md`](import-notion.md).
+
 ## 6. Verificación
 
 - `curl https://…/v1/health` → `database: OK`, `redis: OK` y `telegram.webhook: OK`.

@@ -8,6 +8,7 @@ import {
   moneyOf,
   monthOf,
   monthYearOf,
+  yearNear,
   paymentStatusOf,
   percentOf,
   periodOf,
@@ -20,7 +21,12 @@ describe('notion values', () => {
     expect(monthOf('Mayo ')).toBe(5)
     expect(monthOf('Mes')).toBeNull()
     expect(monthYearOf('Setiembre 2026')).toEqual({ month: 9, year: 2026 })
+    expect(monthYearOf(' Resumen Setiembre 2026')).toEqual({ month: 9, year: 2026 })
     expect(monthYearOf('Resumen')).toBeNull()
+    expect(yearNear(8, '2024-07-29')).toBe(2024)
+    expect(yearNear(1, '2024-12-20')).toBe(2025)
+    expect(yearNear(12, '2025-01-05')).toBe(2024)
+    expect(yearNear(8, null)).toBeNull()
   })
 
   it('should read amounts with symbols and thousands separators', () => {

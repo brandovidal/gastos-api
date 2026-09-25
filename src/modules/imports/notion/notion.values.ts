@@ -38,11 +38,25 @@ const ENGLISH_MONTHS: Record<string, number> = {
 // "Setiembre" → 9
 export const monthOf = (text: string): number | null => MONTHS[normalizeText(text)] ?? null
 
-// "Setiembre 2026" (title of a Resumen page) → { month: 9, year: 2026 }
+// "Setiembre 2026" or " Resumen Setiembre 2026" (title of a Resumen page) → { month: 9, year: 2026 }
 export function monthYearOf(text: string): { month: number; year: number } | null {
-  const match = /([a-zñ]+)\D*(\d{4})/.exec(normalizeText(text))
-  const month = match ? MONTHS[match[1]] : undefined
-  return match && month ? { month, year: Number(match[2]) } : null
+  const normalized = normalizeText(text)
+  const year = /\d{4}/.exec(normalized)
+  const month = normalized
+    .match(/[a-zñ]+/g)
+    ?.map((word) => MONTHS[word])
+    .find(Boolean)
+  return year && month ? { month, year: Number(year[0]) } : null
+}
+
+// The year of a payment month next to a date: 2024-12-20 with January → 2025; 2025-01-05 with December → 2024
+export function yearNear(month: number, isoDay: string | null): number | null {
+  if (!isoDay) return null
+  const year = Number(isoDay.slice(0, 4))
+  const dayMonth = Number(isoDay.slice(5, 7))
+  if (month - dayMonth > 6) return year - 1
+  if (dayMonth - month > 6) return year + 1
+  return year
 }
 
 // "1,042.00", "S/1,042.00", "S/ 29.90", "$12.50", "1042" → 1042; empty → null

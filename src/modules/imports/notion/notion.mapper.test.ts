@@ -222,15 +222,67 @@ describe('notion.mapper', () => {
       mapRow(
         { base: NotionBase.SUMMARY },
         's.csv',
-        row({ Descripción: 'Setiembre 2026', Sueldo: '5000', Porcentaje: '80%' }),
+        row({ Descripción: ' Resumen Setiembre 2026', Sueldo: '5000', Porcentaje: '80%', Gastos: '8,412.40' }),
         context,
       ),
-    ).toEqual([{ kind: 'budget', value: { month: 9, year: 2026, salary: 5000, limitPercent: 80 } }])
+    ).toEqual([
+      { kind: 'budget', value: { month: 9, year: 2026, salary: 5000, limitPercent: 80, notionSpent: 8412.4 } },
+    ])
+  })
+
+  it('should take the missing year from the row date and skip rows without an amount', () => {
+    const card = { base: NotionBase.CARD, card: 'CMR' } as const
+    const [abono] = mapRow(
+      card,
+      'io.csv',
+      row({ Descripción: 'Abono con Oh Pay', 'Fecha proceso': '29/07/2024', 'Mes de pago': 'Agosto', Pago: '-100.00' }),
+      context,
+    )
+    expect(abono).toMatchObject({ kind: 'expense', value: { month: 8, year: 2024, amount: -100 } })
+    expect(
+      mapRow(
+        card,
+        'io.csv',
+        row({ Descripción: 'PedidosYa food', 'Mes de pago': 'Setiembre', 'Año de pago': '2026' }),
+        context,
+      ),
+    ).toEqual([
+      {
+        kind: 'issue',
+        value: { file: 'io.csv', line: 2, message: 'sin monto, se omite: «PedidosYa food»', blocking: false },
+      },
+    ])
+  })
+
+  it('should keep every Resumen page a row is linked to, and warn when there are several', () => {
+    const mapped = mapRow(
+      { base: NotionBase.FIXED_COST },
+      'c.csv',
+      row({
+        Descripción: 'Bitel Brando',
+        Pago: '39.90',
+        'Mes de pago': 'Diciembre',
+        'Año de pago': '2024',
+        '💵 Resumen':
+          'Resumen Diciembre 2024 (https://app.notion.com/p/Resumen-Diciembre-2024-1), Resumen Noviembre 2024 (https://app.notion.com/p/Resumen-Noviembre-2024-2)',
+      }),
+      context,
+    )
+    expect(mapped[0]).toMatchObject({ kind: 'issue', value: { blocking: false } })
+    expect(mapped.at(-1)).toMatchObject({
+      kind: 'expense',
+      value: {
+        summaries: [
+          { month: 12, year: 2024 },
+          { month: 11, year: 2024 },
+        ],
+      },
+    })
   })
 
   it('should add up each month like the Notion Resumen: fixed costs and cards in soles, no platforms or debts', () => {
     const expense = (table: string, amount: number, currency = 'PEN') =>
-      ({ table, amount, currency, month: 9, year: 2026 }) as never
+      ({ table, amount, currency, month: 9, year: 2026, summaries: [{ month: 9, year: 2026 }] }) as never
     expect(
       monthTotals(
         [
@@ -240,8 +292,11 @@ describe('notion.mapper', () => {
           expense('debt', 400),
           expense('creditCardExpense', 10, 'USD'),
         ],
-        [{ month: 9, year: 2026, salary: 1000, limitPercent: 100 }],
+        [{ month: 9, year: 2026, salary: 1000, limitPercent: 100, notionSpent: 1216.9 }],
       ),
-    ).toEqual([{ month: 9, year: 2026, spent: 1206.9, salary: 1000, surplus: -206.9 }])
+    ).toEqual([
+      // Notion adds up the linked rows in any currency: 1042 + 164.9 + 10
+      { month: 9, year: 2026, spent: 1206.9, salary: 1000, surplus: -206.9, linked: 1216.9, notionSpent: 1216.9 },
+    ])
   })
 })
