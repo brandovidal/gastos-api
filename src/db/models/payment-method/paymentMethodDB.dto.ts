@@ -11,5 +11,6 @@ export interface PaymentMethodWriteDbDto {
   showInBot?: boolean
   billingCloseDay?: number | null
   paymentDueDay?: number | null
+  bank?: string | null
   color?: string | null
 }

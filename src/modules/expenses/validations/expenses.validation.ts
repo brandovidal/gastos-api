@@ -9,6 +9,7 @@ import {
   PaymentStatus,
   RecurringTargetType,
   SUBSCRIPTION_STATUSES,
+  SubscriptionKind,
   SubscriptionPeriod,
 } from '@/commons/constants/expense.constant'
 import { dateTimeSchema } from '@/commons/helpers/api-response.helper'
@@ -38,6 +39,9 @@ const expense = {
 
 const paymentPeriod = { paymentMonth: month, paymentYear: year }
 
+// N.º de suministro of a service (Bitel, Enel): P25 marks it paid from the bank email
+const supplyNumber = z.string().trim().max(40).nullable().optional()
+
 // Each table allows its own subset of payment statuses (Notion boards)
 const statusOf = (allowed: readonly PaymentStatus[]) =>
   z.enum(PaymentStatus).refine((status) => allowed.includes(status), { message: `One of: ${allowed.join(', ')}` })
@@ -64,6 +68,8 @@ export const EXPENSE_SCHEMAS = {
     ...expense,
     ...paymentPeriod,
     period: z.enum(SubscriptionPeriod),
+    kind: z.enum(SubscriptionKind).optional(),
+    supplyNumber,
     paymentMethodId: id.nullable().optional(),
     paymentStatus: statusOf(SUBSCRIPTION_STATUSES).optional(),
     paymentDate: date.nullable().optional(),
@@ -79,6 +85,9 @@ export const EXPENSE_SCHEMAS = {
   [ExpenseResource.RECURRING]: z.object({
     ...money,
     targetType: z.enum(RecurringTargetType),
+    kind: z.enum(SubscriptionKind).optional(),
+    period: z.enum(SubscriptionPeriod).optional(),
+    supplyNumber,
     expenseType: z.enum(ExpenseType).optional(),
     categoryId: id.nullable().optional(),
     paymentMethodId: id.nullable().optional(),
@@ -92,6 +101,10 @@ export const expenseListQuerySchema = z.object({
   year: z.coerce.number().int().min(2020).max(2100).optional(),
   personId: z.string().min(1).optional(),
   paymentMethodId: z.string().min(1).optional(),
+  kind: z
+    .enum(['platform', 'recurring'])
+    .optional()
+    .describe('Subscriptions only: platform = Plataformas, recurring = Recurrentes (D107)'),
 })
 
 // ==================== Responses (Swagger / kogane-app types) ====================
@@ -146,6 +159,8 @@ export const EXPENSE_RESPONSE_SCHEMAS = {
     ...expenseRecordFields,
     ...paidInMonth,
     period: z.enum(SubscriptionPeriod),
+    kind: z.enum(SubscriptionKind),
+    supplyNumber: z.string().nullable(),
     paymentMethodId: z.string().nullable(),
     paymentDate: nullableDate,
     dueDate: nullableDate,
@@ -160,6 +175,9 @@ export const EXPENSE_RESPONSE_SCHEMAS = {
   [ExpenseResource.RECURRING]: z.object({
     ...recordFields,
     targetType: z.enum(RecurringTargetType),
+    kind: z.enum(SubscriptionKind),
+    period: z.enum(SubscriptionPeriod),
+    supplyNumber: z.string().nullable(),
     paymentMethodId: z.string().nullable(),
     dayOfMonth: z.number().int(),
     isActive: z.boolean(),

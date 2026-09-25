@@ -1,8 +1,9 @@
 import { Injectable, Logger } from '@nestjs/common'
 
 import { PaymentMethodType } from '@/commons/constants/catalog.constant'
-import { Currency, PaymentStatus, RecurringTargetType, SubscriptionPeriod } from '@/commons/constants/expense.constant'
+import { Currency, PaymentStatus, RecurringTargetType } from '@/commons/constants/expense.constant'
 import { creditCardPaymentPeriod } from '@/commons/helpers/payment-period.helper'
+import { isDue } from '@/commons/helpers/recurring.helper'
 import {
   GeneratedRowDbDto,
   RecurringExpenseDBRepository,
@@ -27,7 +28,7 @@ export interface RecurringGeneration {
   skipped: {
     recurringId: string
     description: string
-    reason: 'already_generated' | 'missing_card' | 'missing_category'
+    reason: 'already_generated' | 'not_due' | 'missing_card' | 'missing_category'
   }[]
 }
 
@@ -48,6 +49,15 @@ export class RecurringExpensesService {
     const result: RecurringGeneration = { month, year, created: [], skipped: [] }
 
     for (const item of recurring) {
+      // Monthly ones fall through: the repository already refuses a month generated twice
+      if (
+        item.lastGeneratedAt &&
+        item.lastGeneratedAt < monthStart &&
+        !isDue(item.period, item.lastGeneratedAt, monthStart)
+      ) {
+        result.skipped.push({ recurringId: item.id, description: item.description, reason: 'not_due' })
+        continue
+      }
       const date = dayOf(year, month, item.dayOfMonth)
       const row = this.rowOf(item, date, month, year, defaultCategoryId)
       if ('reason' in row) {
@@ -115,7 +125,14 @@ export class RecurringExpensesService {
     if (targetType === RecurringTargetType.SUBSCRIPTION) {
       return {
         targetType,
-        data: { ...common, ...period, categoryId: item.categoryId, period: SubscriptionPeriod.MONTHLY },
+        data: {
+          ...common,
+          ...period,
+          categoryId: item.categoryId,
+          period: item.period,
+          kind: item.kind,
+          supplyNumber: item.supplyNumber,
+        },
       }
     }
 

@@ -2,6 +2,7 @@ import { Body, Controller, Delete, Get, HttpCode, HttpStatus, Param, Patch, Post
 import { ApiOkResponse, ApiOperation } from '@nestjs/swagger'
 
 import { ApiRest } from '@/commons/decorators/api-rest.decorator'
+import { PaymentMethodIncompleteException } from '@/commons/exceptions/catalog/payment-method-incomplete.exception'
 import { ResponseMessage } from '@/commons/decorators/response-message.decorator'
 import { BudgetGroupDBRepository } from '@/db/models/budget-group/budgetGroupDB.repository'
 import { CategoryDBRepository } from '@/db/models/category/categoryDB.repository'
@@ -28,6 +29,10 @@ import {
   UpdatePaymentMethodDto,
   UpdatePersonDto,
 } from './dto/request/catalogs.dto'
+import { missingCardFields } from './validations/catalogs.validation'
+
+// What a card needs to be saved (D97): an edit of one of these checks the whole card again
+const CARD_FIELDS = ['type', 'code', 'bank', 'billingCloseDay', 'paymentDueDay']
 
 // Catalogs for kogane-app (P7). The bot reads the same tables: changes apply to the AI prompt right away.
 
@@ -97,7 +102,13 @@ export class PaymentMethodsController {
   @Patch(':id')
   @ApiOkResponse({ type: PaymentMethodResponseDto })
   @ResponseMessage('PAYMENT_METHOD_UPDATED', 'Payment method updated')
-  update(@Param('id') id: string, @Body() body: UpdatePaymentMethodDto) {
+  async update(@Param('id') id: string, @Body() body: UpdatePaymentMethodDto) {
+    // Only when the change touches what a card needs (D97): cards made by the bot may lack their days until edited
+    if (CARD_FIELDS.some((field) => field in body)) {
+      const current = await this.paymentMethodDBRepository.findById(id)
+      const missing = current ? missingCardFields({ ...current, ...body }) : []
+      if (missing.length) throw new PaymentMethodIncompleteException({ missing })
+    }
     return this.paymentMethodDBRepository.update(id, body)
   }
 

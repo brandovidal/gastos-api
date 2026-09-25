@@ -14,6 +14,7 @@ export interface PaymentMethodSeed {
   aliases: string[]
   showInBot?: boolean
   isPrimary?: boolean
+  bank?: string // debit cards (D107)
   // credit cards only
   code?: string
   billingCloseDay?: number
@@ -65,8 +66,8 @@ export const PAYMENT_METHODS: PaymentMethodSeed[] = [
   { name: 'Yape', type: PaymentMethodType.WALLET, aliases: ['yape'] },
   { name: 'Plin', type: PaymentMethodType.WALLET, aliases: ['plin'] },
   { name: 'Efectivo', type: PaymentMethodType.CASH, aliases: ['efectivo', 'cash'] },
-  { name: 'Interbank', type: PaymentMethodType.DEBIT_CARD, aliases: ['interbank', 'ibk'] },
-  { name: 'BCP', type: PaymentMethodType.DEBIT_CARD, aliases: ['bcp'] },
+  { name: 'Interbank', type: PaymentMethodType.DEBIT_CARD, aliases: ['interbank', 'ibk'], bank: 'Interbank' },
+  { name: 'BCP', type: PaymentMethodType.DEBIT_CARD, aliases: ['bcp'], bank: 'BCP' },
   {
     name: 'CMR',
     type: PaymentMethodType.CREDIT_CARD,

@@ -5,6 +5,7 @@ import {
   ExpenseDestination,
   ExpenseType,
   INSTALLMENT_REGEX,
+  SubscriptionKind,
   SubscriptionPeriod,
 } from '@/commons/constants/expense.constant'
 import { dateTimeSchema } from '@/commons/helpers/api-response.helper'
@@ -28,6 +29,9 @@ export const draftFieldsSchema = z.object({
   expenseType: z.enum(ExpenseType).nullable().optional(),
   installment: z.string().regex(INSTALLMENT_REGEX, 'Use n/m, e.g. 1/3').nullable().optional(),
   period: z.enum(SubscriptionPeriod).nullable().optional(),
+  // Subscriptions: "Nuevo" of Recurrentes sends service; empty is a platform (D107)
+  kind: z.enum(SubscriptionKind).nullable().optional(),
+  supplyNumber: z.string().trim().max(40).nullable().optional(),
   personId: id.nullable().optional(),
   paymentMethodId: id.nullable().optional(),
   categoryId: id.nullable().optional(),
@@ -86,6 +90,8 @@ export const draftResponseSchema = z.object({
   expenseType: nullableString,
   installment: nullableString,
   period: nullableString,
+  kind: nullableString.describe('Subscriptions: platform when empty (D107)'),
+  supplyNumber: nullableString,
   merchant: nullableString,
   operationNumber: nullableString,
   notes: nullableString,

@@ -41,6 +41,8 @@ export const buildExpenseDraft = (overrides: Partial<ExpenseDraftDbDto> = {}): E
   expenseType: ExpenseType.ESSENTIAL,
   installment: null,
   period: null,
+  kind: null,
+  supplyNumber: null,
   merchant: null,
   operationNumber: null,
   notes: null,

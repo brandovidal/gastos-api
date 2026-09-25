@@ -47,6 +47,7 @@ model PaymentMethod {
   name            String   @unique
   type            String // PaymentMethodType
   code            String?  @unique // short code of credit cards (CMR, OH, IO, AMEX)
+  bank            String? // debit cards require it (D107)
   aliases         String   @default("[]") // JSON array of lowercase aliases used by the AI
   isActive        Boolean  @default(true)
   showInBot       Boolean  @default(true) // offered as a quick reply button in the bot
@@ -136,6 +137,17 @@ model MonthlyBudget {
   @@map("bud_monthly_budgets")
 }
 
+// What counts in the budget besides fixed costs, cards and day to day (D96, D107): one row until P23 adds userId.
+// Subscriptions paid with a credit card never count here: the card charge already does (D46).
+model BudgetSetting {
+  id             String   @id @default("default")
+  recurringCount Boolean  @default(true) // Recurrentes (service, annual, other) add to the budget
+  platformsCount Boolean  @default(false) // Plataformas add to the budget
+  updatedAt      DateTime @updatedAt
+
+  @@map("bud_settings")
+}
+
 // Extra incomes of a month (P19, D65): the salary stays in bud_monthly_budgets; surplus = salary + extras − expenses
 model Income {
   id          String   @id @default(cuid())
@@ -183,6 +195,8 @@ model ExpenseDraft {
   expenseType     String?
   installment     String?
   period          String?
+  kind            String? // SubscriptionKind of a subscription; null = platform (D107)
+  supplyNumber    String?
   merchant        String?
   operationNumber String?
   notes           String?
@@ -324,6 +338,8 @@ model Subscription {
   expenseType     String         @default("essential")
   paymentStatus   String         @default("not_started")
   period          String // SubscriptionPeriod
+  kind            String         @default("platform") // SubscriptionKind: Plataformas shows platform, Recurrentes the rest (D107)
+  supplyNumber    String? // N.º de suministro of a service (Bitel, Enel)
   personId        String
   person          Person         @relation(fields: [personId], references: [id])
   categoryId      String?
@@ -344,6 +360,7 @@ model Subscription {
 
   @@index([paymentMonth, paymentYear])
   @@index([personId])
+  @@index([kind])
   @@map("exp_subscriptions")
 }
 
@@ -444,6 +461,9 @@ model RecurringExpense {
   amount          Float
   currency        String         @default("PEN")
   targetType      String // RecurringTargetType
+  kind            String         @default("platform") // SubscriptionKind of the rows it generates (D107)
+  period          String         @default("monthly") // SubscriptionPeriod
+  supplyNumber    String?
   expenseType     String         @default("essential")
   personId        String
   person          Person         @relation(fields: [personId], references: [id])

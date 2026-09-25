@@ -12,6 +12,7 @@ import { MONTH_NAMES } from '@/modules/conversation/conversation.messages'
 import { buildExtractionCatalog, normalizeText } from '@/modules/expense-extraction/expense-extraction.catalog'
 import { PersonDbDto } from '@/db/models/person/personDB.dto'
 import { PaymentMethodDbDto } from '@/db/models/payment-method/paymentMethodDB.dto'
+import { convertRow, MovableTable } from '@/commons/helpers/expense-move.helper'
 
 import { parseCsv } from './notion-csv'
 import {
@@ -62,6 +63,7 @@ export type PlannedExpense = ExpenseImport & {
   importKey: string
   status: ImportRowStatus.NEW | ImportRowStatus.CHANGED | ImportRowStatus.UNCHANGED
   targetId: string | null // the Kogane row it updates, or the id it will be created with
+  currentTable?: ImportTable // where that row lives now, when "Pasar a…" moved it (D106)
   base: NotionBase
   destination: string // "Tarjetas ▸ IO · Setiembre 2026"
   raw: string
@@ -277,6 +279,7 @@ export class NotionImporter {
         targetId: null as string | null,
         previewStatus: row.status,
         previewTargetId: row.targetId,
+        currentTable: undefined as ImportTable | undefined,
       }))
     await this.compare(expenses)
 
@@ -311,7 +314,12 @@ export class NotionImporter {
 
     // Rows that changed in Notion, one by one (few after the first import)
     for (const expense of pending.filter((candidate) => candidate.status === ImportRowStatus.CHANGED)) {
-      await this.delegate(expense.table).update({ where: { id: expense.targetId }, data: expense.data })
+      const table = expense.currentTable ?? expense.table
+      const data =
+        table === expense.table
+          ? expense.data
+          : convertRow(expense.data, expense.table as MovableTable, table as MovableTable)
+      await this.delegate(table).update({ where: { id: expense.targetId }, data })
       if (expense.paidAt && (await this.payOnce(expense.targetId!, expense.paidAt))) result.payments++
       result.updated++
       onProgress?.(++done, pending.length)
@@ -395,9 +403,16 @@ export class NotionImporter {
     return deleted
   }
 
-  // new: not in Kogane · unchanged: same CSV row as the last applied import · changed: in Kogane with another row
+  // new: not in Kogane · unchanged: same CSV row as the last applied import · changed: in Kogane with another row.
+  // currentTable: where the row lives now, which differs from the Notion board after "Pasar a…" (D106)
   private async compare(
-    expenses: { importKey: string; raw: string; status: PlannedExpense['status']; targetId: string | null }[],
+    expenses: {
+      importKey: string
+      raw: string
+      status: PlannedExpense['status']
+      targetId: string | null
+      currentTable?: ImportTable
+    }[],
   ) {
     const lastApplied = new Map<string, string>()
     const applied = await this.prisma.importRow.findMany({
@@ -406,16 +421,18 @@ export class NotionImporter {
       orderBy: { batch: { appliedAt: 'asc' } },
     })
     applied.forEach((row) => row.importKey && lastApplied.set(row.importKey, row.raw))
-    const existing = new Map<string, string>()
+    const existing = new Map<string, { id: string; table: ImportTable }>()
     for (const table of TABLES) {
       const rows = await this.delegate(table).findMany({
         where: { importKey: { not: null } },
         select: { id: true, importKey: true },
       })
-      rows.forEach((row) => existing.set(row.importKey!, row.id))
+      rows.forEach((row) => existing.set(row.importKey!, { id: row.id, table }))
     }
     for (const expense of expenses) {
-      expense.targetId = existing.get(expense.importKey) ?? null
+      const found = existing.get(expense.importKey)
+      expense.targetId = found?.id ?? null
+      expense.currentTable = found?.table
       expense.status = !expense.targetId
         ? ImportRowStatus.NEW
         : lastApplied.get(expense.importKey) === expense.raw

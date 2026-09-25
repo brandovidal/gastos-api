@@ -30,7 +30,25 @@ export const paymentMethodSchema = z.object({
   // credit cards: the closing day decides the billing month (D22)
   billingCloseDay: day.nullable().optional(),
   paymentDueDay: day.nullable().optional(),
+  bank: z.string().trim().min(1).max(40).nullable().optional(),
   color: z.string().trim().max(20).nullable().optional(),
+})
+
+// What a card needs to be saved from the web (D97): a credit card its code and billing days, a debit card its bank
+type CardFields = Partial<Record<'type' | 'code' | 'bank' | 'billingCloseDay' | 'paymentDueDay', unknown>>
+export const CARD_REQUIRED_FIELDS: Partial<Record<PaymentMethodType, (keyof CardFields)[]>> = {
+  [PaymentMethodType.CREDIT_CARD]: ['code', 'billingCloseDay', 'paymentDueDay'],
+  [PaymentMethodType.DEBIT_CARD]: ['bank'],
+}
+export const missingCardFields = (card: CardFields): string[] =>
+  (CARD_REQUIRED_FIELDS[card.type as PaymentMethodType] ?? []).filter(
+    (field) => card[field] == null || card[field] === '',
+  )
+
+export const createPaymentMethodSchema = paymentMethodSchema.superRefine((card, context) => {
+  for (const field of missingCardFields(card)) {
+    context.addIssue({ code: 'custom', path: [field], message: `Required for a ${card.type}` })
+  }
 })
 
 export const categorySchema = z.object({
@@ -71,6 +89,7 @@ export const paymentMethodResponseSchema = z.object({
   showInBot: z.boolean(),
   billingCloseDay: z.number().int().nullable(),
   paymentDueDay: z.number().int().nullable(),
+  bank: z.string().nullable(),
   color: z.string().nullable(),
 })
 

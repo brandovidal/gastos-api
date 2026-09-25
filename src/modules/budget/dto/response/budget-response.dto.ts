@@ -3,6 +3,7 @@ import { z } from 'zod'
 import { responseDto } from '@/commons/helpers/api-response.helper'
 
 import {
+  budgetSettingsSchema,
   categoryBudgetLineSchema,
   categoryBudgetResponseSchema,
   incomeResponseSchema,
@@ -12,3 +13,4 @@ export class IncomeResponseDto extends responseDto(incomeResponseSchema) {}
 export class IncomeListResponseDto extends responseDto(z.array(incomeResponseSchema)) {}
 export class CategoryBudgetResponseDto extends responseDto(categoryBudgetResponseSchema) {}
 export class CategoryBudgetLineListResponseDto extends responseDto(z.array(categoryBudgetLineSchema)) {}
+export class BudgetSettingsResponseDto extends responseDto(budgetSettingsSchema) {}

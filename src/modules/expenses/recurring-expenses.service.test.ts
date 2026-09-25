@@ -15,6 +15,9 @@ const recurring = (overrides: Record<string, unknown>) => ({
   amount: 1200,
   currency: 'PEN',
   targetType: RecurringTargetType.FIXED_COST,
+  kind: 'platform',
+  period: SubscriptionPeriod.MONTHLY,
+  supplyNumber: null,
   expenseType: 'essential',
   personId: 'me',
   categoryId: 'home',
@@ -62,6 +65,43 @@ describe('RecurringExpensesService', () => {
       }),
     })
     expect(result.created).toEqual([expect.objectContaining({ id: 'row-rec', date: '2026-10-05' })])
+  })
+
+  it('should give a service its kind, period and supply number (D107)', async () => {
+    mockRecurringDB.findActive.mockResolvedValue([
+      recurring({
+        id: 'bitel',
+        description: 'Bitel Papa',
+        targetType: RecurringTargetType.SUBSCRIPTION,
+        kind: 'service',
+        supplyNumber: '987654321',
+      }),
+    ])
+
+    await service.generate(9, 2026)
+
+    expect(mockRecurringDB.generate.mock.calls[0][2].data).toEqual(
+      expect.objectContaining({ kind: 'service', supplyNumber: '987654321', period: SubscriptionPeriod.MONTHLY }),
+    )
+  })
+
+  it('should generate an annual template again only 12 months after the last time (D107)', async () => {
+    const domain = (lastGeneratedAt: string) =>
+      recurring({
+        id: 'domain',
+        targetType: RecurringTargetType.SUBSCRIPTION,
+        kind: 'annual',
+        period: SubscriptionPeriod.ANNUAL,
+        lastGeneratedAt: new Date(lastGeneratedAt),
+      })
+
+    mockRecurringDB.findActive.mockResolvedValue([domain('2026-01-01T00:00:00.000Z')])
+    const early = await service.generate(9, 2026)
+    mockRecurringDB.findActive.mockResolvedValue([domain('2025-09-01T00:00:00.000Z')])
+    await service.generate(9, 2026)
+
+    expect(early.skipped).toEqual([expect.objectContaining({ recurringId: 'domain', reason: 'not_due' })])
+    expect(mockRecurringDB.generate).toHaveBeenCalledTimes(1)
   })
 
   it('should put a monthly subscription and a card charge in its statement', async () => {

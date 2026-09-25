@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common'
 
 import { PrismaService } from '@/db/prisma/prisma.service'
+import { PaymentMethodType } from '@/commons/constants/catalog.constant'
 import { DebtDirection, OPEN_DEBT_STATUSES } from '@/commons/constants/debt.constant'
 import { Currency, ExpenseDestination } from '@/commons/constants/expense.constant'
 import { ExpenseDraftStatus } from '@/commons/constants/expense-draft.constant'
@@ -71,11 +72,28 @@ export class ExpenseDBRepository {
   // PEN spent per category in a month (P19), your part of shared expenses only (D73): day to day by date, fixed costs and cards by payment month. Subscriptions
   // are left out: their charge is already a card expense (D46). categoryId null: expenses without category.
   // With personId, only that person's expenses (the budget counts only yours, D71)
-  async findSpentByCategory(month: number, year: number, personId?: string): Promise<CategorySpentDbDto[]> {
+  // Subscriptions add only the kinds switched on in bud_settings and never when paid with a credit card: the card
+  // charge already counts (D46, D96, D107)
+  async findSpentByCategory(
+    month: number,
+    year: number,
+    personId?: string,
+    subscriptionKinds: string[] = [],
+  ): Promise<CategorySpentDbDto[]> {
     const person = personId ? { personId } : {}
     const period = { paymentMonth: month, paymentYear: year, currency: Currency.PEN, ...person }
     const aggregate = { by: ['categoryId'] as ['categoryId'], _sum: { amount: true, othersShare: true } } as const
-    const [daily, fixedCosts, creditCards] = await Promise.all([
+    const subscriptions = subscriptionKinds.length
+      ? this.prisma.subscription.groupBy({
+          ...aggregate,
+          where: {
+            ...period,
+            kind: { in: subscriptionKinds },
+            OR: [{ paymentMethodId: null }, { paymentMethod: { type: { not: PaymentMethodType.CREDIT_CARD } } }],
+          },
+        })
+      : Promise.resolve([])
+    const [daily, fixedCosts, creditCards, counted] = await Promise.all([
       this.prisma.dailyExpense.groupBy({
         ...aggregate,
         where: {
@@ -86,10 +104,11 @@ export class ExpenseDBRepository {
       }),
       this.prisma.fixedCost.groupBy({ ...aggregate, where: period }),
       this.prisma.creditCardExpense.groupBy({ ...aggregate, where: period }),
+      subscriptions,
     ])
 
     const totals = new Map<string | null, number>()
-    for (const row of [...daily, ...fixedCosts, ...creditCards]) {
+    for (const row of [...daily, ...fixedCosts, ...creditCards, ...counted]) {
       // Your part (D73): what others owe of a shared expense is not your spending
       const own = (row._sum.amount ?? 0) - (row._sum.othersShare ?? 0)
       totals.set(row.categoryId, (totals.get(row.categoryId) ?? 0) + own)

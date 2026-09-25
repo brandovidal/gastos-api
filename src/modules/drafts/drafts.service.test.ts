@@ -1,7 +1,7 @@
 import { Test, TestingModule } from '@nestjs/testing'
 import { vi } from 'vitest'
 
-import { ExpenseDestination } from '@/commons/constants/expense.constant'
+import { ExpenseDestination, SubscriptionKind } from '@/commons/constants/expense.constant'
 import { ExpenseDraftStatus } from '@/commons/constants/expense-draft.constant'
 import { ExpenseDraftNotFoundException } from '@/commons/exceptions/expense-draft/expense-draft-not-found.exception'
 import { ExpenseDraftDBRepository } from '@/db/models/expense-draft/expenseDraftDB.repository'
@@ -107,6 +107,24 @@ describe('DraftsService', () => {
 
     await service.update('draft-1', { amount: 30 })
     expect(mockExpenseDraftDB.update.mock.lastCall?.[1]).not.toHaveProperty('sharedWith')
+  })
+
+  it('should keep the kind and supply number of a new Recurrente, which the AI fields do not carry (D107)', async () => {
+    await service.create({
+      destination: ExpenseDestination.SUBSCRIPTION,
+      description: 'Bitel Papa',
+      amount: 29.9,
+      kind: SubscriptionKind.SERVICE,
+      supplyNumber: '987654321',
+    })
+    expect(mockExpenseDraftDB.update).toHaveBeenLastCalledWith(
+      expect.any(String),
+      expect.objectContaining({ kind: SubscriptionKind.SERVICE, supplyNumber: '987654321' }),
+    )
+
+    mockExpenseDraftDB.findById.mockResolvedValue(buildExpenseDraft({ kind: SubscriptionKind.SERVICE }))
+    await service.update('draft-1', { amount: 30 })
+    expect(mockExpenseDraftDB.update.mock.lastCall?.[1]).not.toHaveProperty('kind')
   })
 
   it('should save through ExpenseSaverService like the bot', async () => {

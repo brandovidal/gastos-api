@@ -69,6 +69,20 @@ export enum SubscriptionPeriod {
   ANNUAL = 'annual',
 }
 
+// What an exp_subscriptions row is (D107): Plataformas shows platform, Recurrentes the rest
+export enum SubscriptionKind {
+  PLATFORM = 'platform', // Netflix, HBO, Spotify
+  SERVICE = 'service', // Bitel, Enel, internet: has a supply number
+  ANNUAL = 'annual', // a domain, a yearly membership
+  OTHER = 'other',
+}
+
+export const RECURRING_KINDS: readonly string[] = [
+  SubscriptionKind.SERVICE,
+  SubscriptionKind.ANNUAL,
+  SubscriptionKind.OTHER,
+]
+
 export enum RecurringTargetType {
   FIXED_COST = 'fixed_cost',
   SUBSCRIPTION = 'subscription',

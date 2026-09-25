@@ -27,11 +27,18 @@ export class ExpensesService {
   }
 
   create(resource: ExpenseResource, body: unknown) {
-    return this.expenseRecordDBRepository.create(resource, this.withAmountInPen(this.parse(resource, body, false)))
+    return this.expenseRecordDBRepository.create(
+      resource,
+      this.withAmountInPen(resource, this.parse(resource, body, false)),
+    )
   }
 
   update(resource: ExpenseResource, id: string, body: unknown) {
-    return this.expenseRecordDBRepository.update(resource, id, this.withAmountInPen(this.parse(resource, body, true)))
+    return this.expenseRecordDBRepository.update(
+      resource,
+      id,
+      this.withAmountInPen(resource, this.parse(resource, body, true)),
+    )
   }
 
   async delete(resource: ExpenseResource, id: string): Promise<void> {
@@ -51,7 +58,9 @@ export class ExpensesService {
     return parsed.data as Record<string, unknown>
   }
 
-  private withAmountInPen(data: Record<string, unknown>) {
+  // Recurring templates have no amountInPen: only the rows they generate do
+  private withAmountInPen(resource: ExpenseResource, data: Record<string, unknown>) {
+    if (resource === ExpenseResource.RECURRING) return data
     if (data.currency === Currency.PEN && typeof data.amount === 'number') return { ...data, amountInPen: data.amount }
     return data
   }

@@ -4,6 +4,10 @@ import { BudgetStatus, DEFAULT_ALERT_THRESHOLD } from '@/commons/constants/budge
 import { Currency } from '@/commons/constants/expense.constant'
 import { addMonths, PaymentPeriod } from '@/commons/helpers/payment-period.helper'
 import { BudgetGroupDBRepository } from '@/db/models/budget-group/budgetGroupDB.repository'
+import {
+  BudgetSettingDBRepository,
+  countedSubscriptionKinds,
+} from '@/db/models/budget-setting/budgetSettingDB.repository'
 import { CategoryBudgetDBRepository } from '@/db/models/category-budget/categoryBudgetDB.repository'
 import { CategoryDBRepository } from '@/db/models/category/categoryDB.repository'
 import { ExpenseDBRepository } from '@/db/models/expense/expenseDB.repository'
@@ -55,6 +59,7 @@ export class BudgetService {
     private readonly categoryDBRepository: CategoryDBRepository,
     private readonly budgetGroupDBRepository: BudgetGroupDBRepository,
     private readonly personDBRepository: PersonDBRepository,
+    private readonly budgetSettingDBRepository: BudgetSettingDBRepository,
   ) {}
 
   async month(month: number, year: number) {
@@ -101,9 +106,12 @@ export class BudgetService {
 
   // Every category with spending or a limit, biggest spending first; "Sin categoría" when something has none
   async byCategory(month: number, year: number): Promise<CategoryBudgetLine[]> {
-    const owner = await this.personDBRepository.findDefault()
+    const [owner, settings] = await Promise.all([
+      this.personDBRepository.findDefault(),
+      this.budgetSettingDBRepository.get(),
+    ])
     const [spent, limits, categories] = await Promise.all([
-      this.expenseDBRepository.findSpentByCategory(month, year, owner?.id),
+      this.expenseDBRepository.findSpentByCategory(month, year, owner?.id, countedSubscriptionKinds(settings)),
       this.categoryBudgetDBRepository.findEffective(month, year),
       this.categoryDBRepository.findAll(),
     ])

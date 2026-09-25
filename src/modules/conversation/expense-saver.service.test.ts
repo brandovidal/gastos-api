@@ -7,6 +7,10 @@ import { DebtDirection } from '@/commons/constants/debt.constant'
 import { ExpenseDestination, PaymentStatus, SubscriptionPeriod } from '@/commons/constants/expense.constant'
 import { ExpenseField } from '@/commons/constants/expense-extraction.constant'
 import { ExpenseNotSaveableException } from '@/commons/exceptions/conversation/expense-not-saveable.exception'
+import {
+  BudgetSettingDBRepository,
+  DEFAULT_BUDGET_SETTINGS,
+} from '@/db/models/budget-setting/budgetSettingDB.repository'
 import { ExpenseDBRepository } from '@/db/models/expense/expenseDB.repository'
 import { PaymentMethodDBRepository } from '@/db/models/payment-method/paymentMethodDB.repository'
 import { StoredFilesService } from '@/modules/stored-files/stored-files.service'
@@ -17,6 +21,7 @@ import { buildExpenseDraft, FILE_ID } from './mocks/conversation.mock'
 const mockExpenseDBRepository = { saveFromExpenseDraft: vi.fn() }
 const mockPaymentMethodDBRepository = { findById: vi.fn() }
 const mockStoredFilesService = { keep: vi.fn() }
+const mockBudgetSettingDBRepository = { get: vi.fn() }
 
 describe('ExpenseSaverService', () => {
   let service: ExpenseSaverService
@@ -28,11 +33,13 @@ describe('ExpenseSaverService', () => {
         { provide: ExpenseDBRepository, useValue: mockExpenseDBRepository },
         { provide: PaymentMethodDBRepository, useValue: mockPaymentMethodDBRepository },
         { provide: StoredFilesService, useValue: mockStoredFilesService },
+        { provide: BudgetSettingDBRepository, useValue: mockBudgetSettingDBRepository },
       ],
     }).compile()
 
     service = module.get<ExpenseSaverService>(ExpenseSaverService)
     mockExpenseDBRepository.saveFromExpenseDraft.mockResolvedValue({ id: 'expense-1' })
+    mockBudgetSettingDBRepository.get.mockResolvedValue(DEFAULT_BUDGET_SETTINGS)
   })
 
   afterEach(() => {
@@ -134,7 +141,21 @@ describe('ExpenseSaverService', () => {
     await service.save(
       buildExpenseDraft({ destination: ExpenseDestination.SUBSCRIPTION, period: SubscriptionPeriod.MONTHLY }),
     )
-    expect(savedInput().data).toMatchObject({ period: SubscriptionPeriod.MONTHLY, paymentMonth: 9 })
+    // Without a kind it is a platform (the bot); a web draft of Recurrentes brings its own (D107)
+    expect(savedInput().data).toMatchObject({ period: SubscriptionPeriod.MONTHLY, paymentMonth: 9, kind: 'platform' })
+
+    vi.clearAllMocks()
+    mockExpenseDBRepository.saveFromExpenseDraft.mockResolvedValue({ id: 'expense-3' })
+    mockBudgetSettingDBRepository.get.mockResolvedValue(DEFAULT_BUDGET_SETTINGS)
+    await service.save(
+      buildExpenseDraft({
+        destination: ExpenseDestination.SUBSCRIPTION,
+        period: SubscriptionPeriod.MONTHLY,
+        kind: 'service',
+        supplyNumber: '987654321',
+      }),
+    )
+    expect(savedInput().data).toMatchObject({ kind: 'service', supplyNumber: '987654321' })
 
     vi.clearAllMocks()
     mockExpenseDBRepository.saveFromExpenseDraft.mockResolvedValue({ id: 'expense-2' })
@@ -433,6 +454,19 @@ describe('ExpenseSaverService', () => {
       const dollars = await service.save(buildExpenseDraft({ destination: ExpenseDestination.DAILY, currency: 'USD' }))
 
       expect([subscription.budget, debt.budget, dollars.budget]).toEqual([null, null, null])
+    })
+
+    it('should count a platform when Plataformas suman is on and no credit card paid it (D96, D107)', async () => {
+      mockBudgetSettingDBRepository.get.mockResolvedValue({ recurringCount: true, platformsCount: true })
+      const draft = { destination: ExpenseDestination.SUBSCRIPTION, period: SubscriptionPeriod.MONTHLY, amount: 30 }
+
+      mockPaymentMethodDBRepository.findById.mockResolvedValueOnce({ type: PaymentMethodType.DEBIT_CARD })
+      const byDebit = await service.save(buildExpenseDraft(draft))
+      mockPaymentMethodDBRepository.findById.mockResolvedValueOnce({ type: PaymentMethodType.CREDIT_CARD })
+      const byCard = await service.save(buildExpenseDraft(draft))
+
+      expect(byDebit.budget).toEqual(expect.objectContaining({ amount: 30 }))
+      expect(byCard.budget).toBeNull()
     })
   })
 })

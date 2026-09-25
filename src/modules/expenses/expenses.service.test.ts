@@ -87,6 +87,25 @@ describe('ExpensesService', () => {
       )
     })
 
+    it('should not give a recurring template amountInPen: the table has no such column', async () => {
+      const template = {
+        description: 'bono 1',
+        amount: 10,
+        currency: 'PEN',
+        personId: 'person-1',
+        targetType: 'fixed_cost',
+        dayOfMonth: 1,
+      }
+      await service.create(ExpenseResource.RECURRING, template)
+      await service.update(ExpenseResource.RECURRING, 'rec-1', { amount: 12, currency: 'PEN' })
+
+      expect(mockExpenseRecordDB.create.mock.calls[0][1]).not.toHaveProperty('amountInPen')
+      expect(mockExpenseRecordDB.update).toHaveBeenCalledWith(ExpenseResource.RECURRING, 'rec-1', {
+        amount: 12,
+        currency: 'PEN',
+      })
+    })
+
     it('should reject a body that does not fit the table', () => {
       expect(() => service.create(ExpenseResource.DAILY, { ...daily, amount: -5 })).toThrow(ZodValidationException)
       expect(mockExpenseRecordDB.create).not.toHaveBeenCalled()

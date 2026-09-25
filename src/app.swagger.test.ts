@@ -12,9 +12,11 @@ import {
 } from '@/modules/catalogs/catalogs.controller'
 import { DebtsController } from '@/modules/debts/debts.controller'
 import { DraftsController } from '@/modules/drafts/drafts.controller'
+import { ExpenseMovesController } from '@/modules/expenses/expense-moves.controller'
 import { ExpensesController } from '@/modules/expenses/expenses.controller'
 import { MessagesController } from '@/modules/messages/messages.controller'
 import { SummaryController } from '@/modules/summary/summary.controller'
+import { BudgetSettingsController } from '@/modules/budget/budget-settings.controller'
 import { CategoryBudgetsController } from '@/modules/budget/category-budgets.controller'
 import { IncomesController } from '@/modules/budget/incomes.controller'
 import { ReportsController } from '@/modules/reports/reports.controller'
@@ -34,12 +36,14 @@ describe('Swagger of the REST API for kogane-app', () => {
         CategoriesController,
         BudgetGroupsController,
         ExpensesController,
+        ExpenseMovesController,
         DraftsController,
         MessagesController,
         SummaryController,
         DebtsController,
         IncomesController,
         CategoryBudgetsController,
+        BudgetSettingsController,
         ReportsController,
       ],
     })

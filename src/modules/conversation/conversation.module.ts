@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common'
 
+import { BudgetSettingDBModule } from '@/db/models/budget-setting/budgetSettingDB.module'
 import { ExpenseDraftDBModule } from '@/db/models/expense-draft/expenseDraftDB.module'
 import { ExpenseDBModule } from '@/db/models/expense/expenseDB.module'
 import { PaymentMethodDBModule } from '@/db/models/payment-method/paymentMethodDB.module'
@@ -17,6 +18,7 @@ import { MediaDownloaderRegistry } from './media-downloader.registry'
 
 @Module({
   imports: [
+    BudgetSettingDBModule,
     ExpenseDraftDBModule,
     ExpenseDBModule,
     PaymentMethodDBModule,

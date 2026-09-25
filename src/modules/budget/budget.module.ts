@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common'
 
 import { BudgetGroupDBModule } from '@/db/models/budget-group/budgetGroupDB.module'
+import { BudgetSettingDBModule } from '@/db/models/budget-setting/budgetSettingDB.module'
 import { CategoryBudgetDBModule } from '@/db/models/category-budget/categoryBudgetDB.module'
 import { CategoryDBModule } from '@/db/models/category/categoryDB.module'
 import { ExpenseDBModule } from '@/db/models/expense/expenseDB.module'
@@ -8,6 +9,7 @@ import { IncomeDBModule } from '@/db/models/income/incomeDB.module'
 import { MonthlyBudgetDBModule } from '@/db/models/monthly-budget/monthlyBudgetDB.module'
 import { PersonDBModule } from '@/db/models/person/personDB.module'
 
+import { BudgetSettingsController } from './budget-settings.controller'
 import { BudgetService } from './budget.service'
 import { CategoryBudgetsController } from './category-budgets.controller'
 import { IncomesController } from './incomes.controller'
@@ -16,6 +18,7 @@ import { IncomesService } from './incomes.service'
 // Presupuesto (P19): extra incomes, limits per category and the month's budget used by /v1/summary and the bot
 @Module({
   imports: [
+    BudgetSettingDBModule,
     ExpenseDBModule,
     MonthlyBudgetDBModule,
     IncomeDBModule,
@@ -24,7 +27,7 @@ import { IncomesService } from './incomes.service'
     BudgetGroupDBModule,
     PersonDBModule,
   ],
-  controllers: [IncomesController, CategoryBudgetsController],
+  controllers: [IncomesController, CategoryBudgetsController, BudgetSettingsController],
   providers: [BudgetService, IncomesService],
   exports: [BudgetService],
 })

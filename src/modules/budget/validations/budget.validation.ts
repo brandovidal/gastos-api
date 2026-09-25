@@ -80,3 +80,13 @@ export const categoryBudgetLineSchema = z.object({
   percent: z.number().nullable(),
   status: z.enum(BudgetStatus).nullable().describe('null without limit'),
 })
+
+// Configuración ▸ Presupuesto (D96, D107): what adds to the budget besides fixed costs, cards and day to day
+export const budgetSettingsSchema = z.object({
+  recurringCount: z
+    .boolean()
+    .describe('Recurrentes (service, annual, other) add to the budget unless paid with a credit card'),
+  platformsCount: z.boolean().describe('Plataformas add to the budget unless paid with a credit card'),
+})
+
+export const updateBudgetSettingsSchema = budgetSettingsSchema.partial()

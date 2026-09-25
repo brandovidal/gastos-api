@@ -42,6 +42,7 @@ describe('Prisma schema (integration)', () => {
       'bud_category_budgets',
       'bud_incomes',
       'bud_monthly_budgets',
+      'bud_settings',
       'cat_categories',
       'cat_payment_methods',
       'cat_people',

@@ -31,7 +31,7 @@ export const recurringGenerationResponseSchema = z.object({
     z.object({
       recurringId: z.string(),
       description: z.string(),
-      reason: z.enum(['already_generated', 'missing_card', 'missing_category']),
+      reason: z.enum(['already_generated', 'not_due', 'missing_card', 'missing_category']),
     }),
   ),
 })

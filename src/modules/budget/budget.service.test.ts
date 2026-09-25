@@ -2,6 +2,10 @@ import { Test, TestingModule } from '@nestjs/testing'
 import { vi } from 'vitest'
 
 import { BudgetStatus } from '@/commons/constants/budget.constant'
+import {
+  BudgetSettingDBRepository,
+  DEFAULT_BUDGET_SETTINGS,
+} from '@/db/models/budget-setting/budgetSettingDB.repository'
 import { BudgetGroupDBRepository } from '@/db/models/budget-group/budgetGroupDB.repository'
 import { CategoryBudgetDBRepository } from '@/db/models/category-budget/categoryBudgetDB.repository'
 import { CategoryDBRepository } from '@/db/models/category/categoryDB.repository'
@@ -19,6 +23,7 @@ const mockCategoryBudgetDB = { findEffective: vi.fn() }
 const mockCategoryDB = { findAll: vi.fn() }
 const mockBudgetGroupDB = { findAll: vi.fn() }
 const mockPersonDB = { findDefault: vi.fn() }
+const mockBudgetSettingDB = { get: vi.fn() }
 
 const category = (id: string, name: string, budgetGroupId: string | null = null) => ({
   id,
@@ -42,11 +47,13 @@ describe('BudgetService', () => {
         { provide: CategoryDBRepository, useValue: mockCategoryDB },
         { provide: BudgetGroupDBRepository, useValue: mockBudgetGroupDB },
         { provide: PersonDBRepository, useValue: mockPersonDB },
+        { provide: BudgetSettingDBRepository, useValue: mockBudgetSettingDB },
       ],
     }).compile()
     service = module.get(BudgetService)
 
     mockPersonDB.findDefault.mockResolvedValue({ id: 'person-brando', name: 'Brando' })
+    mockBudgetSettingDB.get.mockResolvedValue(DEFAULT_BUDGET_SETTINGS)
     mockCategoryDB.findAll.mockResolvedValue([
       category('food', 'Comida', 'group-basic'),
       category('fun', 'Entretenimiento'),
@@ -74,7 +81,11 @@ describe('BudgetService', () => {
     const lines = await service.byCategory(9, 2026)
 
     // only the expenses of the default person count (D71)
-    expect(mockExpenseDB.findSpentByCategory).toHaveBeenCalledWith(9, 2026, 'person-brando')
+    expect(mockExpenseDB.findSpentByCategory).toHaveBeenCalledWith(9, 2026, 'person-brando', [
+      'service',
+      'annual',
+      'other',
+    ])
     expect(lines.map((line) => [line.name, line.spent, line.limit, line.percent, line.status])).toEqual([
       ['Comida', 425, 500, 85, BudgetStatus.WARNING],
       ['Entretenimiento', 100, null, null, null],

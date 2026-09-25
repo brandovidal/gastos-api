@@ -7,6 +7,7 @@ import { NotificationRefType, UNPAID_STATUSES } from '@/commons/constants/notifi
 import { AppException } from '@/commons/exceptions/app.exception'
 import { DateHelper } from '@/commons/helpers/date.helper'
 import { addMonths, comparePeriods, PaymentPeriod } from '@/commons/helpers/payment-period.helper'
+import { isDue } from '@/commons/helpers/recurring.helper'
 import { CalendarDBRepository } from '@/db/models/calendar/calendarDB.repository'
 import { StatementDBRepository } from '@/db/models/statement/statementDB.repository'
 import { DebtsService } from '@/modules/debts/debts.service'
@@ -180,7 +181,14 @@ export class CalendarService {
       periodsBetween(from, to)
         .filter((period) => comparePeriods(period, current) >= 0)
         .filter(
-          (period) => !item.lastGeneratedAt || comparePeriods(periodOf(isoDate(item.lastGeneratedAt)), period) < 0,
+          (period) =>
+            !item.lastGeneratedAt ||
+            (comparePeriods(periodOf(isoDate(item.lastGeneratedAt)), period) < 0 &&
+              isDue(
+                item.period,
+                item.lastGeneratedAt,
+                new Date(Date.UTC(period.paymentYear, period.paymentMonth - 1, 1)),
+              )),
         )
         .map((period): CalendarEvent => {
           const date = dayOf(period.paymentYear, period.paymentMonth, item.dayOfMonth)

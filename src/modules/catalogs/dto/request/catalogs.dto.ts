@@ -3,6 +3,7 @@ import { createZodDto } from 'nestjs-zod'
 import {
   budgetGroupSchema,
   categorySchema,
+  createPaymentMethodSchema,
   paymentMethodSchema,
   personSchema,
 } from '../../validations/catalogs.validation'
@@ -10,7 +11,7 @@ import {
 export class CreatePersonDto extends createZodDto(personSchema) {}
 export class UpdatePersonDto extends createZodDto(personSchema.partial()) {}
 
-export class CreatePaymentMethodDto extends createZodDto(paymentMethodSchema) {}
+export class CreatePaymentMethodDto extends createZodDto(createPaymentMethodSchema) {}
 export class UpdatePaymentMethodDto extends createZodDto(paymentMethodSchema.partial()) {}
 
 export class CreateCategoryDto extends createZodDto(categorySchema) {}

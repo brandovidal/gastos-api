@@ -81,7 +81,11 @@ export class DraftsService {
     return this.get(id)
   }
 
-  private async applyFields(expenseDraft: ExpenseDraftDbDto, { sharedWith, ...fields }: DraftFieldsDto) {
+  // kind and supplyNumber only come from the web (Recurrentes, D107): the AI fields know nothing about them
+  private async applyFields(
+    expenseDraft: ExpenseDraftDbDto,
+    { sharedWith, kind, supplyNumber, ...fields }: DraftFieldsDto,
+  ) {
     const catalog = await this.expenseExtractionService.loadCatalog()
     const merged: ResolvedExpenseFields = {
       ...toExpenseFields(expenseDraft),
@@ -100,6 +104,8 @@ export class DraftsService {
     return this.expenseDraftDBRepository.update(expenseDraft.id, {
       ...update,
       ...(sharedWith !== undefined ? { sharedWith: shares } : {}),
+      ...(kind !== undefined ? { kind } : {}),
+      ...(supplyNumber !== undefined ? { supplyNumber } : {}),
       status: update.status === ExpenseDraftStatus.DISCARDED ? update.status : ExpenseDraftStatus.PENDING_REVIEW,
       pendingField: null,
     })

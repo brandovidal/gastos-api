@@ -9,6 +9,7 @@ import {
   ExpenseType,
   INSTALLMENT_REGEX,
   PaymentStatus,
+  SubscriptionKind,
 } from '@/commons/constants/expense.constant'
 import { DateHelper } from '@/commons/helpers/date.helper'
 import {
@@ -19,6 +20,7 @@ import {
 } from '@/commons/helpers/payment-period.helper'
 import { ExpenseNotSaveableException } from '@/commons/exceptions/conversation/expense-not-saveable.exception'
 import { ExpenseDraftDbDto } from '@/db/models/expense-draft/expenseDraftDB.dto'
+import { BudgetSettingDBRepository, subscriptionCounts } from '@/db/models/budget-setting/budgetSettingDB.repository'
 import { ExpenseDBRepository } from '@/db/models/expense/expenseDB.repository'
 import { SaveExpenseDbDto } from '@/db/models/expense/expenseDB.dto'
 import { PaymentMethodDBRepository } from '@/db/models/payment-method/paymentMethodDB.repository'
@@ -108,8 +110,9 @@ function withSharedDebts(input: SaveExpenseDbDto, expenseDraft: ExpenseDraftDbDt
 const ownAmount = (data: { amount: number; othersShare?: number }) =>
   Math.round((data.amount - (data.othersShare ?? 0)) * 100) / 100
 
-// Subscriptions are card charges (D46) and debts are not spending: only these count for the budget, in PEN (your part)
-function budgetImpact(input: SaveExpenseDbDto): BudgetImpact | null {
+// Debts are not spending; a subscription counts only when bud_settings switches its kind on and no credit card paid
+// it (D46, D96, D107). Only PEN, your part
+function budgetImpact(input: SaveExpenseDbDto, subscriptionCounts: boolean): BudgetImpact | null {
   const { destination, data } = input
   if ((data.currency ?? Currency.PEN) !== Currency.PEN) return null
   switch (destination) {
@@ -118,6 +121,14 @@ function budgetImpact(input: SaveExpenseDbDto): BudgetImpact | null {
         personId: data.personId,
         categoryId: data.categoryId ?? null,
         period: paymentPeriodOf(new Date(data.spentAt).toISOString().slice(0, 10)),
+        amount: ownAmount(data),
+      }
+    case ExpenseDestination.SUBSCRIPTION:
+      if (!subscriptionCounts) return null
+      return {
+        personId: data.personId,
+        categoryId: data.categoryId ?? null,
+        period: { paymentMonth: data.paymentMonth, paymentYear: data.paymentYear },
         amount: ownAmount(data),
       }
     case ExpenseDestination.FIXED_COST:
@@ -152,6 +163,7 @@ export class ExpenseSaverService {
     private readonly expenseDBRepository: ExpenseDBRepository,
     private readonly paymentMethodDBRepository: PaymentMethodDBRepository,
     private readonly storedFilesService: StoredFilesService,
+    private readonly budgetSettingDBRepository: BudgetSettingDBRepository,
   ) {}
 
   async save(expenseDraft: ExpenseDraftDbDto): Promise<SavedExpense> {
@@ -164,7 +176,21 @@ export class ExpenseSaverService {
       expenseDraft.replacesDraftId ?? undefined,
     )
     await this.keepFile(expenseDraft.fileId)
-    return { ...saved, installments: installmentsCreated(input), budget: budgetImpact(input) }
+    return {
+      ...saved,
+      installments: installmentsCreated(input),
+      budget: budgetImpact(input, await this.subscriptionCounts(input)),
+    }
+  }
+
+  private async subscriptionCounts(input: SaveExpenseDbDto): Promise<boolean> {
+    if (input.destination !== ExpenseDestination.SUBSCRIPTION) return false
+    const { kind, paymentMethodId } = input.data as { kind?: string; paymentMethodId?: string | null }
+    const [settings, method] = await Promise.all([
+      this.budgetSettingDBRepository.get(),
+      paymentMethodId ? this.paymentMethodDBRepository.findById(paymentMethodId) : Promise.resolve(null),
+    ])
+    return subscriptionCounts(settings, kind ?? SubscriptionKind.PLATFORM, method?.type)
   }
 
   // The screenshot of a saved expense moves out of drafts (D58). The expense is already saved: a failure only logs
@@ -242,6 +268,8 @@ export class ExpenseSaverService {
           data: {
             ...expense,
             period: this.required(expenseDraft, expenseDraft.period),
+            kind: expenseDraft.kind ?? SubscriptionKind.PLATFORM,
+            supplyNumber: expenseDraft.supplyNumber,
             paymentMethodId: expenseDraft.paymentMethodId,
             paymentStatus: PaymentStatus.NOT_STARTED,
             paymentDate: spentAt,
