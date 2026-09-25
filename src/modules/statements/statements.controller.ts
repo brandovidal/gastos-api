@@ -20,7 +20,7 @@ import { ApiRest } from '@/commons/decorators/api-rest.decorator'
 import { ResponseMessage } from '@/commons/decorators/response-message.decorator'
 import { EmptyResponseDto } from '@/commons/helpers/api-response.helper'
 
-import { CreateNewRowsDto, RowResultDto, UploadStatementDto } from './dto/request/statements.dto'
+import { CreateNewRowsDto, UpdateRowDto, UploadStatementDto } from './dto/request/statements.dto'
 import { StatementListResponseDto, StatementResponseDto } from './dto/response/statements-response.dto'
 import { StatementsService } from './statements.service'
 
@@ -71,7 +71,9 @@ export class StatementsController {
 
   @Post(':id/create-new')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Create the new rows (all or the given ones) as pending card expenses' })
+  @ApiOperation({
+    summary: 'Create the new rows (all, or the given ones even if matched or ignored) as pending card expenses',
+  })
   @ApiOkResponse({ type: StatementResponseDto })
   @ResponseMessage('STATEMENT_ROWS_CREATED', 'Rows created')
   createNew(@Param('id') id: string, @Body() { rowIds }: CreateNewRowsDto) {
@@ -79,11 +81,11 @@ export class StatementsController {
   }
 
   @Patch(':id/rows/:rowId')
-  @ApiOperation({ summary: 'Ignore a new row, or bring an ignored one back' })
+  @ApiOperation({ summary: 'Ignore a row, bring an ignored one back, or give it your description' })
   @ApiOkResponse({ type: StatementResponseDto })
   @ResponseMessage('STATEMENT_ROW_UPDATED', 'Row updated')
-  setRowResult(@Param('id') id: string, @Param('rowId') rowId: string, @Body() { result }: RowResultDto) {
-    return this.statementsService.setRowResult(id, rowId, result)
+  updateRow(@Param('id') id: string, @Param('rowId') rowId: string, @Body() body: UpdateRowDto) {
+    return this.statementsService.updateRow(id, rowId, body)
   }
 
   @Delete(':id')

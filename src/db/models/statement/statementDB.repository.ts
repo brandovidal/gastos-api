@@ -91,9 +91,18 @@ export class StatementDBRepository {
     return rows.length
   }
 
-  async setRowResult(statementId: string, rowId: string, result: StatementRowResult) {
+  // Ignore a row (a matched one lets its expense go back to "Solo en Kogane"), bring it back, or rename it
+  async updateRow(
+    statementId: string,
+    rowId: string,
+    { result, label }: { result?: StatementRowResult; label?: string | null },
+  ) {
     await this.prisma.$transaction(async (tx) => {
-      await tx.statementRow.updateMany({ where: { id: rowId, statementId }, data: { result } })
+      const data = {
+        ...(label !== undefined ? { label } : {}),
+        ...(result ? { result, ...(result === StatementRowResult.IGNORED ? { expenseId: null } : {}) } : {}),
+      }
+      await tx.statementRow.updateMany({ where: { id: rowId, statementId }, data })
       await this.refreshStatus(tx, statementId)
     })
     return this.findById(statementId)

@@ -128,15 +128,19 @@ export class StatementsService {
     const statement = await this.statementDBRepository.findById(id)
     const owner = await this.personDBRepository.findDefault()
     if (!owner) throw new StatementUnreadableException({ reason: 'no default person' })
-    const rows = statement.rows.filter(
-      (row) => row.result === StatementRowResult.NEW && (!rowIds?.length || rowIds.includes(row.id)),
+    // "Crear todos" takes the new rows; a row chosen by hand is created anyway (matched with an expense of the same
+    // name from another month or card, or ignored), but never twice
+    const rows = statement.rows.filter((row) =>
+      rowIds?.length
+        ? rowIds.includes(row.id) && row.result !== StatementRowResult.CREATED
+        : row.result === StatementRowResult.NEW,
     )
     await this.statementDBRepository.createExpenses(
       id,
       rows.map((row) => ({
         id: row.id,
         data: {
-          description: row.description,
+          description: row.label || row.description,
           amount: row.amount,
           currency: row.currency,
           amountInPen: row.currency === Currency.PEN ? row.amount : null,
@@ -147,15 +151,22 @@ export class StatementsService {
           paymentMonth: statement.paymentMonth,
           paymentYear: statement.paymentYear,
           processDate: row.date,
-          notes: 'Del estado de cuenta',
+          notes: row.label ? `Del estado de cuenta: ${row.description}` : 'Del estado de cuenta',
         },
       })),
     )
     return this.get(id)
   }
 
-  async setRowResult(id: string, rowId: string, result: StatementRowResult.IGNORED | StatementRowResult.NEW) {
-    await this.statementDBRepository.setRowResult(id, rowId, result)
+  async updateRow(
+    id: string,
+    rowId: string,
+    { result, label }: { result?: StatementRowResult.IGNORED | StatementRowResult.NEW; label?: string | null },
+  ) {
+    await this.statementDBRepository.updateRow(id, rowId, {
+      result,
+      label: label === undefined ? undefined : label || null,
+    })
     return this.get(id)
   }
 

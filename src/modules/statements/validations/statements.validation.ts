@@ -9,12 +9,24 @@ export const uploadStatementSchema = z.object({
 })
 
 export const createNewRowsSchema = z.object({
-  rowIds: z.array(z.string().min(1)).optional().describe('Only these rows; without it every new row'),
+  rowIds: z
+    .array(z.string().min(1))
+    .optional()
+    .describe('Only these rows (also matched or ignored ones: created anyway); without it every new row'),
 })
 
-export const rowResultSchema = z.object({
-  result: z.enum([StatementRowResult.IGNORED, StatementRowResult.NEW]),
-})
+export const updateRowSchema = z
+  .object({
+    result: z.enum([StatementRowResult.IGNORED, StatementRowResult.NEW]).optional(),
+    label: z
+      .string()
+      .trim()
+      .max(120)
+      .nullable()
+      .optional()
+      .describe('Your description; empty goes back to the bank text'),
+  })
+  .refine((body) => body.result !== undefined || body.label !== undefined, 'result or label is required')
 
 // ==================== Responses (Swagger / kogane-app types) ====================
 
@@ -41,7 +53,8 @@ export const statementRowResponseSchema = z.object({
   id: z.string(),
   statementId: z.string(),
   date: dateTimeSchema.nullable(),
-  description: z.string(),
+  description: z.string().describe('As the bank wrote it (never edited)'),
+  label: z.string().nullable().describe('Your description: the name of the expense it creates'),
   amount: z.number(),
   currency: z.string(),
   installment: z.string().nullable(),

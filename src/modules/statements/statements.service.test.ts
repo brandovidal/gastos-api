@@ -34,7 +34,7 @@ const mockStatementDB = {
   findMany: vi.fn(),
   findCardExpenses: vi.fn(),
   createExpenses: vi.fn(),
-  setRowResult: vi.fn(),
+  updateRow: vi.fn(),
   delete: vi.fn(),
 }
 const mockPaymentMethods = { findAll: vi.fn(), findById: vi.fn() }
@@ -205,5 +205,55 @@ describe('StatementsService', () => {
         }),
       },
     ])
+  })
+
+  it('should create a row chosen by hand even if it matched, with your description and the bank text in the notes', async () => {
+    mockStatementDB.findById.mockResolvedValue(
+      saved([
+        {
+          id: 'r2',
+          result: StatementRowResult.MATCHED,
+          description: 'IZI*OSTEO PERU T',
+          label: 'OsteoPeru',
+          amount: 139.64,
+          currency: 'PEN',
+          installment: '1/4',
+          date: null,
+          expenseId: 'e1',
+        },
+        {
+          id: 'r3',
+          result: StatementRowResult.CREATED,
+          description: 'Y',
+          label: null,
+          amount: 1,
+          currency: 'PEN',
+          installment: null,
+          date: null,
+          expenseId: 'e9',
+        },
+      ]),
+    )
+
+    await service.createNew('s1', ['r2', 'r3'])
+
+    expect(mockStatementDB.createExpenses).toHaveBeenCalledWith('s1', [
+      {
+        id: 'r2',
+        data: expect.objectContaining({
+          description: 'OsteoPeru',
+          notes: 'Del estado de cuenta: IZI*OSTEO PERU T',
+          installment: '1/4',
+        }),
+      },
+    ])
+  })
+
+  it('should rename a row (empty goes back to the bank text) or ignore it', async () => {
+    mockStatementDB.findById.mockResolvedValue(saved([]))
+    await service.updateRow('s1', 'r1', { label: '' })
+    expect(mockStatementDB.updateRow).toHaveBeenCalledWith('s1', 'r1', { result: undefined, label: null })
+    await service.updateRow('s1', 'r1', { result: StatementRowResult.IGNORED })
+    expect(mockStatementDB.updateRow).toHaveBeenLastCalledWith('s1', 'r1', { result: 'ignored', label: undefined })
   })
 })

@@ -548,7 +548,8 @@ model StatementRow {
   statementId String
   statement   Statement @relation(fields: [statementId], references: [id], onDelete: Cascade)
   date        DateTime? // processed day
-  description String
+  description String // as the bank wrote it: never edited, it is what matches a statement with the expenses
+  label       String? // your description for it: the name of the expense it creates
   amount      Float
   currency    String    @default("PEN")
   installment String? // "n/m"
