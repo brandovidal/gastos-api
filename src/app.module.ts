@@ -21,6 +21,7 @@ import { NotificationsModule } from '@/modules/notifications/notifications.modul
 import { ImportsModule } from '@/modules/imports/imports.module'
 import { StatementsModule } from '@/modules/statements/statements.module'
 import { AttachmentsModule } from '@/modules/attachments/attachments.module'
+import { AuthModule } from '@/modules/auth/auth.module'
 import { HistoryModule } from '@/modules/history/history.module'
 import { CommitmentsModule } from '@/modules/commitments/commitments.module'
 
@@ -50,6 +51,7 @@ import { CommitmentsModule } from '@/modules/commitments/commitments.module'
     CommitmentsModule,
     AttachmentsModule,
     HistoryModule,
+    AuthModule,
     ImportsModule,
   ],
   controllers: [],

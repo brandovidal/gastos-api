@@ -6,10 +6,12 @@ import {
   OnApplicationBootstrap,
   OnModuleInit,
 } from '@nestjs/common'
-import { ConfigService } from '@nestjs/config'
 
 import { AuditSource } from '@/commons/constants/audit.constant'
 import { AuditContextService } from '@/db/audit/audit-context.service'
+import { runAsSystem, runWithUser } from '@/db/tenant/tenant-context'
+import { AuthService } from '@/modules/auth/auth.service'
+import { LinkCodeInvalidException } from '@/commons/exceptions/auth/link-code-invalid.exception'
 import { ChannelMessageType } from '@/commons/constants/conversation.constant'
 import { ExpenseDraftChannel } from '@/commons/constants/expense-draft.constant'
 import {
@@ -18,7 +20,6 @@ import {
   SHUTDOWN_DRAIN_TIMEOUT_MS,
 } from '@/commons/constants/telegram.constant'
 import { KeyedQueue } from '@/commons/helpers/keyed-queue.helper'
-import { TelegramConfig } from '@/settings/settings.model'
 import { TelegramClient } from '@/providers/telegram/telegram.client'
 import { ConversationService } from '@/modules/conversation/conversation.service'
 import { TEXTS, withCommandButtons } from '@/modules/conversation/conversation.messages'
@@ -28,6 +29,11 @@ import { mapTelegramUpdate, MappedTelegramUpdate, toReplyMarkup } from './telegr
 import { TelegramReplyMarkup, TelegramUpdate } from '@/providers/telegram/telegram.types'
 
 const ERROR_TEXT = '⚠️ Algo salió mal procesando tu mensaje. Intenta de nuevo en un momento.'
+const UNLINKED_TEXT =
+  '👋 Este chat todavía no está vinculado a una cuenta de Kogane.\n\nEntra a la web, abre <b>Perfil</b> y toca <b>Vincular Telegram</b>: se abre este chat con tu código.'
+const LINKED_TEXT = '✅ Listo: este chat quedó vinculado a tu cuenta.'
+const LINK_INVALID_TEXT =
+  '⚠️ Ese código ya no sirve. Genera uno nuevo desde <b>Perfil ▸ Vincular Telegram</b> en la web.'
 
 // editMessageText answers 400 "message is not modified" when the text and buttons are the same
 function isNotModified(error: unknown): boolean {
@@ -64,11 +70,11 @@ export class TelegramService implements OnModuleInit, OnApplicationBootstrap, Be
   private readonly albums = new Map<string, PendingAlbum>()
 
   constructor(
-    private readonly configService: ConfigService,
     private readonly telegramClient: TelegramClient,
     private readonly conversationService: ConversationService,
     private readonly mediaDownloaderRegistry: MediaDownloaderRegistry,
     private readonly auditContext: AuditContextService,
+    private readonly authService: AuthService,
   ) {}
 
   // The conversation downloads images through this (also again when a failed one is resumed from /borrador)
@@ -97,11 +103,6 @@ export class TelegramService implements OnModuleInit, OnApplicationBootstrap, Be
   enqueue(update: TelegramUpdate): Promise<void> | null {
     const mapped = mapTelegramUpdate(update)
     if (!mapped) return null
-
-    if (!this.isAllowed(mapped.message.chatId)) {
-      this.logger.warn(`[enqueue] ignored update ${update.update_id} from a chat outside the allowlist`)
-      return null
-    }
 
     if (mapped.mediaGroupId) return this.collectAlbum(mapped, mapped.mediaGroupId)
     return this.queue.run(mapped.message.chatId, () => this.process(mapped))
@@ -141,12 +142,55 @@ export class TelegramService implements OnModuleInit, OnApplicationBootstrap, Be
     return done
   }
 
-  private async process({ message, callbackQueryId, sourceMessageId }: MappedTelegramUpdate): Promise<void> {
+  // Whose chat it is decides whose data the message touches (P23, D85): a linked chat is its user; a chat in
+  // TELEGRAM_ALLOWED_CHAT_IDS without a link is still the owner of the data that existed before; anyone else is told how to
+  // link (or links with /start <code>)
+  private async process(mapped: MappedTelegramUpdate): Promise<void> {
+    const { chatId } = mapped.message
+    try {
+      const code = this.linkCodeOf(mapped.message)
+      if (code) return await this.linkChat(mapped, code)
+
+      const user = await this.authService.userOfChat(chatId)
+      if (!user) {
+        await this.telegramClient.sendMessage(chatId, UNLINKED_TEXT).catch(() => undefined)
+        return
+      }
+      await runWithUser(user.id, () => this.processForUser(mapped, user.id))
+    } catch (error) {
+      this.logger.error(`[process] ${(error as Error).message}`)
+      await this.telegramClient.sendMessage(chatId, ERROR_TEXT).catch(() => undefined)
+    }
+  }
+
+  // "/start <code>": the code that Perfil ▸ Vincular Telegram put in the t.me link
+  private linkCodeOf(message: MappedTelegramUpdate['message']): string | null {
+    if (message.type !== ChannelMessageType.COMMAND || message.command !== 'start') return null
+    return message.text?.trim().split(/\s+/)[1] ?? null
+  }
+
+  private async linkChat(mapped: MappedTelegramUpdate, code: string): Promise<void> {
+    const { chatId } = mapped.message
+    try {
+      const user = await this.authService.linkTelegram(code, chatId)
+      await this.telegramClient.sendMessage(chatId, LINKED_TEXT)
+      // and the usual welcome, now as that user
+      await runWithUser(user.id, () => this.processForUser({ message: { ...mapped.message, text: '/start' } }, user.id))
+    } catch (error) {
+      if (!(error instanceof LinkCodeInvalidException)) throw error
+      await this.telegramClient.sendMessage(chatId, LINK_INVALID_TEXT).catch(() => undefined)
+    }
+  }
+
+  private async processForUser(
+    { message, callbackQueryId, sourceMessageId }: MappedTelegramUpdate,
+    userId: string,
+  ): Promise<void> {
     const { chatId } = message
 
     try {
       // The history says these changes came from the bot (P29)
-      await this.auditContext.enter(AuditSource.BOT)
+      await this.auditContext.enter(AuditSource.BOT, { actorId: userId })
       if (message.type !== ChannelMessageType.COMMAND && message.type !== ChannelMessageType.ACTION) {
         await this.telegramClient.sendChatAction(chatId, 'typing').catch(() => undefined)
       }
@@ -210,10 +254,13 @@ export class TelegramService implements OnModuleInit, OnApplicationBootstrap, Be
   private async recoverInterrupted() {
     try {
       const before = new Date(Date.now() - INTERRUPTED_DRAFT_MIN_AGE_MS)
-      const affected = await this.conversationService.recoverInterrupted(ExpenseDraftChannel.TELEGRAM, before)
+      // Drafts of every user: a job of the process, not of a request
+      const affected = await runAsSystem(() =>
+        this.conversationService.recoverInterrupted(ExpenseDraftChannel.TELEGRAM, before),
+      )
 
       for (const { chatId, count } of affected) {
-        if (!this.isAllowed(chatId)) continue
+        if (!(await this.authService.userOfChat(chatId))) continue
         const reply = withCommandButtons({ text: TEXTS.interrupted(count) })
         await this.telegramClient.sendMessage(chatId, reply.text, toReplyMarkup(reply.buttons)).catch(() => undefined)
       }
@@ -222,9 +269,5 @@ export class TelegramService implements OnModuleInit, OnApplicationBootstrap, Be
     } catch (error) {
       this.logger.error(`[recoverInterrupted] ${(error as Error).message}`)
     }
-  }
-
-  private isAllowed(chatId: string): boolean {
-    return this.configService.get<TelegramConfig>('telegram')?.allowedChatIds.includes(chatId) ?? false
   }
 }

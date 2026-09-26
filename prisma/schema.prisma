@@ -21,7 +21,8 @@ datasource db {
 
 model Person {
   id             String   @id @default(cuid())
-  name           String   @unique
+  userId         String? // whose row it is (P23, D82): set and filtered by the tenancy extension
+  name           String
   aliases        String   @default("[]") // JSON array of lowercase aliases used by the AI
   isActive       Boolean  @default(true)
   isDefault      Boolean  @default(false) // the owner: used when a message does not say who the expense is for
@@ -40,15 +41,18 @@ model Person {
   cardHolders        CardHolder[]
   commitments        Commitment[]
 
+  @@unique([userId, name])
+  @@index([userId])
   @@map("cat_people")
 }
 
 // Every way of paying. A credit card is a payment method of type credit_card with its billing days.
 model PaymentMethod {
   id                   String   @id @default(cuid())
-  name                 String   @unique
+  userId               String? // whose row it is (P23, D82): set and filtered by the tenancy extension
+  name                 String
   type                 String // PaymentMethodType
-  code                 String?  @unique // short code of credit cards (CMR, OH, IO, AMEX)
+  code                 String? // short code of credit cards (CMR, OH, IO, AMEX)
   bank                 String? // debit cards require it (D107)
   aliases              String   @default("[]") // JSON array of lowercase aliases used by the AI
   isActive             Boolean  @default(true)
@@ -73,6 +77,9 @@ model PaymentMethod {
   debts              Debt[]              @relation("DebtCard")
   holders            CardHolder[]
 
+  @@unique([userId, name])
+  @@unique([userId, code])
+  @@index([userId])
   @@map("cat_payment_methods")
 }
 
@@ -80,6 +87,7 @@ model PaymentMethod {
 // "<name> Tc: ******1810", Sip by its TIT/ADIC column) and each purchase goes to its person
 model CardHolder {
   id              String        @id @default(cuid())
+  userId          String? // whose row it is (P23, D82): set and filtered by the tenancy extension
   paymentMethodId String
   paymentMethod   PaymentMethod @relation(fields: [paymentMethodId], references: [id], onDelete: Cascade)
   personId        String
@@ -89,12 +97,14 @@ model CardHolder {
   createdAt       DateTime      @default(now())
 
   @@unique([paymentMethodId, personId])
+  @@index([userId])
   @@map("cat_card_holders")
 }
 
 model Category {
   id            String       @id @default(cuid())
-  name          String       @unique
+  userId        String? // whose row it is (P23, D82): set and filtered by the tenancy extension
+  name          String
   color         String       @default("#6B7280")
   icon          String?
   isDefault     Boolean      @default(false)
@@ -112,7 +122,9 @@ model Category {
   creditCardExpenses CreditCardExpense[]
   recurringExpenses  RecurringExpense[]
 
+  @@unique([userId, name])
   @@index([budgetGroupId])
+  @@index([userId])
   @@map("cat_categories")
 }
 
@@ -120,7 +132,8 @@ model Category {
 
 model BudgetGroup {
   id         String   @id @default(cuid())
-  name       String   @unique
+  userId     String? // whose row it is (P23, D82): set and filtered by the tenancy extension
+  name       String
   emoji      String   @default("📦")
   percentage Float    @default(0)
   order      Int      @default(0)
@@ -129,11 +142,14 @@ model BudgetGroup {
 
   categories Category[]
 
+  @@unique([userId, name])
+  @@index([userId])
   @@map("bud_budget_groups")
 }
 
 model CategoryBudget {
   id             String   @id @default(cuid())
+  userId         String? // whose row it is (P23, D82): set and filtered by the tenancy extension
   categoryId     String
   category       Category @relation(fields: [categoryId], references: [id])
   monthlyLimit   Float
@@ -144,11 +160,13 @@ model CategoryBudget {
   updatedAt      DateTime @updatedAt
 
   @@unique([categoryId, month, year])
+  @@index([userId])
   @@map("bud_category_budgets")
 }
 
 model MonthlyBudget {
   id           String   @id @default(cuid())
+  userId       String? // whose row it is (P23, D82): set and filtered by the tenancy extension
   month        Int
   year         Int
   salary       Float
@@ -156,24 +174,29 @@ model MonthlyBudget {
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
-  @@unique([month, year])
+  @@unique([userId, month, year])
+  @@index([userId])
   @@map("bud_monthly_budgets")
 }
 
-// What counts in the budget besides fixed costs, cards and day to day (D96, D107): one row until P23 adds userId.
+// What counts in the budget besides fixed costs, cards and day to day (D96, D107): one row per user (P23).
 // Subscriptions paid with a credit card never count here: the card charge already does (D46).
 model BudgetSetting {
-  id             String   @id @default("default")
+  id             String   @id @default(cuid())
+  userId         String? // whose row it is (P23, D82): set and filtered by the tenancy extension
   recurringCount Boolean  @default(true) // Recurrentes (service, annual, other) add to the budget
   platformsCount Boolean  @default(false) // Plataformas add to the budget
   updatedAt      DateTime @updatedAt
 
+  @@unique([userId])
+  @@index([userId])
   @@map("bud_settings")
 }
 
 // Extra incomes of a month (P19, D65): the salary stays in bud_monthly_budgets; surplus = salary + extras − expenses
 model Income {
   id          String   @id @default(cuid())
+  userId      String? // whose row it is (P23, D82): set and filtered by the tenancy extension
   description String
   amount      Float
   currency    String   @default("PEN")
@@ -185,6 +208,7 @@ model Income {
   updatedAt   DateTime @updatedAt
 
   @@index([month, year])
+  @@index([userId])
   @@map("bud_incomes")
 }
 
@@ -195,6 +219,7 @@ model Income {
 // Saving it creates the record of its destination table (exp_daily_expenses, exp_fixed_costs…) linked by draftId.
 model ExpenseDraft {
   id              String         @id @default(cuid())
+  userId          String? // whose row it is (P23, D82): set and filtered by the tenancy extension
   channel         String // ExpenseDraftChannel
   chatId          String
   messageId       String
@@ -245,12 +270,13 @@ model ExpenseDraft {
   debt              Debt?
   aiRequests        AiRequestLog[]
 
-  @@unique([channel, chatId, messageId, itemIndex])
+  @@unique([userId, channel, chatId, messageId, itemIndex])
   @@index([channel, chatId, status])
   @@index([channel, chatId, mediaUniqueId])
   @@index([fileId])
   @@index([batchId])
   @@index([destination, status, spentAt])
+  @@index([userId])
   @@map("bot_expense_drafts")
 }
 
@@ -258,6 +284,7 @@ model ExpenseDraft {
 // temporary (tmp/, expires after 7 days) → kept (kept/, never expires) when an expense that uses it is saved.
 model StoredFile {
   id          String    @id @default(cuid())
+  userId      String? // whose row it is (P23, D82): set and filtered by the tenancy extension
   channel     String // ExpenseDraftChannel
   storageKey  String    @unique // object key in the bucket (tmp/… or kept/…)
   contentType String
@@ -274,6 +301,7 @@ model StoredFile {
   attachments Attachment[]
 
   @@index([status, expiresAt])
+  @@index([userId])
   @@map("bot_files")
 }
 
@@ -283,6 +311,7 @@ model StoredFile {
 // Expenses paid with a credit card go to exp_credit_card_expenses.
 model DailyExpense {
   id              String        @id @default(cuid())
+  userId          String? // whose row it is (P23, D82): set and filtered by the tenancy extension
   description     String
   amount          Float
   othersShare     Float         @default(0) // what other people owe of this expense (shared, D73)
@@ -308,6 +337,7 @@ model DailyExpense {
   @@index([spentAt])
   @@index([personId])
   @@index([categoryId])
+  @@index([userId])
   @@map("exp_daily_expenses")
 }
 
@@ -317,6 +347,7 @@ model DailyExpense {
 
 model FixedCost {
   id              String         @id @default(cuid())
+  userId          String? // whose row it is (P23, D82): set and filtered by the tenancy extension
   description     String
   amount          Float
   othersShare     Float          @default(0) // what other people owe of this expense (shared, D73)
@@ -351,6 +382,7 @@ model FixedCost {
   @@index([personId])
   @@index([paymentStatus])
   @@index([commitmentId])
+  @@index([userId])
   @@map("exp_fixed_costs")
 }
 
@@ -358,6 +390,7 @@ model FixedCost {
 // (commitmentId + "n/m"); an investment without installments (bolsa, bitcoin) has contributions
 model Commitment {
   id                 String    @id @default(cuid())
+  userId             String? // whose row it is (P23, D82): set and filtered by the tenancy extension
   name               String // "BCP", "Terreno San Bartolo", "Bitcoin"
   kind               String // CommitmentKind
   subtype            String // CommitmentSubtype
@@ -384,12 +417,14 @@ model Commitment {
   contributions Contribution[]
 
   @@index([kind, status])
+  @@index([userId])
   @@map("exp_commitments")
 }
 
 // What you put into an investment without installments: stock purchases, bitcoin (D99)
 model Contribution {
   id           String     @id @default(cuid())
+  userId       String? // whose row it is (P23, D82): set and filtered by the tenancy extension
   commitmentId String
   commitment   Commitment @relation(fields: [commitmentId], references: [id], onDelete: Cascade)
   date         DateTime
@@ -402,12 +437,14 @@ model Contribution {
   updatedAt    DateTime   @updatedAt
 
   @@index([commitmentId, date])
+  @@index([userId])
   @@map("exp_contributions")
 }
 
 // Files of any record (D100): the bytes are in R2 (bot_files), this row says whose they are
 model Attachment {
   id        String     @id @default(cuid())
+  userId    String? // whose row it is (P23, D82): set and filtered by the tenancy extension
   fileId    String
   file      StoredFile @relation(fields: [fileId], references: [id])
   refType   String // AttachmentRefType
@@ -418,11 +455,13 @@ model Attachment {
 
   @@index([refType, refId])
   @@index([fileId])
+  @@index([userId])
   @@map("exp_attachments")
 }
 
 model Subscription {
   id              String         @id @default(cuid())
+  userId          String? // whose row it is (P23, D82): set and filtered by the tenancy extension
   description     String
   amount          Float
   othersShare     Float          @default(0) // what other people owe of this expense (shared, D73)
@@ -455,11 +494,13 @@ model Subscription {
   @@index([paymentMonth, paymentYear])
   @@index([personId])
   @@index([kind])
+  @@index([userId])
   @@map("exp_subscriptions")
 }
 
 model CreditCardExpense {
   id              String        @id @default(cuid())
+  userId          String? // whose row it is (P23, D82): set and filtered by the tenancy extension
   description     String
   amount          Float
   othersShare     Float         @default(0) // what other people owe of this expense (shared, D73)
@@ -490,6 +531,7 @@ model CreditCardExpense {
   @@index([personId])
   @@index([originDraftId])
   @@index([paymentStatus])
+  @@index([userId])
   @@map("exp_credit_card_expenses")
 }
 
@@ -498,6 +540,7 @@ model CreditCardExpense {
 // status follows it (DebtStatus); "late" and "not started" are computed from the payment month, never stored.
 model Debt {
   id              String         @id @default(cuid())
+  userId          String? // whose row it is (P23, D82): set and filtered by the tenancy extension
   direction       String // DebtDirection
   description     String
   amount          Float // of this installment
@@ -530,6 +573,7 @@ model Debt {
   @@index([paymentYear, paymentMonth])
   @@index([originDraftId])
   @@index([paymentMethodId, paymentYear, paymentMonth])
+  @@index([userId])
   @@map("exp_debts")
 }
 
@@ -537,6 +581,7 @@ model Debt {
 // until ✅ Confirmar; only confirmed payments count in Debt.paidAmount.
 model DebtPayment {
   id              String         @id @default(cuid())
+  userId          String? // whose row it is (P23, D82): set and filtered by the tenancy extension
   debtId          String
   debt            Debt           @relation(fields: [debtId], references: [id], onDelete: Cascade)
   amount          Float
@@ -551,11 +596,13 @@ model DebtPayment {
 
   @@index([debtId])
   @@index([batchId])
+  @@index([userId])
   @@map("exp_debt_payments")
 }
 
 model RecurringExpense {
   id              String         @id @default(cuid())
+  userId          String? // whose row it is (P23, D82): set and filtered by the tenancy extension
   description     String
   amount          Float
   currency        String         @default("PEN")
@@ -577,6 +624,7 @@ model RecurringExpense {
   createdAt       DateTime       @default(now())
   updatedAt       DateTime       @updatedAt
 
+  @@index([userId])
   @@map("exp_recurring_expenses")
 }
 
@@ -607,6 +655,7 @@ model AiRequestLog {
 
 model Notification {
   id                String    @id @default(cuid())
+  userId            String? // whose row it is (P23, D82): set and filtered by the tenancy extension
   kind              String // NotificationKind
   title             String
   body              String
@@ -614,25 +663,30 @@ model Notification {
   refType           String? // NotificationRefType: what ✅ Pagado and the web link act on
   refId             String?
   eventDate         DateTime? // the day it is about (due date, closing day…), 00:00 UTC
-  dedupeKey         String    @unique // the same notice is never created twice, even if a job runs again
+  dedupeKey         String // the same notice is never created twice, even if a job runs again
   readAt            DateTime? // read in the web or answered in Telegram
   telegramChatId    String?
   telegramMessageId String?
   telegramSentAt    DateTime?
   createdAt         DateTime  @default(now())
 
+  @@unique([userId, dedupeKey])
   @@index([readAt])
   @@index([kind, createdAt])
+  @@index([userId])
   @@map("ntf_notifications")
 }
 
 // Which kinds go to each channel (/avisos, Configuración ▸ Notificaciones). A kind without a row uses the defaults
 model NotificationSetting {
-  kind      String   @id // NotificationKind
+  kind      String // NotificationKind
+  userId    String // whose row it is (P23, D82): set and filtered by the tenancy extension
   telegram  Boolean
   web       Boolean
   updatedAt DateTime @updatedAt
 
+  @@id([userId, kind])
+  @@index([userId])
   @@map("ntf_settings")
 }
 
@@ -642,6 +696,7 @@ model NotificationSetting {
 
 model Statement {
   id                 String    @id @default(cuid())
+  userId             String? // whose row it is (P23, D82): set and filtered by the tenancy extension
   paymentMethodId    String // the card
   personId           String? // person assigned from the PDF or selected before upload
   paymentMonth       Int
@@ -665,11 +720,13 @@ model Statement {
   rows StatementRow[]
 
   @@index([paymentMethodId, paymentYear, paymentMonth])
+  @@index([userId])
   @@map("imp_statements")
 }
 
 model StatementRow {
   id          String    @id @default(cuid())
+  userId      String? // whose row it is (P23, D82): set and filtered by the tenancy extension
   statementId String
   statement   Statement @relation(fields: [statementId], references: [id], onDelete: Cascade)
   date        DateTime? // processed day
@@ -686,12 +743,14 @@ model StatementRow {
   createdAt   DateTime  @default(now())
 
   @@index([statementId])
+  @@index([userId])
   @@map("imp_statement_rows")
 }
 
 // Every Notion import (P14, D90, D104): a preview until it is applied from the web (or make import-notion CONFIRM=yes)
 model ImportBatch {
   id        String    @id @default(cuid())
+  userId    String? // whose row it is (P23, D82): set and filtered by the tenancy extension
   source    String    @default("notion")
   sourceDir String // folder or uploaded file names
   status    String    @default("preview") // ImportBatchStatus: preview, applied, discarded
@@ -706,12 +765,14 @@ model ImportBatch {
   rows ImportRow[]
 
   @@index([status])
+  @@index([userId])
   @@map("imp_batches")
 }
 
 // One Notion row of a batch: the CSV as it came, what it becomes in Kogane and, once applied, the row it created
 model ImportRow {
   id          String      @id @default(cuid())
+  userId      String? // whose row it is (P23, D82): set and filtered by the tenancy extension
   batchId     String
   batch       ImportBatch @relation(fields: [batchId], references: [id], onDelete: Cascade)
   source      String      @default("notion")
@@ -739,6 +800,7 @@ model ImportRow {
   @@index([batchId, kind, status])
   @@index([importKey])
   @@index([targetTable, targetId])
+  @@index([userId])
   @@map("imp_rows")
 }
 
@@ -749,6 +811,7 @@ model ImportRow {
 // for an update, {field: value} for a create or a delete
 model AuditChange {
   id        String   @id
+  userId    String? // whose row it is (P23, D82): set and filtered by the tenancy extension
   entity    String // the table: exp_fixed_costs
   entityId  String
   action    String // AuditAction
@@ -760,6 +823,7 @@ model AuditChange {
 
   @@index([entity, entityId])
   @@index([createdAt])
+  @@index([userId])
   @@map("aud_changes")
 }
 
@@ -772,4 +836,84 @@ model AuditContext {
   batchId String?
 
   @@map("aud_context")
+}
+
+// ==================== USERS (auth_) ====================
+
+// Who signs in (P23, D82–D84): invited by an admin, they enter with Google or with a password. Their data (every row
+// with a userId) is theirs alone. The migration creates the owner of the data that existed before (id legacy-owner)
+model AuthUser {
+  id             String    @id @default(cuid())
+  name           String
+  email          String    @unique
+  googleSub      String?   @unique // the account of Google that signs in as this user
+  phone          String?   @unique // digits only (9 in Peru): also signs in with the password; set by an admin, never by the user
+  documentNumber String? // DNI: copied to their "Yo" (D94); never returned in the clear
+  passwordHash   String? // scrypt: salt.hash
+  role           String    @default("member") // UserRole
+  status         String    @default("active") // UserStatus
+  telegramChatId String?   @unique // the chat linked to this user (D85)
+  lastLoginAt    DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  sessions AuthSession[]
+
+  @@map("auth_users")
+}
+
+// An admin invites an email; whoever opens the link proves it is theirs (there is no way to send mail without a
+// domain yet, D91). Only the hash of the token is stored
+model AuthInvite {
+  id          String    @id @default(cuid())
+  email       String
+  role        String    @default("member")
+  tokenHash   String    @unique
+  invitedById String?
+  expiresAt   DateTime
+  usedAt      DateTime?
+  createdAt   DateTime  @default(now())
+
+  @@index([email])
+  @@map("auth_invites")
+}
+
+// Opaque session (revocable: a disabled user is out at once); the cookie carries the token, the database its hash
+model AuthSession {
+  id               String   @id @default(cuid())
+  userId           String
+  user             AuthUser @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash        String   @unique
+  impersonatedById String? // the superadmin who entered as this user (the backdoor of D84): the history says so
+  expiresAt        DateTime
+  lastSeenAt       DateTime @default(now())
+  createdAt        DateTime @default(now())
+
+  @@index([userId])
+  @@map("auth_sessions")
+}
+
+// One-use codes: linking a Telegram chat to a user (D85) and the state of a Google sign-in
+model AuthToken {
+  id        String    @id @default(cuid())
+  kind      String // AuthTokenKind
+  userId    String?
+  tokenHash String    @unique
+  payload   String? // JSON
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([userId, kind])
+  @@map("auth_tokens")
+}
+
+// Failed sign-ins per email, to lock a guess-by-guess attack for a while
+model AuthAttempt {
+  id        String   @id @default(cuid())
+  email     String
+  createdAt DateTime @default(now())
+
+  @@index([email, createdAt])
+  @@map("auth_attempts")
 }

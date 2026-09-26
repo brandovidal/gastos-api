@@ -5,6 +5,7 @@ import { PrismaLibSql } from '@prisma/adapter-libsql'
 import { PrismaClient } from '../src/generated/prisma/client'
 import { AuditSource } from '../src/commons/constants/audit.constant'
 import { setAuditContext } from '../src/db/audit/audit-context'
+import { LEGACY_OWNER_ID } from '../src/commons/constants/auth.constant'
 import { seedCatalogs } from '../src/db/seed/catalog.seed'
 
 async function main() {
@@ -20,11 +21,18 @@ async function main() {
 
   try {
     await setAuditContext(prisma, AuditSource.CLI) // the history says these changes came from a script
-    const result = await seedCatalogs(prisma)
+    // The people and cards of the seed are the owner's (P23); SEED_USER_EMAIL seeds them for another user
+    const email = process.env.SEED_USER_EMAIL?.trim().toLowerCase()
+    const owner = await prisma.authUser.findUnique({ where: email ? { email } : { id: LEGACY_OWNER_ID } })
+    if (!owner)
+      throw new Error(
+        email ? `No user with the email ${email}` : 'The owner user does not exist: run make db-deploy first',
+      )
+    const result = await seedCatalogs(prisma, owner.id)
     console.log(`Seeded on ${url.split('?')[0]}:`, result)
 
-    const owner = await prisma.person.findFirst({ where: { isDefault: true } })
-    console.log(`Default person: ${owner?.name ?? 'none'}`)
+    const person = await prisma.person.findFirst({ where: { userId: owner.id, isDefault: true } })
+    console.log(`Default person of ${owner.email}: ${person?.name ?? 'none'}`)
   } finally {
     await prisma.$disconnect()
   }

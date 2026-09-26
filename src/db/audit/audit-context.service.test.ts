@@ -10,9 +10,9 @@ const mockPrisma = { auditContext: { upsert: vi.fn() } }
 const handler = () => undefined
 const next: CallHandler = { handle: () => of('ok') }
 
-const contextOf = (method: string, path: string) =>
+const contextOf = (method: string, path: string, actorId?: string) =>
   ({
-    switchToHttp: () => ({ getRequest: () => ({ method, path }) }),
+    switchToHttp: () => ({ getRequest: () => ({ method, path, actorId }) }),
     getHandler: () => handler,
     getClass: () => class {},
   }) as unknown as ExecutionContext
@@ -46,7 +46,15 @@ describe('AuditContextInterceptor', () => {
   it('should mark a change through the API as web', async () => {
     await interceptor.intercept(contextOf('PATCH', '/v1/expenses/fixed-costs/1'), next)
 
-    expect(enter).toHaveBeenCalledWith(AuditSource.WEB)
+    expect(enter).toHaveBeenCalledWith(AuditSource.WEB, { actorId: undefined })
+  })
+
+  it('should say who made the change: the superadmin, when they entered as another user (P23)', async () => {
+    const signedIn = contextOf('PATCH', '/v1/expenses/fixed-costs/1', 'superadmin-1')
+
+    await interceptor.intercept(signedIn, next)
+
+    expect(enter).toHaveBeenCalledWith(AuditSource.WEB, { actorId: 'superadmin-1' })
   })
 
   it('should not touch the database on a read', async () => {

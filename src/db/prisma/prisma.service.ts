@@ -4,6 +4,7 @@ import { PrismaLibSql } from '@prisma/adapter-libsql'
 
 import { PrismaClient } from '@/generated/prisma/client'
 
+import { tenantExtension } from '@/db/tenant/tenant.extension'
 import { DatabaseConfig } from '@/settings/settings.model'
 
 @Injectable()
@@ -17,6 +18,10 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
 
     // Local SQLite (file:) and Turso (libsql://) share the same adapter
     super({ adapter: new PrismaLibSql({ url: db.url, authToken: db.authToken }) })
+
+    // Every query of a table with a userId is filtered by the user of the context and every insert carries it (P23,
+    // D82). $extends returns a client that keeps the methods of this class, so the rest of the app is unchanged
+    return this.$extends(tenantExtension) as unknown as this
   }
 
   async onModuleInit() {

@@ -16,6 +16,7 @@ import { StoredFileStatus } from '@/commons/constants/stored-file.constant'
 import { ExpenseRecordDBModule } from '@/db/models/expense-record/expenseRecordDB.module'
 import { PrismaModule } from '@/db/prisma/prisma.module'
 import { PrismaService } from '@/db/prisma/prisma.service'
+import { AuthModule } from '@/modules/auth/auth.module'
 import { AttachmentsModule } from '@/modules/attachments/attachments.module'
 import { AttachmentsService } from '@/modules/attachments/attachments.service'
 import { SettingsModule } from '@/settings/settings.module'
@@ -42,7 +43,7 @@ describe('Commitments (integration)', () => {
 
   beforeAll(async () => {
     moduleRef = await Test.createTestingModule({
-      imports: [SettingsModule, PrismaModule, CommitmentsModule, AttachmentsModule, ExpenseRecordDBModule],
+      imports: [SettingsModule, PrismaModule, AuthModule, CommitmentsModule, AttachmentsModule, ExpenseRecordDBModule],
     }).compile()
     await moduleRef.init()
     prisma = moduleRef.get(PrismaService)

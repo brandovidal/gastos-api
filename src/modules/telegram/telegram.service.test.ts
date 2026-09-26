@@ -1,5 +1,4 @@
 import { Logger } from '@nestjs/common'
-import { ConfigService } from '@nestjs/config'
 import { vi } from 'vitest'
 
 import { TelegramRequestFailedException } from '@/commons/exceptions/telegram/telegram-request-failed.exception'
@@ -8,6 +7,9 @@ import { TelegramClient } from '@/providers/telegram/telegram.client'
 import { ConversationService } from '@/modules/conversation/conversation.service'
 import { FILE_ID } from '@/modules/conversation/mocks/conversation.mock'
 
+import { LinkCodeInvalidException } from '@/commons/exceptions/auth/link-code-invalid.exception'
+import { currentUserId } from '@/db/tenant/tenant-context'
+import { AuthService } from '@/modules/auth/auth.service'
 import { AuditContextService } from '@/db/audit/audit-context.service'
 import { MediaDownloaderRegistry } from '@/modules/conversation/media-downloader.registry'
 
@@ -28,6 +30,8 @@ const mockConversation = {
 }
 const mockRegistry = { register: vi.fn() }
 const mockAudit = { enter: vi.fn().mockResolvedValue(undefined) }
+// Only the chat 555 is a user's (P23, D85)
+const mockAuth = { userOfChat: vi.fn(), linkTelegram: vi.fn() }
 
 const chat = { id: 555, type: 'private' }
 const textUpdate = { update_id: 1, message: { message_id: 10, chat, date: 0, text: 'almuerzo 25' } }
@@ -38,14 +42,15 @@ const buttonUpdate = {
 
 describe('TelegramService', () => {
   const service = new TelegramService(
-    new ConfigService({ telegram: { allowedChatIds: ['555'] } }),
     mockClient as unknown as TelegramClient,
     mockConversation as unknown as ConversationService,
     mockRegistry as unknown as MediaDownloaderRegistry,
     mockAudit as unknown as AuditContextService,
+    mockAuth as unknown as AuthService,
   )
 
   beforeEach(() => {
+    mockAuth.userOfChat.mockImplementation(async (chatId: string) => (chatId === '555' ? { id: 'user-1' } : null))
     vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => {})
     vi.spyOn(Logger.prototype, 'error').mockImplementation(() => {})
   })
@@ -77,12 +82,60 @@ describe('TelegramService', () => {
     expect(mockClient.sendMessage).not.toHaveBeenCalled()
   })
 
-  it('should ignore chats outside the allowlist and updates it does not understand', () => {
-    expect(
-      service.enqueue({ ...textUpdate, message: { ...textUpdate.message, chat: { id: 999, type: 'private' } } }),
-    ).toBeNull()
+  it('should tell a chat without an account how to link it, and ignore updates it does not understand', async () => {
+    await service.enqueue({ ...textUpdate, message: { ...textUpdate.message, chat: { id: 999, type: 'private' } } })
+
+    expect(mockClient.sendMessage).toHaveBeenCalledWith('999', expect.stringContaining('Vincular Telegram'))
     expect(service.enqueue({ update_id: 3 })).toBeNull()
     expect(mockConversation.handle).not.toHaveBeenCalled()
+  })
+
+  it("should run the conversation as the user of the chat: their data and nobody else's (P23)", async () => {
+    let seen: string | undefined
+    mockConversation.handle.mockImplementation(async () => {
+      seen = currentUserId()
+      return { replies: [] }
+    })
+
+    await service.enqueue(textUpdate)
+
+    expect(seen).toBe('user-1')
+    expect(mockAudit.enter).toHaveBeenCalledWith('bot', { actorId: 'user-1' })
+  })
+
+  describe('linking a chat with /start <code>', () => {
+    const start = (text: string) => ({ ...textUpdate, message: { ...textUpdate.message, text } })
+
+    it('should link the chat, say so and show the welcome as that user', async () => {
+      mockAuth.linkTelegram.mockResolvedValue({ id: 'user-2' })
+      mockConversation.handle.mockResolvedValue({ replies: [{ text: 'ayuda' }] })
+
+      await service.enqueue(start('/start abc123'))
+
+      expect(mockAuth.linkTelegram).toHaveBeenCalledWith('abc123', '555')
+      expect(mockClient.sendMessage).toHaveBeenCalledWith('555', expect.stringContaining('vinculado'))
+      expect(mockConversation.handle).toHaveBeenCalledWith(
+        expect.objectContaining({ text: '/start', command: 'start' }),
+      )
+    })
+
+    it('should say when the code no longer works and link nothing', async () => {
+      mockAuth.linkTelegram.mockRejectedValue(new LinkCodeInvalidException())
+
+      await service.enqueue(start('/start viejo'))
+
+      expect(mockClient.sendMessage).toHaveBeenCalledWith('555', expect.stringContaining('ya no sirve'))
+      expect(mockConversation.handle).not.toHaveBeenCalled()
+    })
+
+    it('should treat a plain /start as any command', async () => {
+      mockConversation.handle.mockResolvedValue({ replies: [{ text: 'ayuda' }] })
+
+      await service.enqueue(start('/start'))
+
+      expect(mockAuth.linkTelegram).not.toHaveBeenCalled()
+      expect(mockConversation.handle).toHaveBeenCalled()
+    })
   })
 
   it('should tell the user when something fails and still release the button', async () => {
@@ -139,7 +192,7 @@ describe('TelegramService', () => {
   })
 
   describe('lifecycle', () => {
-    it('should move interrupted drafts to /borrador on startup and tell only allowed chats', async () => {
+    it('should move interrupted drafts to /borrador on startup and tell only the chats that belong to a user', async () => {
       mockConversation.recoverInterrupted.mockResolvedValue([
         { chatId: '555', count: 2 },
         { chatId: '999', count: 1 },

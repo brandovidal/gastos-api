@@ -6,7 +6,9 @@ import Redis from 'ioredis'
 
 // Prisma and db-deploy bookkeeping: emptying them would make the next deploy re-run every migration
 // aud_context is the row the history triggers read: without it they would write nothing
+// The accounts stay too: a reset cleans the data, not who can sign in (and the owner of the pre-P23 data is a row of auth_users)
 const KEEP = new Set(['_prisma_migrations', '_app_migrations', 'aud_context'])
+const isAccount = (name: string) => name.startsWith('auth_')
 
 async function main() {
   const env = process.argv[2]
@@ -21,7 +23,7 @@ async function main() {
     await db.execute("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name")
   ).rows
     .map((row) => String(row.name))
-    .filter((name) => !KEEP.has(name))
+    .filter((name) => !KEEP.has(name) && !isAccount(name))
 
   const counts = await Promise.all(
     tables.map(

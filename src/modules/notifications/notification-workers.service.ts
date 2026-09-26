@@ -3,6 +3,9 @@ import { Worker } from 'bullmq'
 
 import { AuditSource } from '@/commons/constants/audit.constant'
 import { AuditContextService } from '@/db/audit/audit-context.service'
+import { AuthDBRepository } from '@/db/models/auth/authDB.repository'
+import { runAsSystem, runWithUser } from '@/db/tenant/tenant-context'
+import { UserStatus } from '@/commons/constants/auth.constant'
 import { DELIVER_QUEUE, NotificationJob, SCHEDULE_QUEUE } from '@/commons/constants/notification.constant'
 import { RedisService } from '@/providers/redis/redis.service'
 
@@ -23,6 +26,7 @@ export class NotificationWorkers implements OnApplicationBootstrap, BeforeApplic
     private readonly notificationJobsService: NotificationJobsService,
     private readonly notificationsService: NotificationsService,
     private readonly auditContext: AuditContextService,
+    private readonly authDBRepository: AuthDBRepository,
   ) {}
 
   // Not awaited: Redis being slow or down never delays the start of the API
@@ -35,6 +39,28 @@ export class NotificationWorkers implements OnApplicationBootstrap, BeforeApplic
     await Promise.all(this.workers.map((worker) => worker.close()))
   }
 
+  // A job runs once per active user, each in their own tenant context (P23); the cleanup of expired files is of everyone
+  private async runScheduled(job: NotificationJob): Promise<void> {
+    if (job === NotificationJob.FILES_CLEANUP) {
+      await runAsSystem(() => this.notificationJobsService.run(job))
+      return
+    }
+    const users = (await runAsSystem(() => this.authDBRepository.listUsers())).filter(
+      (user) => user.status === UserStatus.ACTIVE,
+    )
+    for (const user of users) {
+      try {
+        await runWithUser(user.id, async () => {
+          await this.auditContext.enter(AuditSource.SCHEDULER, { actorId: user.id }) // the history says so (P29)
+          await this.notificationJobsService.run(job)
+        })
+      } catch (error) {
+        // One user's failure does not stop the others
+        this.logger.error(`[runScheduled] ${job} for ${user.id}: ${(error as Error).message}`)
+      }
+    }
+  }
+
   private async start() {
     try {
       await this.notificationQueue.upsertSchedulers()
@@ -42,17 +68,14 @@ export class NotificationWorkers implements OnApplicationBootstrap, BeforeApplic
       this.logger.error(`[start] schedules not saved: ${(error as Error).message}`)
     }
 
-    const schedule = new Worker(
-      SCHEDULE_QUEUE,
-      async (job) => {
-        await this.auditContext.enter(AuditSource.SCHEDULER) // recurring expenses, cleanups: the history says so (P29)
-        return this.notificationJobsService.run(job.name as NotificationJob)
-      },
-      { connection: this.redisService.connection(), concurrency: 1 },
-    )
+    const schedule = new Worker(SCHEDULE_QUEUE, (job) => this.runScheduled(job.name as NotificationJob), {
+      connection: this.redisService.connection(),
+      concurrency: 1,
+    })
     const deliveries = new Worker<DeliverJobData>(
       DELIVER_QUEUE,
-      (job) => this.notificationsService.deliver(job.data.notificationId),
+      // The notice knows whose it is: the chat comes from its user
+      (job) => runAsSystem(() => this.notificationsService.deliver(job.data.notificationId)),
       { connection: this.redisService.connection(), concurrency: 1 },
     )
     for (const worker of [schedule, deliveries]) {

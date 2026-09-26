@@ -6,7 +6,10 @@ import { dateTimeSchema } from '@/commons/helpers/api-response.helper'
 // YYYY-MM-DD from the web filters, as a date at 00:00 UTC (dates are stored in UTC)
 const day = z.iso.date().transform((value) => new Date(`${value}T00:00:00.000Z`))
 
+export const HISTORY_MODULES = ['expenses', 'debts', 'commitments', 'budget', 'settings', 'imports'] as const
+
 export const historyQuerySchema = z.object({
+  module: z.enum(HISTORY_MODULES).optional().describe('A group of screens in the app'),
   entity: z.string().min(1).optional().describe('The table: exp_fixed_costs, cat_people…'),
   id: z.string().min(1).optional().describe('One record (with entity)'),
   source: z.enum(AuditSource).optional(),

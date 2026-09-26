@@ -15,6 +15,7 @@ import { NotificationDBRepository } from '@/db/models/notification/notificationD
 import { TelegramClient } from '@/providers/telegram/telegram.client'
 import { CalendarEvent, CalendarService } from '@/modules/calendar/calendar.service'
 import { toReplyMarkup } from '@/modules/telegram/telegram.mapper'
+import { AuthService } from '@/modules/auth/auth.service'
 import { TelegramConfig } from '@/settings/settings.model'
 
 import { NotificationCache } from './notification-cache.service'
@@ -38,6 +39,7 @@ export class NotificationsService {
     private readonly calendarService: CalendarService,
     private readonly telegramClient: TelegramClient,
     private readonly configService: ConfigService,
+    private readonly authService: AuthService,
   ) {}
 
   // null when that kind is off in both channels or the notice already exists
@@ -64,12 +66,13 @@ export class NotificationsService {
     return created
   }
 
-  // Sends one notification to the Telegram chats (the allowlist until P23). Throws so BullMQ retries it
+  // Sends one notification to its user's Telegram chat. Throws so BullMQ retries it
   async deliver(notificationId: string): Promise<void> {
     const notification = await this.notificationDBRepository.findById(notificationId)
     if (notification.telegramSentAt) return
 
-    const chatIds = this.configService.get<TelegramConfig>('telegram')?.allowedChatIds ?? []
+    // The chat of the user the notice is for (P23); the allowlist only for the owner of the pre-P23 data
+    const chatIds = notification.userId ? await this.authService.chatIdsOf(notification.userId) : []
     if (!chatIds.length || !this.configService.get<TelegramConfig>('telegram')?.botToken) {
       this.logger.warn(`[deliver] no Telegram chat to send ${notificationId} to`)
       return

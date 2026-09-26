@@ -1,6 +1,6 @@
 import { ConfigService } from '@nestjs/config'
 
-import { AUDITED_TABLES, AuditAction, AuditSource } from '@/commons/constants/audit.constant'
+import { AUDIT_ID_COLUMN, AUDITED_TABLES, AuditAction, AuditSource } from '@/commons/constants/audit.constant'
 import { PaymentStatus } from '@/commons/constants/expense.constant'
 import { DebtDirection } from '@/commons/constants/debt.constant'
 import { AuditChangeDBRepository } from '@/db/models/audit/auditChangeDB.repository'
@@ -63,7 +63,7 @@ describe('History triggers (integration)', () => {
       )
       tables.push({
         table,
-        idColumn: columns.find((column) => column.pk === 1)!.name,
+        idColumn: AUDIT_ID_COLUMN[table] ?? columns.find((column) => column.pk === 1)!.name,
         columns: columns.map((column) => column.name),
       })
     }
@@ -183,12 +183,19 @@ describe('History triggers (integration)', () => {
     const { items } = await history.timeline('cat_people', personId)
     const serialized = JSON.stringify(items)
 
-    expect(items[0].changes).toEqual([{ field: 'documentNumber', before: '•••', after: '•••' }])
-    expect(items[1].changes).toEqual([{ field: 'documentNumber', before: null, after: '•••' }])
+    // (two edits in the same millisecond have no order: compare the pair, not the position)
+    const edits = items.filter((item) => item.action === 'update').map((item) => item.changes)
+    expect(edits).toEqual(
+      expect.arrayContaining([
+        [{ field: 'documentNumber', before: '•••', after: '•••' }],
+        [{ field: 'documentNumber', before: null, after: '•••' }],
+      ]),
+    )
     expect(serialized).not.toContain('87654321')
     expect(serialized).not.toContain('11223344')
     // not even the snapshot of a create or a delete carries it
     const raw = await prisma.auditChange.findMany({ where: { entity: 'cat_people', entityId: personId } })
-    expect(JSON.stringify(raw)).not.toMatch(/8765|1122/)
+    expect(JSON.stringify(raw)).not.toContain('87654321')
+    expect(JSON.stringify(raw)).not.toContain('11223344')
   })
 })

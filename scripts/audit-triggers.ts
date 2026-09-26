@@ -6,7 +6,7 @@ import { createClient } from '@libsql/client'
 import { mkdirSync, readdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 
-import { AUDITED_TABLES } from '../src/commons/constants/audit.constant'
+import { AUDIT_ID_COLUMN, AUDITED_TABLES } from '../src/commons/constants/audit.constant'
 import {
   auditTriggersMigration,
   AuditedTable,
@@ -24,7 +24,7 @@ async function main() {
   for (const table of AUDITED_TABLES) {
     const { rows } = await db.execute(`SELECT name, pk FROM pragma_table_info('${table}') ORDER BY cid`)
     if (!rows.length) throw new Error(`${table} does not exist: run make db-deploy first`)
-    const idColumn = rows.find((row) => Number(row.pk) === 1)?.name
+    const idColumn = AUDIT_ID_COLUMN[table] ?? rows.find((row) => Number(row.pk) === 1)?.name
     if (!idColumn) throw new Error(`${table} has no primary key`)
     tables.push({ table, idColumn: String(idColumn), columns: rows.map((row) => String(row.name)) })
   }

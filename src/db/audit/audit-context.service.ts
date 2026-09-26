@@ -33,9 +33,9 @@ export class AuditContextInterceptor implements NestInterceptor {
   constructor(private readonly auditContext: AuditContextService) {}
 
   async intercept(context: ExecutionContext, next: CallHandler): Promise<Observable<unknown>> {
-    const request = context.switchToHttp().getRequest<Request>()
+    const request = context.switchToHttp().getRequest<Request & { actorId?: string }>()
     if (CHANGES.includes(request.method) && !OWN_SOURCE_PATHS.some((path) => request.path?.endsWith(path))) {
-      await this.auditContext.enter(AuditSource.WEB)
+      await this.auditContext.enter(AuditSource.WEB, { actorId: request.actorId })
     }
     return next.handle()
   }

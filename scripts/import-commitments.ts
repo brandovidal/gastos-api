@@ -5,6 +5,7 @@
 import { ConfigService } from '@nestjs/config'
 
 import { PrismaService } from '../src/db/prisma/prisma.service'
+import { enterScriptUser } from '../src/db/tenant/script-user'
 import { CommitmentsImporter } from '../src/modules/commitments/notion/commitments-importer'
 
 async function main() {
@@ -20,6 +21,8 @@ async function main() {
   const prisma = new PrismaService(new ConfigService({ db: { url, authToken: process.env.DATABASE_AUTH_TOKEN } }))
   await prisma.onModuleInit()
   const importer = new CommitmentsImporter(prisma)
+  const user = await enterScriptUser(prisma, process.env.USER_EMAIL)
+  console.log(`Usuario: ${user.email}`)
 
   try {
     const remote = !!url?.startsWith('libsql://')

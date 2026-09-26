@@ -9,11 +9,11 @@ import { isPrismaError } from '@/commons/helpers/prisma-error.helper'
 
 import { toCatalogError } from '../catalog-error.helper'
 
-export type CommitmentWriteDbDto = Omit<Commitment, 'id' | 'createdAt' | 'updatedAt'>
-export type ContributionWriteDbDto = Omit<Contribution, 'id' | 'createdAt' | 'updatedAt'>
+export type CommitmentWriteDbDto = Omit<Commitment, 'id' | 'createdAt' | 'updatedAt' | 'userId'>
+export type ContributionWriteDbDto = Omit<Contribution, 'id' | 'createdAt' | 'updatedAt' | 'userId'>
 export type InstallmentCreateDbDto = Omit<
   FixedCost,
-  'id' | 'createdAt' | 'updatedAt' | 'draftId' | 'importKey' | 'othersShare' | 'exchangeRate' | 'amountInPen'
+  'id' | 'createdAt' | 'updatedAt' | 'userId' | 'draftId' | 'importKey' | 'othersShare' | 'exchangeRate' | 'amountInPen'
 > &
   Partial<Pick<FixedCost, 'amountInPen'>>
 

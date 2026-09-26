@@ -1,10 +1,31 @@
 import { Injectable } from '@nestjs/common'
 
 import { AuditChange } from '@/generated/prisma/client'
-import { AUDIT_TITLE_COLUMN, AuditAction, AuditSource, HISTORY_PAGE_SIZE } from '@/commons/constants/audit.constant'
+import {
+  AUDIT_ID_COLUMN,
+  AUDIT_TITLE_COLUMN,
+  AuditAction,
+  AuditSource,
+  HISTORY_PAGE_SIZE,
+} from '@/commons/constants/audit.constant'
 import { AuditChangeDBRepository } from '@/db/models/audit/auditChangeDB.repository'
 
 import { HistoryQueryDto } from './dto/request/history.dto'
+
+const MODULE_ENTITIES = {
+  expenses: [
+    'exp_daily_expenses',
+    'exp_fixed_costs',
+    'exp_subscriptions',
+    'exp_credit_card_expenses',
+    'exp_recurring_expenses',
+  ],
+  debts: ['exp_debts', 'exp_debt_payments'],
+  commitments: ['exp_commitments', 'exp_contributions'],
+  budget: ['bud_monthly_budgets', 'bud_budget_groups', 'bud_category_budgets', 'bud_incomes', 'bud_settings'],
+  settings: ['cat_people', 'cat_payment_methods', 'cat_card_holders', 'cat_categories', 'ntf_settings'],
+  imports: ['imp_batches', 'imp_statements'],
+} as const
 
 type Fields = { field: string; before: unknown; after: unknown }[]
 
@@ -17,9 +38,6 @@ const LABELS = {
   commitmentId: 'commitment',
 } as const
 
-// The tables whose primary key is not "id"
-const ID_COLUMN: Record<string, string> = { ntf_settings: 'kind' }
-
 // Historial de cambios (P29): what the triggers wrote, read as a list or as the timeline of one record
 @Injectable()
 export class HistoryService {
@@ -27,7 +45,14 @@ export class HistoryService {
 
   async list(query: HistoryQueryDto) {
     const { rows, total } = await this.auditChangeDBRepository.findPage(
-      { entity: query.entity, entityId: query.id, source: query.source, from: query.from, to: query.to },
+      {
+        entity: query.entity,
+        entities: query.module ? [...MODULE_ENTITIES[query.module]] : undefined,
+        entityId: query.id,
+        source: query.source,
+        from: query.from,
+        to: query.to,
+      },
       query.page,
       HISTORY_PAGE_SIZE,
     )
@@ -97,7 +122,7 @@ export class HistoryService {
       const rows = await this.auditChangeDBRepository.titlesOf(
         table,
         AUDIT_TITLE_COLUMN[table],
-        ID_COLUMN[table] ?? 'id',
+        AUDIT_ID_COLUMN[table] ?? 'id',
         [...ids],
       )
       rows.forEach((row) => row.title && titles.set(`${table}:${row.id}`, row.title))

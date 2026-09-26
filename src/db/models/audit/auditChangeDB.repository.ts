@@ -5,13 +5,15 @@ import { PrismaService } from '@/db/prisma/prisma.service'
 
 export interface AuditChangeFilter {
   entity?: string
+  entities?: string[]
   entityId?: string
   source?: string
   from?: Date
   to?: Date // inclusive: the whole day
 }
 
-// Read side of the history (P29): the triggers write aud_changes, nothing in the app does
+// Read side of the history (P29): the triggers write aud_changes, nothing in the app does. The tenant extension scopes
+// this table by userId, just like the people, expense and budget tables.
 @Injectable()
 export class AuditChangeDBRepository {
   constructor(private readonly prisma: PrismaService) {}
@@ -22,7 +24,7 @@ export class AuditChangeDBRepository {
     pageSize: number,
   ): Promise<{ rows: AuditChange[]; total: number }> {
     const where = {
-      ...(filter.entity ? { entity: filter.entity } : {}),
+      ...(filter.entity ? { entity: filter.entity } : filter.entities ? { entity: { in: filter.entities } } : {}),
       ...(filter.entityId ? { entityId: filter.entityId } : {}),
       ...(filter.source ? { source: filter.source } : {}),
       ...(filter.from || filter.to

@@ -7,6 +7,9 @@ import { JsonHelper } from '@/commons/helpers/json.helper'
 import { seedCatalogs } from './catalog.seed'
 import { CATEGORIES, PAYMENT_METHODS, PEOPLE } from './catalog.seed.data'
 
+// The user of the integration tests (test/tenant.setup.ts)
+const USER = 'test-user'
+
 describe('seedCatalogs (integration)', () => {
   let prisma: PrismaService
 
@@ -20,8 +23,8 @@ describe('seedCatalogs (integration)', () => {
   })
 
   it('should load every catalog and be safe to run twice', async () => {
-    await seedCatalogs(prisma)
-    await seedCatalogs(prisma)
+    await seedCatalogs(prisma, USER)
+    await seedCatalogs(prisma, USER)
 
     const names = (rows: { name: string }[]) => rows.map((row) => row.name)
 
@@ -33,16 +36,23 @@ describe('seedCatalogs (integration)', () => {
   })
 
   it('should mark Brando as the default person with his aliases', async () => {
-    const brando = await prisma.person.findUniqueOrThrow({ where: { name: 'Brando' } })
+    const brando = await prisma.person.findUniqueOrThrow({ where: { userId_name: { userId: USER, name: 'Brando' } } })
 
     expect(brando.isDefault).toBe(true)
     expect(JsonHelper.parseArray(brando.aliases)).toEqual(['yo', 'yuji'])
   })
 
   it('should keep credit cards as payment methods with their billing days, and Efectivo as cash', async () => {
-    const ohPay = await prisma.paymentMethod.findUniqueOrThrow({ where: { name: 'Oh Pay' } })
-    const cash = await prisma.paymentMethod.findUniqueOrThrow({ where: { name: 'Efectivo' } })
-    const food = await prisma.category.findUniqueOrThrow({ where: { name: 'Comida' }, include: { budgetGroup: true } })
+    const ohPay = await prisma.paymentMethod.findUniqueOrThrow({
+      where: { userId_name: { userId: USER, name: 'Oh Pay' } },
+    })
+    const cash = await prisma.paymentMethod.findUniqueOrThrow({
+      where: { userId_name: { userId: USER, name: 'Efectivo' } },
+    })
+    const food = await prisma.category.findUniqueOrThrow({
+      where: { userId_name: { userId: USER, name: 'Comida' } },
+      include: { budgetGroup: true },
+    })
 
     expect(ohPay).toMatchObject({
       type: PaymentMethodType.CREDIT_CARD,

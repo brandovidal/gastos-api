@@ -72,10 +72,11 @@ export const DELIVER_BACKOFF_MS = 60_000
 export const UPCOMING_REFRESH_DELAY_MS = 30_000
 
 // Redis keys (D87). Turso is the source of truth: these are rebuilt from it when missing
+// Every list is one user's (P23): ntf:<userId>:…
 export const REDIS_KEYS = {
-  upcoming: 'ntf:upcoming', // sorted set, score = epoch ms of the day, value = JSON CalendarEvent
-  recent: 'ntf:recent', // list of JSON notifications, newest first
-  unread: 'ntf:unread', // counter for the bell
+  upcoming: (userId: string) => `ntf:${userId}:upcoming`, // sorted set, score = epoch ms of the day, value = JSON CalendarEvent
+  recent: (userId: string) => `ntf:${userId}:recent`, // list of JSON notifications, newest first
+  unread: (userId: string) => `ntf:${userId}:unread`, // counter for the bell
   awaitingAmount: (chatId: string) => `ntf:await:${chatId}`, // ✏️ Editar monto: the notification waiting for it
 } as const
 

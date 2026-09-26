@@ -40,6 +40,9 @@ export const AUDITED_TABLES = [
   'ntf_settings',
 ] as const
 
+// The tables whose primary key is not "id" (the entityId of their events)
+export const AUDIT_ID_COLUMN: Record<string, string> = { ntf_settings: 'kind' }
+
 // Recorded as "changed", never in the clear (D94): the value is replaced by MASKED_VALUE (null stays null)
 export const SENSITIVE_COLUMNS: Record<string, string[]> = {
   cat_people: ['documentNumber'],

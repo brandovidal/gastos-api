@@ -7,6 +7,7 @@ import { NotificationKind, NotificationRefType } from '@/commons/constants/notif
 import { NotificationDBRepository } from '@/db/models/notification/notificationDB.repository'
 import { TelegramClient } from '@/providers/telegram/telegram.client'
 import { CalendarService } from '@/modules/calendar/calendar.service'
+import { AuthService } from '@/modules/auth/auth.service'
 
 import { NotificationCache } from './notification-cache.service'
 import { NotificationQueue } from './notification-queue.service'
@@ -36,9 +37,12 @@ const mockCache = {
 const mockQueue = { deliver: vi.fn(), requestRefresh: vi.fn() }
 const mockCalendar = { upcoming: vi.fn() }
 const mockTelegram = { sendMessage: vi.fn() }
+// The chats of the user a notice is for (P23): linked chat, or the allowlist for the owner of the old data
+const mockAuth = { chatIdsOf: vi.fn() }
 
 const notification = (overrides: Partial<Notification> = {}): Notification => ({
   id: 'n1',
+  userId: 'user-1',
   kind: NotificationKind.DUE,
   title: '🏠 Luz',
   body: 'Vence mañana (vie 25/09): S/ 120.00.',
@@ -69,6 +73,7 @@ describe('NotificationsService', () => {
         { provide: NotificationQueue, useValue: mockQueue },
         { provide: CalendarService, useValue: mockCalendar },
         { provide: TelegramClient, useValue: mockTelegram },
+        { provide: AuthService, useValue: mockAuth },
         {
           provide: ConfigService,
           useValue: new ConfigService({ telegram: { botToken: '1:a', allowedChatIds: ['555', '777'] } }),
@@ -77,6 +82,7 @@ describe('NotificationsService', () => {
     }).compile()
     service = module.get(NotificationsService)
     mockDB.findSettings.mockResolvedValue([])
+    mockAuth.chatIdsOf.mockResolvedValue(['555', '777'])
     mockDB.createUnique.mockImplementation(async (data) => notification({ ...data, id: 'n1' }))
     mockQueue.deliver.mockResolvedValue(true)
   })
@@ -139,6 +145,17 @@ describe('NotificationsService', () => {
         expect.objectContaining({ inline_keyboard: expect.any(Array) }),
       )
       expect(mockDB.markSent).toHaveBeenCalledWith('n1', '555', '9')
+    })
+
+    it('should send it to the chats of the user it is for, and to nobody when that user has none', async () => {
+      mockDB.findById.mockResolvedValue(notification({ userId: 'user-2' }))
+      mockAuth.chatIdsOf.mockResolvedValue([])
+
+      await service.deliver('n1')
+
+      expect(mockAuth.chatIdsOf).toHaveBeenCalledWith('user-2')
+      expect(mockTelegram.sendMessage).not.toHaveBeenCalled()
+      expect(mockDB.markSent).not.toHaveBeenCalled()
     })
 
     it('should not send a notice twice (a retry after it went out)', async () => {

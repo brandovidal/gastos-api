@@ -86,6 +86,10 @@ El `Makefile` define las variables comunes (`ENV`, archivo `.env.<ENV>`) e inclu
 | `TELEGRAM_WEBHOOK_SECRET`                                                | uno nuevo: `make secret`                                                     |
 | `TELEGRAM_ALLOWED_CHAT_IDS`                                              | tu `chat_id`                                                                 |
 | `PUBLIC_URL`                                                             | la URL del paso 2                                                            |
+| `APP_URL`                                                                | la URL de la web (kogane-app): Google devuelve el navegador a `<APP_URL>/api/v1/auth/google/callback` (P23) |
+| `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`                               | cliente OAuth «Aplicación web» de Google Cloud (ver 5c). Sin ellos, solo correo/celular + contraseña |
+| `ADMIN_BOOTSTRAP_KEY`                                                    | opcional, la puerta trasera sin terminal (D84): `make secret`. Sin ella no existe |
+| `TELEGRAM_BOT_USERNAME`                                                  | opcional; por defecto usa `kogane_finanzas_dev_bot` fuera de producción y `kogane_finanzas_bot` en producción |
 | `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_BUCKET` | Cloudflare R2 (capturas y notas de voz, D54); ver la sección 4b              |
 | `STORAGE_ENV`                                                            | `prod`: carpeta de producción en el bucket (D58). Sin ella la API no arranca |
 | `REDIS_URL`                                                              | `${{Redis.REDIS_URL}}` (referencia al servicio Redis, sección 2b). Sin ella no hay avisos |
@@ -158,6 +162,17 @@ Plan gratis: 10 GB, 1 M escrituras y 10 M lecturas al mes, sin cobro de salida.
 ## 5b. Importar Notion en producción (P14, una sola vez)
 
 Pasos y qué revisar en [`import-notion.md`](import-notion.md).
+
+## 5c. Usuarios y login (P23, una sola vez en producción)
+
+1. **Google (opcional pero recomendado):** console.cloud.google.com → *APIs y servicios ▸ Credenciales ▸ Crear credenciales ▸ ID de cliente de OAuth ▸ Aplicación web*. Origen autorizado: la URL de la web; URI de redireccionamiento: `<APP_URL>/api/v1/auth/google/callback`. Copia el ID y el secreto a `GOOGLE_CLIENT_ID` y `GOOGLE_CLIENT_SECRET` (Railway) y pon `APP_URL`. En modo «prueba» solo entran los correos de la lista de usuarios de prueba.
+2. `make db-deploy ENV=prod` (crea las tablas de usuarios, el dueño `legacy-owner` de todo lo que ya existe y el historial con `userId`).
+3. `make owner EMAIL=brandovidaldeza@gmail.com NAME="Brando Vidal" ROLE=admin ENV=prod`: tus datos pasan a esa cuenta (admin). Imprime un enlace de 7 días para definir una contraseña; con Google basta entrar con ese correo.
+4. `make superadmin EMAIL=yisusdracon@gmail.com PHONE=930764207 DNI=<dni> ENV=prod`: crea al superadmin (con su propio «Yo», categorías y grupos) y su enlace. Sin terminal: `POST /v1/admin/superadmins` con el header `x-admin-key`.
+5. Entra a la web con tu cuenta, ve a **Perfil ▸ Vincular Telegram** y abre el enlace: el chat queda de tu cuenta. Después vacía `TELEGRAM_ALLOWED_CHAT_IDS` (mientras esté, ese chat sigue actuando como dueño de lo anterior).
+6. **Correo de invitación (opcional):** desde la cuenta de Gmail del superadmin, sin dominio. En esa cuenta activa la verificación en dos pasos y crea una **contraseña de aplicación** (myaccount.google.com/apppasswords: no es la contraseña normal de Gmail). Ponla en `SMTP_APP_PASSWORD` con `SMTP_USER=yisusdracon@gmail.com` y `SMTP_FROM_NAME=Kogane`. Con eso, **Configuración ▸ Usuarios ▸ Invitar** envía el correo (y siempre muestra el enlace por si no sale), y `make user-invite EMAIL=… SEND=yes` también. Gmail deja unos 500 correos al día: de sobra.
+7. **Configuración ▸ Usuarios** (admin): invita a otras personas.
+8. Con el login propio, Cloudflare Access (D53) queda opcional: quítalo o déjalo como segunda capa.
 
 ## 6. Verificación
 

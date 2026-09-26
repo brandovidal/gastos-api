@@ -22,6 +22,19 @@ export default () => ({
   },
   auth: {
     apiKey: process.env.API_KEY,
+    // Where the web lives: Google sends the browser back to <appUrl>/api/v1/auth/google/callback (P23)
+    appUrl: process.env.APP_URL ?? 'http://localhost:4000',
+    googleClientId: process.env.GOOGLE_CLIENT_ID,
+    googleClientSecret: process.env.GOOGLE_CLIENT_SECRET,
+    // The backdoor without a shell: POST /v1/admin/superadmins with this key in x-admin-key. Empty: no such door
+    adminBootstrapKey: process.env.ADMIN_BOOTSTRAP_KEY,
+  },
+  // Invitation emails (P23) from a Gmail account with an app password: the only way to mail people without a domain
+  // (D91). Empty: no email is sent and the link is handed over by hand
+  mail: {
+    user: process.env.SMTP_USER,
+    appPassword: process.env.SMTP_APP_PASSWORD,
+    fromName: process.env.SMTP_FROM_NAME ?? 'Kogane',
   },
   // Screenshots and voice notes (D54, D58): Cloudflare R2 under <STORAGE_ENV>/ in dev and prod; a local folder only in tests
   storage: {
@@ -59,6 +72,11 @@ export default () => ({
   },
   telegram: {
     botToken: process.env.TELEGRAM_BOT_TOKEN,
+    botUsername:
+      process.env.TELEGRAM_BOT_USERNAME ||
+      (['prod', 'production'].includes((process.env.NODE_ENV ?? 'dev').toLowerCase())
+        ? 'kogane_finanzas_bot'
+        : 'kogane_finanzas_dev_bot'),
     webhookSecret: process.env.TELEGRAM_WEBHOOK_SECRET,
     allowedChatIds: (process.env.TELEGRAM_ALLOWED_CHAT_IDS ?? '')
       .split(',')

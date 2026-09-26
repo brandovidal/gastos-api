@@ -6,6 +6,7 @@ import { readdirSync } from 'node:fs'
 import { join } from 'node:path'
 
 import { PrismaService } from '../src/db/prisma/prisma.service'
+import { enterScriptUser } from '../src/db/tenant/script-user'
 import { baseLabel, NotionImporter, readNotionDir } from '../src/modules/imports/notion/notion-importer'
 
 const MONTHS = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'set', 'oct', 'nov', 'dic']
@@ -39,6 +40,8 @@ async function main() {
   const prisma = new PrismaService(new ConfigService({ db: { url, authToken: process.env.DATABASE_AUTH_TOKEN } }))
   await prisma.onModuleInit()
   const importer = new NotionImporter(prisma)
+  const user = await enterScriptUser(prisma, process.env.USER_EMAIL)
+  console.log(`Usuario: ${user.email}`)
 
   try {
     const remote = !!url?.startsWith('libsql://')

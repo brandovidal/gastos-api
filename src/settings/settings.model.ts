@@ -1,7 +1,17 @@
 import { AiProvider } from '@/commons/constants/ai.constant'
 
+export interface MailConfig {
+  user?: string
+  appPassword?: string
+  fromName: string
+}
+
 export interface AuthConfig {
   apiKey?: string
+  appUrl: string
+  googleClientId?: string
+  googleClientSecret?: string
+  adminBootstrapKey?: string
 }
 
 export interface StorageConfig {
@@ -50,6 +60,7 @@ export interface GroqConfig {
 
 export interface TelegramConfig {
   botToken?: string
+  botUsername: string
   webhookSecret?: string
   allowedChatIds: string[]
 }

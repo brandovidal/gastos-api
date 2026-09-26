@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common'
 
 import { MonthlyBudget } from '@/generated/prisma/client'
 import { PrismaService } from '@/db/prisma/prisma.service'
+import { requireUserId } from '@/db/tenant/tenant-context'
 
 export interface MonthlyBudgetWriteDbDto {
   month: number
@@ -16,7 +17,9 @@ export class MonthlyBudgetDBRepository {
   constructor(private readonly prisma: PrismaService) {}
 
   findByMonth(month: number, year: number): Promise<MonthlyBudget | null> {
-    return this.prisma.monthlyBudget.findUnique({ where: { month_year: { month, year } } })
+    return this.prisma.monthlyBudget.findUnique({
+      where: { userId_month_year: { userId: requireUserId(), month, year } },
+    })
   }
 
   // The latest month with a salary before the given one: a month without salary proposes it (P19)
@@ -29,8 +32,8 @@ export class MonthlyBudgetDBRepository {
 
   upsert({ month, year, salary, limitPercent }: MonthlyBudgetWriteDbDto): Promise<MonthlyBudget> {
     return this.prisma.monthlyBudget.upsert({
-      where: { month_year: { month, year } },
-      create: { month, year, salary, limitPercent },
+      where: { userId_month_year: { userId: requireUserId(), month, year } },
+      create: { userId: requireUserId(), month, year, salary, limitPercent },
       update: { salary, limitPercent },
     })
   }

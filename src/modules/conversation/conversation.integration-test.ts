@@ -23,6 +23,7 @@ import { AiExtractorProvider, GenerateJsonRequest } from '@/providers/ai/dto/ai-
 import { SettingsModule } from '@/settings/settings.module'
 
 import { decodeBotAction } from './bot-action.codec'
+import { AuthModule } from '@/modules/auth/auth.module'
 import { ConversationModule } from './conversation.module'
 import { ConversationService } from './conversation.service'
 import { MediaDownloaderRegistry } from './media-downloader.registry'
@@ -149,7 +150,7 @@ describe('Conversation flows (integration)', () => {
     const { fileId } = await prisma.expenseDraft.findUniqueOrThrow({ where: { id: draftId } })
     return prisma.storedFile.findUniqueOrThrow({ where: { id: fileId! } })
   }
-  const paymentMethodId = async (name: string) => (await prisma.paymentMethod.findUniqueOrThrow({ where: { name } })).id
+  const paymentMethodId = async (name: string) => (await prisma.paymentMethod.findFirstOrThrow({ where: { name } })).id
 
   beforeAll(async () => {
     // Same day as the recording: relative dates ("ayer") and card billing months stay valid
@@ -158,7 +159,7 @@ describe('Conversation flows (integration)', () => {
 
     moduleRef = await Test.createTestingModule({
       // Redis stays off without REDIS_URL (.env.test): reminders are unit tested
-      imports: [SettingsModule, PrismaModule, RedisModule, NotificationQueueModule, ConversationModule],
+      imports: [SettingsModule, PrismaModule, AuthModule, RedisModule, NotificationQueueModule, ConversationModule],
     })
       .overrideProvider(AiExtractorProviderStrategy)
       .useValue({ getProvider: (type: AiProvider) => new RecordedAiProvider(type) })
@@ -177,7 +178,7 @@ describe('Conversation flows (integration)', () => {
       mimeType: 'image/jpeg',
       data: Buffer.from(`fake-jpeg-${fileId}`).toString('base64'),
     }))
-    await seedCatalogs(prisma)
+    await seedCatalogs(prisma, 'test-user')
     yapeRef = (await moduleRef.get(ExpenseExtractionService).loadCatalog()).entries.find(
       (entry) => entry.name === 'Yape',
     )!.ref
@@ -237,7 +238,7 @@ describe('Conversation flows (integration)', () => {
     expect((await lastDraft()).subscription?.period).toBe('monthly')
     ;[summary] = await text('le presté 100 a dany')
     await press(summary, 'Guardar')
-    const danery = await prisma.person.findUniqueOrThrow({ where: { name: 'Danery' } })
+    const danery = await prisma.person.findFirstOrThrow({ where: { name: 'Danery' } })
     expect((await lastDraft()).debt).toMatchObject({ personId: danery.id, direction: 'owed_to_me', amount: 100 })
   })
 
@@ -245,7 +246,7 @@ describe('Conversation flows (integration)', () => {
   it('should lend to Danery, register her payment with "dany me pagó", confirm it and show it in /deudas', async () => {
     const [summary] = await text('le presté 100 a dany')
     await press(summary, 'Guardar')
-    const danery = await prisma.person.findUniqueOrThrow({ where: { name: 'Danery' } })
+    const danery = await prisma.person.findFirstOrThrow({ where: { name: 'Danery' } })
     const paidByDanery = async () =>
       (await prisma.debt.aggregate({ where: { personId: danery.id }, _sum: { paidAmount: true } }))._sum.paidAmount
 

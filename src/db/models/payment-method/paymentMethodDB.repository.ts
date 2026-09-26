@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common'
 
 import { Prisma } from '@/generated/prisma/client'
 import { PrismaService } from '@/db/prisma/prisma.service'
+import { requireUserId } from '@/db/tenant/tenant-context'
 import { PaymentMethodType } from '@/commons/constants/catalog.constant'
 import { JsonHelper } from '@/commons/helpers/json.helper'
 
@@ -34,8 +35,14 @@ export class PaymentMethodDBRepository {
   // A payment method typed in the bot that did not exist yet
   async create(name: string, type: PaymentMethodType): Promise<PaymentMethodDbDto> {
     const paymentMethod = await this.prisma.paymentMethod.upsert({
-      where: { name },
-      create: { name, type, aliases: JsonHelper.stringify([name.toLowerCase()]), showInBot: true },
+      where: { userId_name: { userId: requireUserId(), name } },
+      create: {
+        userId: requireUserId(),
+        name,
+        type,
+        aliases: JsonHelper.stringify([name.toLowerCase()]),
+        showInBot: true,
+      },
       update: { isActive: true },
     })
     return this.serializer.toDto(paymentMethod)

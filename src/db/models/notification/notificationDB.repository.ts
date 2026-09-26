@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common'
 
 import { Notification, NotificationSetting } from '@/generated/prisma/client'
 import { PrismaService } from '@/db/prisma/prisma.service'
+import { requireUserId } from '@/db/tenant/tenant-context'
 import { PrismaErrorCode } from '@/commons/constants/database.constant'
 import { isPrismaError } from '@/commons/helpers/prisma-error.helper'
 import { NotificationNotFoundException } from '@/commons/exceptions/notification/notification-not-found.exception'
@@ -82,8 +83,8 @@ export class NotificationDBRepository {
 
   upsertSetting(kind: string, telegram: boolean, web: boolean): Promise<NotificationSetting> {
     return this.prisma.notificationSetting.upsert({
-      where: { kind },
-      create: { kind, telegram, web },
+      where: { userId_kind: { userId: requireUserId(), kind } },
+      create: { userId: requireUserId(), kind, telegram, web },
       update: { telegram, web },
     })
   }

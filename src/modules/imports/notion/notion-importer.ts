@@ -4,6 +4,7 @@ import { basename, join } from 'node:path'
 
 import { PrismaService } from '@/db/prisma/prisma.service'
 import { runAsImport } from '@/db/audit/audit-context'
+import { requireUserId } from '@/db/tenant/tenant-context'
 import { AuditAction } from '@/commons/constants/audit.constant'
 import { DebtDBRepository } from '@/db/models/debt/debtDB.repository'
 import { Currency } from '@/commons/constants/expense.constant'
@@ -358,8 +359,8 @@ export class NotionImporter {
     for (const row of rows.filter((candidate) => candidate.kind === ImportRowKind.BUDGET)) {
       const budget = JSON.parse(row.data) as Omit<MonthlyBudgetImport, 'notionSpent'>
       const saved = await this.prisma.monthlyBudget.upsert({
-        where: { month_year: { month: budget.month, year: budget.year } },
-        create: budget,
+        where: { userId_month_year: { userId: requireUserId(), month: budget.month, year: budget.year } },
+        create: { ...budget, userId: requireUserId() },
         update: { salary: budget.salary, limitPercent: budget.limitPercent },
       })
       await this.prisma.importRow.update({ where: { id: row.id }, data: { targetId: saved.id } })

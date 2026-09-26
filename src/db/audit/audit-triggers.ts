@@ -20,7 +20,7 @@ const literal = (value: string) => `'${value.replace(/'/g, "''")}'`
 
 const NOW = `strftime('%Y-%m-%dT%H:%M:%f', 'now') || '+00:00'` // the format Prisma writes DateTime in
 const SOURCE = `COALESCE(c."source", 'cli')`
-const INSERT_INTO = `INSERT INTO "aud_changes" ("id", "entity", "entityId", "action", "changes", "source", "actorId", "batchId", "createdAt")`
+const INSERT_INTO = `INSERT INTO "aud_changes" ("id", "entity", "entityId", "action", "changes", "source", "actorId", "batchId", "userId", "createdAt")`
 
 // Rows of an import are not logged one by one: the importer leaves a single event (source = import)
 const CONTEXT_JOIN = `LEFT JOIN "aud_context" c ON c."id" = 1`
@@ -42,7 +42,7 @@ function snapshotTrigger({ table, idColumn, columns }: AuditedTable, action: 'cr
       `CREATE TRIGGER ${quote(name)} AFTER ${action === 'create' ? 'INSERT' : 'DELETE'} ON ${quote(table)}`,
       'BEGIN',
       `  ${INSERT_INTO}`,
-      `  SELECT lower(hex(randomblob(12))), ${literal(table)}, ${row}.${quote(idColumn)}, ${literal(action)}, json_object(${fields}), ${SOURCE}, c."actorId", c."batchId", ${NOW}`,
+      `  SELECT lower(hex(randomblob(12))), ${literal(table)}, ${row}.${quote(idColumn)}, ${literal(action)}, json_object(${fields}), ${SOURCE}, c."actorId", c."batchId", ${row}."userId", ${NOW}`,
       `  FROM (SELECT 1) ${CONTEXT_JOIN}`,
       `  WHERE ${NOT_IMPORT};`,
       'END',
@@ -73,7 +73,7 @@ function updateTrigger({ table, idColumn, columns }: AuditedTable): AuditTrigger
       `CREATE TRIGGER ${quote(name)} AFTER UPDATE ON ${quote(table)}`,
       'BEGIN',
       `  ${INSERT_INTO}`,
-      `  SELECT lower(hex(randomblob(12))), ${literal(table)}, NEW.${quote(idColumn)}, 'update', diff."changes", ${SOURCE}, c."actorId", c."batchId", ${NOW}`,
+      `  SELECT lower(hex(randomblob(12))), ${literal(table)}, NEW.${quote(idColumn)}, 'update', diff."changes", ${SOURCE}, c."actorId", c."batchId", NEW."userId", ${NOW}`,
       `  FROM (SELECT json_group_object("k", json_array(${before}, ${after})) AS "changes", COUNT(*) AS "total" FROM (`,
       `      ${pairs}`,
       `    ) WHERE "o" IS NOT "n") diff`,
