@@ -286,18 +286,19 @@ export class DebtsService {
     const koganeTotal = toCents(expenses.reduce((sum, expense) => sum + expense.amount, 0))
     const statementTotal = statement?.totalDue ?? null
     const expensePersonIds = new Map(expenses.map((expense) => [expense.id, expense.personId]))
-    const statementRows = statement?.rows.map((row) => ({
-      id: row.id,
-      date: row.date,
-      description: row.description,
-      label: row.label,
-      amount: row.amount,
-      installment: row.installment,
-      result: row.result,
-      personId: (row.expenseId && expensePersonIds.get(row.expenseId)) || row.personId || statement.personId,
-      expenseId: row.expenseId,
-      debtId: row.debtId,
-    })) ?? []
+    const statementRows =
+      statement?.rows.map((row) => ({
+        id: row.id,
+        date: row.date,
+        description: row.description,
+        label: row.label,
+        amount: row.amount,
+        installment: row.installment,
+        result: row.result,
+        personId: (row.expenseId && expensePersonIds.get(row.expenseId)) || row.personId || statement.personId,
+        expenseId: row.expenseId,
+        debtId: row.debtId,
+      })) ?? []
 
     return {
       paymentMethodId,

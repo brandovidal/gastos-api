@@ -154,6 +154,19 @@ export class StatementDBRepository {
     { result, label, personId }: { result?: StatementRowResult; label?: string | null; personId?: string | null },
   ) {
     await this.prisma.$transaction(async (tx) => {
+      if (personId !== undefined) {
+        const row = await tx.statementRow.findFirst({
+          where: { id: rowId, statementId },
+          select: { expenseId: true, debtId: true, statement: { select: { personId: true } } },
+        })
+        const assignedPersonId = personId ?? row?.statement.personId
+        if (row?.expenseId && assignedPersonId) {
+          await tx.creditCardExpense.updateMany({ where: { id: row.expenseId }, data: { personId: assignedPersonId } })
+        }
+        if (row?.debtId && assignedPersonId) {
+          await tx.debt.updateMany({ where: { id: row.debtId }, data: { personId: assignedPersonId } })
+        }
+      }
       const data = {
         ...(label !== undefined ? { label } : {}),
         ...(personId !== undefined ? { personId } : {}),

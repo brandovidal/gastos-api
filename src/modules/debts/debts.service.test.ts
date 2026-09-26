@@ -51,6 +51,7 @@ const mockRepository = {
   confirmProposal: vi.fn(),
   discardProposal: vi.fn(),
   findByIds: vi.fn(),
+  findCardPayments: vi.fn(),
   payMany: vi.fn(),
   resetMany: vi.fn(),
   setCard: vi.fn(),
@@ -296,6 +297,7 @@ describe('DebtsService', () => {
       buildDebt({ id: 'a', amount: 300, paidAmount: 100 }),
       buildDebt({ id: 'b', personId: bruce.id, person: bruce, amount: 50 }),
     ])
+    mockRepository.findCardPayments.mockResolvedValue([])
     mockStatements.findLatestForCard
       .mockResolvedValueOnce({ id: 'st-9', totalDue: 1020, rows: [{ description: 'TAMBO', amount: 20 }] })
       .mockResolvedValueOnce({

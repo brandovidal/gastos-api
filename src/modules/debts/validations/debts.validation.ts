@@ -197,11 +197,13 @@ export const cardCheckResponseSchema = z.object({
       balance: z.number(),
     }),
   ),
-  periodPayments: z.array(z.object({
-    personId: z.string(),
-    name: z.string(),
-    amount: z.number(),
-  })),
+  periodPayments: z.array(
+    z.object({
+      personId: z.string(),
+      name: z.string(),
+      amount: z.number(),
+    }),
+  ),
   expensesByPerson: z.array(
     z.object({
       personId: z.string(),
@@ -210,18 +212,20 @@ export const cardCheckResponseSchema = z.object({
       expenses: z.array(z.object({ id: z.string(), description: z.string(), amount: z.number() })),
     }),
   ),
-  statementRows: z.array(z.object({
-    id: z.string(),
-    date: dateTimeSchema.nullable(),
-    description: z.string(),
-    label: z.string().nullable(),
-    amount: z.number(),
-    installment: z.string().nullable(),
-    result: z.enum(StatementRowResult),
-    personId: z.string().nullable(),
-    expenseId: z.string().nullable(),
-    debtId: z.string().nullable(),
-  })),
+  statementRows: z.array(
+    z.object({
+      id: z.string(),
+      date: dateTimeSchema.nullable(),
+      description: z.string(),
+      label: z.string().nullable(),
+      amount: z.number(),
+      installment: z.string().nullable(),
+      result: z.enum(StatementRowResult),
+      personId: z.string().nullable(),
+      expenseId: z.string().nullable(),
+      debtId: z.string().nullable(),
+    }),
+  ),
   possibleInterest: z
     .array(z.object({ description: z.string(), amount: z.number() }))
     .describe('Statement lines of that month or the next that read like interest or fees'),

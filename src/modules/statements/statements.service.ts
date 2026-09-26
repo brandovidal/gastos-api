@@ -87,11 +87,15 @@ export class StatementsService {
 
     const card = await this.cardOf(paymentMethodId ?? null, parsed, lines)
     const period = this.periodOf(parsed, card)
-    const [expenses, holders] = await Promise.all([
+    const [currentExpenses, previousExpenses, holders] = await Promise.all([
       this.cardExpenses(card.id, period),
+      this.cardExpenses(card.id, addMonths(period, -1)),
       this.cardHolderDBRepository.findByCard(card.id),
     ])
-    const { rows } = reconcileStatement(parsed.rows, expenses)
+    // Statement rows may include a purchase recorded against the previous payment month.
+    // Use both months to match, while statement detail still reports only current-month expenses as missing.
+    const matchCandidates = [...currentExpenses, ...previousExpenses]
+    const { rows } = reconcileStatement(parsed.rows, matchCandidates)
     // Whose each purchase is: its section (CMR), its TIT/ADIC mark (Sip) or the titular (D116)
     const rowPeople = assignRowPeople(rows, rowHolderHints(lines, rows), {
       titularId: assignedPersonId,
