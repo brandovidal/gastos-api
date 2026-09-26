@@ -3,6 +3,8 @@
 import { PrismaLibSql } from '@prisma/adapter-libsql'
 
 import { PrismaClient } from '../src/generated/prisma/client'
+import { AuditSource } from '../src/commons/constants/audit.constant'
+import { setAuditContext } from '../src/db/audit/audit-context'
 import { seedCatalogs } from '../src/db/seed/catalog.seed'
 
 async function main() {
@@ -17,6 +19,7 @@ async function main() {
   })
 
   try {
+    await setAuditContext(prisma, AuditSource.CLI) // the history says these changes came from a script
     const result = await seedCatalogs(prisma)
     console.log(`Seeded on ${url.split('?')[0]}:`, result)
 

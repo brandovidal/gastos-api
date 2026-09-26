@@ -3,6 +3,8 @@ import { readdir, readFile } from 'node:fs/promises'
 import { basename, join } from 'node:path'
 
 import { PrismaService } from '@/db/prisma/prisma.service'
+import { runAsImport } from '@/db/audit/audit-context'
+import { AuditAction } from '@/commons/constants/audit.constant'
 import { DebtDBRepository } from '@/db/models/debt/debtDB.repository'
 import { Currency } from '@/commons/constants/expense.constant'
 import { toCents } from '@/commons/constants/debt.constant'
@@ -258,6 +260,13 @@ export class NotionImporter {
   // again, another import may have been applied since the preview); then the groups, the salaries and the payments
   // of the debts paid in Notion (only once)
   async apply(batchId: string, onProgress?: (done: number, total: number) => void): Promise<ApplyResult> {
+    // The history gets one event for the whole import, not a row per record (P29, D103)
+    return runAsImport(this.prisma, { entity: 'imp_batches', entityId: batchId, action: AuditAction.CREATE }, () =>
+      this.applyBatch(batchId, onProgress),
+    )
+  }
+
+  private async applyBatch(batchId: string, onProgress?: (done: number, total: number) => void): Promise<ApplyResult> {
     const batch = await this.prisma.importBatch.findUnique({ where: { id: batchId } })
     if (!batch || batch.status !== ImportBatchStatus.PREVIEW) {
       throw new ImportNotPreviewException({ batchId, status: batch?.status ?? null })
@@ -395,6 +404,12 @@ export class NotionImporter {
 
   // RESET: deletes every row that came from Notion (the payments of the debts go with them) and the import history
   async reset(): Promise<Record<ImportTable | 'batches', number>> {
+    return runAsImport(this.prisma, { entity: 'imp_batches', entityId: 'reset', action: AuditAction.DELETE }, () =>
+      this.resetRows(),
+    )
+  }
+
+  private async resetRows(): Promise<Record<ImportTable | 'batches', number>> {
     const deleted = {} as Record<ImportTable | 'batches', number>
     for (const table of TABLES) {
       deleted[table] = (await this.delegate(table).deleteMany({ where: { importKey: { not: null } } })).count

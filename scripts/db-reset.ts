@@ -5,7 +5,8 @@ import { createClient } from '@libsql/client'
 import Redis from 'ioredis'
 
 // Prisma and db-deploy bookkeeping: emptying them would make the next deploy re-run every migration
-const KEEP = new Set(['_prisma_migrations', '_app_migrations'])
+// aud_context is the row the history triggers read: without it they would write nothing
+const KEEP = new Set(['_prisma_migrations', '_app_migrations', 'aud_context'])
 
 async function main() {
   const env = process.argv[2]
@@ -27,8 +28,13 @@ async function main() {
       async (name) => [name, Number((await db.execute(`SELECT COUNT(*) AS n FROM "${name}"`)).rows[0].n)] as const,
     ),
   )
-  // migrate() turns foreign keys off outside its transaction, so the order of the deletes does not matter
-  await db.migrate(tables.map((name) => ({ sql: `DELETE FROM "${name}"`, args: [] })))
+  // migrate() turns foreign keys off outside its transaction, so the order of the deletes does not matter. The history
+  // goes last: the triggers write to it with every delete of the others
+  const ordered = [
+    ...tables.filter((name) => name !== 'aud_changes'),
+    ...tables.filter((name) => name === 'aud_changes'),
+  ]
+  await db.migrate(ordered.map((name) => ({ sql: `DELETE FROM "${name}"`, args: [] })))
   const { rows: broken } = await db.execute('PRAGMA foreign_key_check')
   if (broken.length)
     throw new Error(`${broken.length} broken foreign key(s) left: ${JSON.stringify(broken.slice(0, 5))}`)

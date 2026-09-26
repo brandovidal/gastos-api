@@ -1,6 +1,8 @@
 import { BeforeApplicationShutdown, Injectable, Logger, OnApplicationBootstrap } from '@nestjs/common'
 import { Worker } from 'bullmq'
 
+import { AuditSource } from '@/commons/constants/audit.constant'
+import { AuditContextService } from '@/db/audit/audit-context.service'
 import { DELIVER_QUEUE, NotificationJob, SCHEDULE_QUEUE } from '@/commons/constants/notification.constant'
 import { RedisService } from '@/providers/redis/redis.service'
 
@@ -20,6 +22,7 @@ export class NotificationWorkers implements OnApplicationBootstrap, BeforeApplic
     private readonly notificationQueue: NotificationQueue,
     private readonly notificationJobsService: NotificationJobsService,
     private readonly notificationsService: NotificationsService,
+    private readonly auditContext: AuditContextService,
   ) {}
 
   // Not awaited: Redis being slow or down never delays the start of the API
@@ -41,7 +44,10 @@ export class NotificationWorkers implements OnApplicationBootstrap, BeforeApplic
 
     const schedule = new Worker(
       SCHEDULE_QUEUE,
-      (job) => this.notificationJobsService.run(job.name as NotificationJob),
+      async (job) => {
+        await this.auditContext.enter(AuditSource.SCHEDULER) // recurring expenses, cleanups: the history says so (P29)
+        return this.notificationJobsService.run(job.name as NotificationJob)
+      },
       { connection: this.redisService.connection(), concurrency: 1 },
     )
     const deliveries = new Worker<DeliverJobData>(

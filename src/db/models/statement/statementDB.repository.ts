@@ -2,6 +2,8 @@ import { Injectable } from '@nestjs/common'
 
 import { Statement } from '@/generated/prisma/client'
 import { PrismaService } from '@/db/prisma/prisma.service'
+import { runAsImport } from '@/db/audit/audit-context'
+import { AuditAction } from '@/commons/constants/audit.constant'
 import { PaymentStatus } from '@/commons/constants/expense.constant'
 import { StatementRowResult, StatementStatus } from '@/commons/constants/statement.constant'
 import { StatementNotFoundException } from '@/commons/exceptions/statement/statement-not-found.exception'
@@ -104,17 +106,25 @@ export class StatementDBRepository {
     statementId: string,
     rows: { id: string; data: Record<string, unknown>; debt?: Record<string, unknown> }[],
   ): Promise<number> {
-    await this.prisma.$transaction(async (tx) => {
-      for (const row of rows) {
-        const expense = await tx.creditCardExpense.create({ data: row.data as never, select: { id: true } })
-        const debt = row.debt ? await tx.debt.create({ data: row.debt as never, select: { id: true } }) : null
-        await tx.statementRow.update({
-          where: { id: row.id },
-          data: { result: StatementRowResult.CREATED, expenseId: expense.id, debtId: debt?.id ?? null },
+    // The history gets one event for the statement, not a row per purchase (P29, D103)
+    await runAsImport(
+      this.prisma,
+      { entity: 'imp_statements', entityId: statementId, action: AuditAction.CREATE },
+      async () => {
+        await this.prisma.$transaction(async (tx) => {
+          for (const row of rows) {
+            const expense = await tx.creditCardExpense.create({ data: row.data as never, select: { id: true } })
+            const debt = row.debt ? await tx.debt.create({ data: row.debt as never, select: { id: true } }) : null
+            await tx.statementRow.update({
+              where: { id: row.id },
+              data: { result: StatementRowResult.CREATED, expenseId: expense.id, debtId: debt?.id ?? null },
+            })
+          }
+          await this.refreshStatus(tx, statementId)
         })
-      }
-      await this.refreshStatus(tx, statementId)
-    })
+        return { expenses: rows.length, debts: rows.filter((row) => row.debt).length }
+      },
+    )
     return rows.length
   }
 

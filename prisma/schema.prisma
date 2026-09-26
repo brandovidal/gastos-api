@@ -741,3 +741,35 @@ model ImportRow {
   @@index([targetTable, targetId])
   @@map("imp_rows")
 }
+
+// ==================== HISTORY (aud_) ====================
+
+// What changed in the audited tables (P29, D103, D122): written by SQLite triggers in the same transaction as the
+// change (scripts/audit-triggers.ts generates them), never by the app. `changes` is JSON: {field: [before, after]}
+// for an update, {field: value} for a create or a delete
+model AuditChange {
+  id        String   @id
+  entity    String // the table: exp_fixed_costs
+  entityId  String
+  action    String // AuditAction
+  changes   String
+  source    String // AuditSource
+  actorId   String? // empty until P23
+  batchId   String? // the import that made it
+  createdAt DateTime
+
+  @@index([entity, entityId])
+  @@index([createdAt])
+  @@map("aud_changes")
+}
+
+// One row (id = 1): who is writing right now. The triggers read it; each entry point of the app sets it before its
+// writes (AuditContextService). The source `import` makes the triggers skip: an import leaves one event (P29)
+model AuditContext {
+  id      Int     @id
+  source  String  @default("cli")
+  actorId String?
+  batchId String?
+
+  @@map("aud_context")
+}

@@ -6,6 +6,8 @@ import { Client, createClient } from '@libsql/client'
 import { readdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 
+import { splitSqlStatements } from '../src/commons/helpers/sql-statements.helper'
+
 const MIGRATIONS_DIR = join(__dirname, '..', 'prisma', 'migrations')
 
 async function main() {
@@ -37,7 +39,7 @@ async function main() {
     // dropping the old table would run ON DELETE SET NULL on every row that points to it (e.g. expenses → drafts).
     // Its PRAGMA foreign_keys=OFF line is ignored inside a transaction, so it is skipped here.
     await db.migrate([
-      ...splitStatements(sql)
+      ...splitSqlStatements(sql)
         .filter((statement) => !/^PRAGMA\s+foreign_keys\s*=/i.test(statement))
         .map((statement) => ({ sql: statement, args: [] })),
       { sql: 'INSERT INTO _app_migrations (name) VALUES (?)', args: [name] },
@@ -53,14 +55,6 @@ async function assertForeignKeys(db: Client, migration: string) {
   if (rows.length) {
     throw new Error(`${migration} left ${rows.length} broken foreign key(s): ${JSON.stringify(rows.slice(0, 5))}`)
   }
-}
-
-// Prisma's SQLite migrations are plain statements separated by ";" at the end of a line
-function splitStatements(sql: string): string[] {
-  return sql
-    .split(/;\s*$/m)
-    .map((statement) => statement.replace(/^\s*--.*$/gm, '').trim())
-    .filter(Boolean)
 }
 
 main().catch((error: Error) => {

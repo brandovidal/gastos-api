@@ -1,4 +1,6 @@
 import { Module } from '@nestjs/common'
+
+import { AuditModule } from '@/db/audit/audit.module'
 import { APP_INTERCEPTOR } from '@nestjs/core'
 
 import { CalendarDBModule } from '@/db/models/calendar/calendarDB.module'
@@ -23,6 +25,7 @@ import { UpcomingRefreshInterceptor } from './upcoming-refresh.interceptor'
 // Reminders and notifications (P20, D86, D87). NotificationQueue comes from the global NotificationQueueModule.
 @Module({
   imports: [
+    AuditModule,
     NotificationDBModule,
     CalendarDBModule,
     ExpenseDBModule,

@@ -1,6 +1,6 @@
 ##@ Database
 
-.PHONY: deps generate db-deploy db-reset migrate seed studio
+.PHONY: deps generate db-deploy db-reset migrate audit-triggers seed studio
 
 deps: env-file generate db-deploy seed ## After a pull: Prisma client, pending migrations, catalogs and bot command menu
 	@if grep -Eq '^TELEGRAM_BOT_TOKEN=.+' $(ENV_FILE); then \
@@ -33,6 +33,9 @@ migrate: ## New migration on the local dev.db + client (NAME=add_something)
 	@test -n "$(NAME)" || (echo "Usage: make migrate NAME=<migration_name>"; exit 1)
 	$(DOTENV_DEV) -- prisma migrate dev --name $(NAME)
 	pnpm exec prisma generate
+
+audit-triggers: env-file ## History triggers (P29): new migration when an audited table changed; CHECK=yes only reports [ENV=dev]
+	$(DOTENV) tsx scripts/audit-triggers.ts $(if $(filter yes,$(CHECK)),--check)
 
 seed: env-file ## Load or update catalogs (safe to re-run)
 	$(DOTENV) tsx prisma/seed.ts

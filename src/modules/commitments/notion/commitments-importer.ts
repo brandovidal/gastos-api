@@ -5,6 +5,8 @@ import { CommitmentKind, CommitmentStatus, CommitmentSubtype } from '@/commons/c
 import { Currency, ExpenseType, PaymentStatus } from '@/commons/constants/expense.constant'
 import { installmentNumber, plannedInstallments } from '@/commons/helpers/commitment.helper'
 import { PrismaService } from '@/db/prisma/prisma.service'
+import { runAsImport } from '@/db/audit/audit-context'
+import { AuditAction } from '@/commons/constants/audit.constant'
 import { parseCsv } from '@/modules/imports/notion/notion-csv'
 import { dateOf, installmentOf, moneyOf, paymentStatusOf } from '@/modules/imports/notion/notion.values'
 
@@ -132,6 +134,15 @@ export class CommitmentsImporter {
   }
 
   async apply(plans: CommitmentImport[]): Promise<CommitmentsResult> {
+    // One event in the history for the whole import, not a row per installment (P29, D103)
+    return runAsImport(
+      this.prisma,
+      { entity: 'exp_commitments', entityId: 'notion-commitments', action: AuditAction.CREATE },
+      () => this.applyPlans(plans),
+    )
+  }
+
+  private async applyPlans(plans: CommitmentImport[]): Promise<CommitmentsResult> {
     const owner = await this.prisma.person.findFirst({ where: { isDefault: true } })
     if (!owner) throw new Error('No hay una persona por defecto (Yo): corre make seed')
     const result: CommitmentsResult = { commitments: 0, created: 0, linked: 0 }

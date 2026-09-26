@@ -8,6 +8,8 @@ import {
 } from '@nestjs/common'
 import { ConfigService } from '@nestjs/config'
 
+import { AuditSource } from '@/commons/constants/audit.constant'
+import { AuditContextService } from '@/db/audit/audit-context.service'
 import { ChannelMessageType } from '@/commons/constants/conversation.constant'
 import { ExpenseDraftChannel } from '@/commons/constants/expense-draft.constant'
 import {
@@ -66,6 +68,7 @@ export class TelegramService implements OnModuleInit, OnApplicationBootstrap, Be
     private readonly telegramClient: TelegramClient,
     private readonly conversationService: ConversationService,
     private readonly mediaDownloaderRegistry: MediaDownloaderRegistry,
+    private readonly auditContext: AuditContextService,
   ) {}
 
   // The conversation downloads images through this (also again when a failed one is resumed from /borrador)
@@ -142,6 +145,8 @@ export class TelegramService implements OnModuleInit, OnApplicationBootstrap, Be
     const { chatId } = message
 
     try {
+      // The history says these changes came from the bot (P29)
+      await this.auditContext.enter(AuditSource.BOT)
       if (message.type !== ChannelMessageType.COMMAND && message.type !== ChannelMessageType.ACTION) {
         await this.telegramClient.sendChatAction(chatId, 'typing').catch(() => undefined)
       }

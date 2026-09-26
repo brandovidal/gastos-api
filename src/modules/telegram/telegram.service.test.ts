@@ -8,6 +8,7 @@ import { TelegramClient } from '@/providers/telegram/telegram.client'
 import { ConversationService } from '@/modules/conversation/conversation.service'
 import { FILE_ID } from '@/modules/conversation/mocks/conversation.mock'
 
+import { AuditContextService } from '@/db/audit/audit-context.service'
 import { MediaDownloaderRegistry } from '@/modules/conversation/media-downloader.registry'
 
 import { TELEGRAM_UPDATES } from './mocks/telegram-updates.mock'
@@ -26,6 +27,7 @@ const mockConversation = {
   rememberShareMessage: vi.fn().mockResolvedValue(undefined),
 }
 const mockRegistry = { register: vi.fn() }
+const mockAudit = { enter: vi.fn().mockResolvedValue(undefined) }
 
 const chat = { id: 555, type: 'private' }
 const textUpdate = { update_id: 1, message: { message_id: 10, chat, date: 0, text: 'almuerzo 25' } }
@@ -40,6 +42,7 @@ describe('TelegramService', () => {
     mockClient as unknown as TelegramClient,
     mockConversation as unknown as ConversationService,
     mockRegistry as unknown as MediaDownloaderRegistry,
+    mockAudit as unknown as AuditContextService,
   )
 
   beforeEach(() => {

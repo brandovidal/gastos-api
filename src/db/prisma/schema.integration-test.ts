@@ -36,6 +36,8 @@ describe('Prisma schema (integration)', () => {
 
     expect(tables.map((table) => table.name).sort()).toEqual([
       'ai_request_logs',
+      'aud_changes',
+      'aud_context',
       'bot_expense_drafts',
       'bot_files',
       'bud_budget_groups',
