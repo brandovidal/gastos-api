@@ -1,9 +1,11 @@
 import { Injectable, Logger } from '@nestjs/common'
 import { ZodValidationException } from 'nestjs-zod'
 
+import { AttachmentRefType } from '@/commons/constants/commitment.constant'
 import { Currency, PaymentStatus } from '@/commons/constants/expense.constant'
 import { JsonHelper } from '@/commons/helpers/json.helper'
 import { ExpenseRecordDBRepository, ExpenseResource } from '@/db/models/expense-record/expenseRecordDB.repository'
+import { AttachmentsService } from '@/modules/attachments/attachments.service'
 import { StoredFilesService } from '@/modules/stored-files/stored-files.service'
 
 import { ExpenseListQueryDto } from './dto/request/expenses.dto'
@@ -24,6 +26,7 @@ export class ExpensesService {
   constructor(
     private readonly expenseRecordDBRepository: ExpenseRecordDBRepository,
     private readonly storedFilesService: StoredFilesService,
+    private readonly attachmentsService: AttachmentsService,
   ) {}
 
   async findMany(resource: ExpenseResource, query: ExpenseListQueryDto) {
@@ -73,6 +76,8 @@ export class ExpensesService {
 
   async delete(resource: ExpenseResource, id: string): Promise<void> {
     const { fileId } = await this.expenseRecordDBRepository.delete(resource, id)
+    // Boletas and receipts attached to it (P27, D100) go with it
+    await this.attachmentsService.removeOf([AttachmentRefType.EXPENSE, AttachmentRefType.FIXED_COST], id)
     if (!fileId) return
     try {
       await this.storedFilesService.release(fileId)

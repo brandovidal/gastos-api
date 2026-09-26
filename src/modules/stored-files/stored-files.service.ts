@@ -5,6 +5,7 @@ import { ConfigService } from '@nestjs/config'
 
 import { StoredFile } from '@/generated/prisma/client'
 import {
+  ATTACHMENTS_CHANNEL,
   DRAFTS_FOLDER,
   EXPENSES_FOLDER,
   FILE_CLEANUP_BATCH,
@@ -31,6 +32,11 @@ const EXTENSION_BY_MIME: Record<string, string> = {
   'audio/mp4': '.m4a',
   'audio/wav': '.wav',
   'application/pdf': '.pdf', // bank statements (P14)
+  'application/msword': '.doc',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document': '.docx',
+  'application/vnd.ms-excel': '.xls',
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': '.xlsx',
+  'text/plain': '.txt',
 }
 
 // Screenshots and voice notes (D54, D58): R2 keeps the bytes, bot_files decides where they live.
@@ -70,6 +76,22 @@ export class StoredFilesService {
       sizeBytes: data.length,
       sha256,
       expiresAt,
+    })
+  }
+
+  // A file attached to a loan, an investment or an expense (P27, D100): <env>/finance/<folder>/<yyyy>/<mm>/…, kept
+  // (never expires). Every attachment is its own object: deleting one never touches another record's file
+  async storeAttachment(folder: string, data: Buffer, contentType: string): Promise<StoredFile> {
+    const mimeType = contentType.split(';')[0]
+    const [year, month] = new Date().toISOString().slice(0, 7).split('-')
+    const storageKey = `${this.root}/${folder}/${year}/${month}/${randomUUID()}${EXTENSION_BY_MIME[mimeType] ?? ''}`
+    await this.storage.put(storageKey, data, mimeType)
+    return this.storedFileDBRepository.createKept({
+      channel: ATTACHMENTS_CHANNEL,
+      storageKey,
+      contentType: mimeType,
+      sizeBytes: data.length,
+      sha256: createHash('sha256').update(data).digest('hex'),
     })
   }
 

@@ -92,6 +92,10 @@ export class ExpenseRecordDBRepository {
     return record
   }
 
+  async exists(resource: ExpenseResource, id: string): Promise<boolean> {
+    return (await this.delegate(resource).findUnique({ where: { id }, select: { id: true } })) !== null
+  }
+
   async create(resource: ExpenseResource, data: Record<string, unknown>) {
     try {
       return await this.delegate(resource).create({ data })

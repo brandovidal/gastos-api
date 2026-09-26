@@ -19,6 +19,8 @@ import { NotificationQueueModule } from '@/modules/notifications/notification-qu
 import { NotificationsModule } from '@/modules/notifications/notifications.module'
 import { ImportsModule } from '@/modules/imports/imports.module'
 import { StatementsModule } from '@/modules/statements/statements.module'
+import { AttachmentsModule } from '@/modules/attachments/attachments.module'
+import { CommitmentsModule } from '@/modules/commitments/commitments.module'
 
 @Module({
   imports: [
@@ -42,6 +44,8 @@ import { StatementsModule } from '@/modules/statements/statements.module'
     CalendarModule,
     NotificationsModule,
     StatementsModule,
+    CommitmentsModule,
+    AttachmentsModule,
     ImportsModule,
   ],
   controllers: [],

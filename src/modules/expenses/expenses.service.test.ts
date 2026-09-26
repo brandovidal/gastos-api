@@ -5,12 +5,14 @@ import { vi } from 'vitest'
 
 import { ExpenseNotFoundException } from '@/commons/exceptions/expense/expense-not-found.exception'
 import { ExpenseRecordDBRepository, ExpenseResource } from '@/db/models/expense-record/expenseRecordDB.repository'
+import { AttachmentsService } from '@/modules/attachments/attachments.service'
 import { StoredFilesService } from '@/modules/stored-files/stored-files.service'
 
 import { ExpensesService } from './expenses.service'
 
 const mockExpenseRecordDB = { delete: vi.fn(), create: vi.fn(), update: vi.fn(), findMany: vi.fn() }
 const mockStoredFiles = { release: vi.fn() }
+const mockAttachments = { removeOf: vi.fn() }
 
 describe('ExpensesService', () => {
   let service: ExpensesService
@@ -21,6 +23,7 @@ describe('ExpensesService', () => {
         ExpensesService,
         { provide: ExpenseRecordDBRepository, useValue: mockExpenseRecordDB },
         { provide: StoredFilesService, useValue: mockStoredFiles },
+        { provide: AttachmentsService, useValue: mockAttachments },
       ],
     }).compile()
 
@@ -33,6 +36,14 @@ describe('ExpensesService', () => {
 
   // D58: the screenshot goes with the expense, unless something else still uses it (checked by release)
   describe('delete', () => {
+    it('should remove the files attached to the deleted expense', async () => {
+      mockExpenseRecordDB.delete.mockResolvedValue({ fileId: null })
+
+      await service.delete(ExpenseResource.CREDIT_CARD, 'expense-1')
+
+      expect(mockAttachments.removeOf).toHaveBeenCalledWith(['expense', 'fixed_cost'], 'expense-1')
+    })
+
     it('should release the file of the deleted expense', async () => {
       mockExpenseRecordDB.delete.mockResolvedValue({ fileId: 'stored-1' })
 

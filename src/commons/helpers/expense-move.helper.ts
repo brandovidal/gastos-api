@@ -7,7 +7,7 @@ type Row = Record<string, unknown>
 
 // Columns only one of the two tables has
 const ONLY_IN: Record<MovableTable, string[]> = {
-  fixedCost: ['attentionDate'],
+  fixedCost: ['attentionDate', 'commitmentId'], // a subscription is not an installment of a loan (P27)
   subscription: ['period', 'kind', 'supplyNumber'],
 }
 

@@ -1,6 +1,6 @@
 # Importar Notion (P14)
 
-Trae las 9 bases de "Seguimiento financiero" (tarjetas, costos fijos, plataformas, cuentas, relación de gastos y resumen) a Kogane. Por defecto lee `../docs/files/migrations/notion/Seguimiento financiero`; con otro export, agrega `DIR=<carpeta>`. "Pago de Prestamos" y "Pago de Terreno" van en P27.
+Trae las 9 bases de "Seguimiento financiero" (tarjetas, costos fijos, plataformas, cuentas, relación de gastos y resumen) a Kogane. Por defecto lee `../docs/migrations/notion/Seguimiento financiero`; con otro export, agrega `DIR=<carpeta>`. "Pago de Prestamos" y "Pago de Terreno" (P27) se importan aparte, ver [Préstamos y terreno](#préstamos-y-terreno-p27).
 
 **Desde la web:** Registrar ▸ Reconocimiento / Importación ▸ "Notion (ZIP o CSV)": sube el ZIP que exporta Notion, revisa la previsualización por pestañas y recién ahí **Importar** (o **Descartar**). Es el mismo proceso que el comando.
 
@@ -46,3 +46,18 @@ make import-notion-reset CONFIRM=yes     # borra solo lo importado, para empezar
 - **"Faltan N migraciones en esta base":** corre `make db-deploy` con el mismo `ENV`.
 - **Deshacer:** `make import-notion-reset ENV=prod CONFIRM=yes` borra solo lo que vino de Notion (gastos, deudas y sus abonos, `imp_batches` e `imp_rows`). El sueldo por mes y los % de los grupos se quedan: la próxima importación los vuelve a escribir.
 - Los gastos registrados por el bot no se cruzan con Notion: revisa a mano el mes en curso.
+
+## Préstamos y terreno (P27)
+
+Después de `make import-notion` (el "Terreno" de Costos fijos ya tiene que estar):
+
+```bash
+make import-commitments ENV=prod              # solo informe: 3 compromisos, 36 + 12 + 48 cuotas
+make import-commitments ENV=prod CONFIRM=yes  # guarda
+make import-commitments ENV=prod              # comprobación: todo "ya estaban"
+```
+
+- Crea BCP (36 × S/ 1,950.76, día 5, cancelación S/ 42,172.79), Compartamos Financiera (12 × S/ 675.00, día 4) y Terreno San Bartolo (48 × S/ 1,042.00, día 6). Notion solo dice cuáles cuotas están pagadas; las que faltan en las páginas (BCP tiene 18 de 36) se generan del plan como "No iniciado".
+- Las cuotas del "Terreno" que ya están en Costos fijos (junio 2025 a setiembre 2026) se **vinculan** al compromiso en vez de duplicarse; la entrada de abril 2025 queda suelta (el informe lo avisa).
+- Los archivos adjuntos de Notion no vienen en el export: sus nombres y el enlace de Drive quedan en las notas de la cuota. Las boletas y recibos se suben desde la web (Compromisos ▸ cuota ▸ Archivos).
+- Se puede repetir: una cuota que ya está enlazada no se toca. Ojo: `make import-notion-reset` borra las cuotas del Terreno que vinieron de Notion (tienen `importKey`); si lo usas, corre las dos importaciones de nuevo.

@@ -38,6 +38,7 @@ model Person {
   debts              Debt[]
   recurringExpenses  RecurringExpense[]
   cardHolders        CardHolder[]
+  commitments        Commitment[]
 
   @@map("cat_people")
 }
@@ -101,6 +102,7 @@ model Category {
   updatedAt     DateTime     @updatedAt
 
   budgets            CategoryBudget[]
+  commitments        Commitment[]
   expenseDrafts      ExpenseDraft[]
   dailyExpenses      DailyExpense[]
   fixedCosts         FixedCost[]
@@ -266,7 +268,8 @@ model StoredFile {
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
 
-  drafts ExpenseDraft[]
+  drafts      ExpenseDraft[]
+  attachments Attachment[]
 
   @@index([status, expiresAt])
   @@map("bot_files")
@@ -336,6 +339,8 @@ model FixedCost {
   draftId         String?        @unique
   importKey       String?        @unique // fingerprint of the Notion row it was imported from (P14, D90)
   draft           ExpenseDraft?  @relation(fields: [draftId], references: [id])
+  commitmentId    String? // the loan this installment belongs to ("17/48", P27, D99)
+  commitment      Commitment?    @relation(fields: [commitmentId], references: [id])
   createdAt       DateTime       @default(now())
   updatedAt       DateTime       @updatedAt
 
@@ -343,7 +348,75 @@ model FixedCost {
   @@index([categoryId])
   @@index([personId])
   @@index([paymentStatus])
+  @@index([commitmentId])
   @@map("exp_fixed_costs")
+}
+
+// Loans and investments (P27, D99). A loan or an investment paid in installments has one fixed cost per installment
+// (commitmentId + "n/m"); an investment without installments (bolsa, bitcoin) has contributions
+model Commitment {
+  id                 String    @id @default(cuid())
+  name               String // "BCP", "Terreno San Bartolo", "Bitcoin"
+  kind               String // CommitmentKind
+  subtype            String // CommitmentSubtype
+  entity             String? // the bank or seller
+  currency           String    @default("PEN")
+  totalAmount        Float? // installmentCount × installmentAmount, or what the asset costs
+  installmentCount   Int? // null: no installments (contributions)
+  installmentAmount  Float?
+  dueDay             Int? // day of the month each installment is due
+  startMonth         Int? // month of installment 1
+  startYear          Int?
+  cancellationAmount Float? // what it costs to cancel it today, edited by hand
+  cancellationDate   DateTime? // the day that amount was quoted
+  status             String    @default("active") // CommitmentStatus
+  personId           String
+  person             Person    @relation(fields: [personId], references: [id])
+  categoryId         String?
+  category           Category? @relation(fields: [categoryId], references: [id])
+  notes              String?
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+
+  installments  FixedCost[]
+  contributions Contribution[]
+
+  @@index([kind, status])
+  @@map("exp_commitments")
+}
+
+// What you put into an investment without installments: stock purchases, bitcoin (D99)
+model Contribution {
+  id           String     @id @default(cuid())
+  commitmentId String
+  commitment   Commitment @relation(fields: [commitmentId], references: [id], onDelete: Cascade)
+  date         DateTime
+  amount       Float // what you paid
+  currency     String     @default("PEN")
+  quantity     Float? // 0.0042
+  unit         String? // "BTC", "acciones"
+  notes        String?
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+
+  @@index([commitmentId, date])
+  @@map("exp_contributions")
+}
+
+// Files of any record (D100): the bytes are in R2 (bot_files), this row says whose they are
+model Attachment {
+  id        String     @id @default(cuid())
+  fileId    String
+  file      StoredFile @relation(fields: [fileId], references: [id])
+  refType   String // AttachmentRefType
+  refId     String
+  kind      String // AttachmentKind
+  name      String // the name the file had when uploaded
+  createdAt DateTime   @default(now())
+
+  @@index([refType, refId])
+  @@index([fileId])
+  @@map("exp_attachments")
 }
 
 model Subscription {
@@ -566,26 +639,26 @@ model NotificationSetting {
 // expenses of that payment month. The PDF itself lives in R2 (fileId, D58).
 
 model Statement {
-  id              String    @id @default(cuid())
-  paymentMethodId String // the card
-  personId        String? // person assigned from the PDF or selected before upload
-  paymentMonth    Int
-  paymentYear     Int
-  periodStart     DateTime?
-  periodEnd       DateTime?
-  dueDate         DateTime? // last day to pay
-  totalDue        Float? // total to pay of the statement
-  minimumDue      Float?
-  previousBalance Float? @map("previous_balance")
-  previousPayments Float? @map("previous_payments")
-  monthlyPayment  Float? @map("monthly_payment")
+  id                 String    @id @default(cuid())
+  paymentMethodId    String // the card
+  personId           String? // person assigned from the PDF or selected before upload
+  paymentMonth       Int
+  paymentYear        Int
+  periodStart        DateTime?
+  periodEnd          DateTime?
+  dueDate            DateTime? // last day to pay
+  totalDue           Float? // total to pay of the statement
+  minimumDue         Float?
+  previousBalance    Float?    @map("previous_balance")
+  previousPayments   Float?    @map("previous_payments")
+  monthlyPayment     Float?    @map("monthly_payment")
   minimumAllocations String? // JSON personId -> planned contribution to the minimum payment
-  currency        String    @default("PEN")
-  source          String // StatementSource: how it was read (template, ai)
-  fileId          String?
-  status          String    @default("review") // StatementStatus
-  createdAt       DateTime  @default(now())
-  updatedAt       DateTime  @updatedAt
+  currency           String    @default("PEN")
+  source             String // StatementSource: how it was read (template, ai)
+  fileId             String?
+  status             String    @default("review") // StatementStatus
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
 
   rows StatementRow[]
 

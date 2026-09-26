@@ -25,3 +25,6 @@ export const FILE_CLEANUP_BATCH = 100
 
 // Signed links to see a file in kogane-app (R2 allows up to 7 days)
 export const FILE_URL_TTL_SECONDS = 10 * 60
+
+// Attachments of loans, investments and expenses (P27, D100): <env>/finance/<folder>/<yyyy>/<mm>/<id>.<ext>, kept for good
+export const ATTACHMENTS_CHANNEL = 'web'

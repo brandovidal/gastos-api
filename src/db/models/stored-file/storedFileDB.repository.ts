@@ -17,6 +17,13 @@ export class StoredFileDBRepository {
     return this.prisma.storedFile.create({ data: { ...data, status: StoredFileStatus.TEMPORARY } })
   }
 
+  // An attachment (P27): it is kept from the start, no draft is waiting for it
+  createKept(data: CreateStoredFileDbDto): Promise<StoredFile> {
+    return this.prisma.storedFile.create({
+      data: { ...data, status: StoredFileStatus.KEPT, keptAt: new Date(), expiresAt: null },
+    })
+  }
+
   findById(id: string): Promise<StoredFile | null> {
     return this.prisma.storedFile.findUnique({ where: { id } })
   }
@@ -29,8 +36,13 @@ export class StoredFileDBRepository {
     })
   }
 
-  // Drafts that still need the file: still under review, or saved as an expense that still exists
-  countUses(fileId: string): Promise<number> {
+  // Drafts that still need the file (still under review, or saved as an expense that still exists) and attachments
+  async countUses(fileId: string): Promise<number> {
+    const attachments = await this.prisma.attachment.count({ where: { fileId } })
+    return attachments + (await this.countDraftUses(fileId))
+  }
+
+  private countDraftUses(fileId: string): Promise<number> {
     return this.prisma.expenseDraft.count({
       where: {
         fileId,

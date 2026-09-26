@@ -74,6 +74,25 @@ describe('StoredFilesService', () => {
     vi.resetAllMocks()
   })
 
+  describe('storeAttachment', () => {
+    it('should keep the file from the start in the folder of its area, without expiry', async () => {
+      mockRepository.createKept = vi.fn(async (data) => buildStoredFile({ ...data, status: StoredFileStatus.KEPT }))
+      const data = Buffer.from('%PDF')
+
+      await service.storeAttachment('commitments', data, 'application/pdf')
+
+      const [key, body, contentType] = mockStorage.put.mock.calls[0]
+      expect(key).toMatch(/^dev\/finance\/commitments\/2026\/09\/[0-9a-f-]{36}\.pdf$/)
+      expect(body).toBe(data)
+      expect(contentType).toBe('application/pdf')
+      expect(mockRepository.createKept).toHaveBeenCalledWith(
+        expect.objectContaining({ channel: 'web', storageKey: key, sizeBytes: 4 }),
+      )
+      // Two attachments with the same bytes are two objects: deleting one never touches the other
+      expect(mockRepository.findAliveBySha256).not.toHaveBeenCalled()
+    })
+  })
+
   describe('storeTemporary', () => {
     it('should upload to <env>/finance/drafts/<yyyy-mm>/ and keep only the key and metadata in the database', async () => {
       const data = Buffer.from('image')
