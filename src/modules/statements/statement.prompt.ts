@@ -13,10 +13,12 @@ Return JSON with:
 - dueDate: last day to pay (YYYY-MM-DD) or null.
 - totalDue: total amount to pay of this statement, or null. minimumDue: minimum payment, or null.
 - currency: "PEN" or "USD" of the totals.
-- movements: every purchase or charge of the period, one per line of the statement: date (YYYY-MM-DD, the processing
-  date when there are two), description as printed, amount (positive number), currency, installment "n/m" when the line
-  is an installment of a purchase, otherwise null.
-Leave out payments to the card, refunds and credits, previous balance, interest summaries and totals.
+- movements: every purchase and every individual charge of the period, one per line of the statement: date (YYYY-MM-DD,
+  the processing date when there are two), description as printed, amount (positive number), currency, installment "n/m"
+  when the line is an installment of a purchase, otherwise null. Include itemized compensatory or late interest, insurance,
+  fees, commissions and taxes (for example ITF).
+Leave out payments to the card, refunds and credits, previous balance, totals and explanatory interest summaries that are
+not individual movements. Never omit an itemized charge because it is interest or a fee.
 Do not invent movements: if the text has none, return an empty list.`
 
 const day = z

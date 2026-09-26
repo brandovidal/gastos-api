@@ -171,6 +171,39 @@ describe('StatementsService', () => {
     )
   })
 
+  it('should keep itemized interest and insurance charges when AI reads the rest of a statement', async () => {
+    vi.mocked(readPdfLines).mockResolvedValue([
+      'ESTADO DE CUENTA - TARJETA SIP',
+      'Fecha de cierre 09/09/2026',
+      'Total a pagar S/ 110.00',
+      '09/09/2026 09/09/2026 Seguro Desgravamen 13.90',
+      '09/09/2026 09/09/2026 Interes Compensatorio 545.99',
+    ])
+    mockExtraction.generateStructured.mockResolvedValue({
+      cardName: 'Sip',
+      periodEnd: '2026-09-09',
+      dueDate: null,
+      totalDue: 110,
+      minimumDue: null,
+      currency: 'PEN',
+      movements: [
+        { date: '2026-09-09', description: 'Seguro Desgravamen', amount: 13.9, currency: 'PEN', installment: null },
+      ],
+    })
+    mockStatementDB.findById.mockResolvedValue(saved([]))
+
+    await service.upload({ data: Buffer.from('pdf') })
+
+    expect(mockStatementDB.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        rows: expect.arrayContaining([
+          expect.objectContaining({ description: 'Seguro Desgravamen', amount: 13.9 }),
+          expect.objectContaining({ description: 'Interes Compensatorio', amount: 545.99 }),
+        ]),
+      }),
+    )
+  })
+
   it('should ask for the card when the statement does not say which one', async () => {
     vi.mocked(readPdfLines).mockResolvedValue(['Fecha de cierre 10/09/2026', 'Total a pagar 20.00', '01/09 CINE 20.00'])
 

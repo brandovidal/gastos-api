@@ -40,6 +40,16 @@ const periodOfDay = (isoDay: string): PaymentPeriod => ({
   paymentYear: Number(isoDay.slice(0, 4)),
 })
 
+const ITEMIZED_CARD_CHARGE =
+  /\b(seguro( de)? desgravamen|desgravamen|interes(es)?|comision(es)?|membresia|itf|mora|moratorio|penalidad)\b/i
+const rowKey = (row: { date: string | null; description: string; amount: number }) =>
+  `${row.date ?? ''}|${toCents(row.amount)}|${row.description
+    .normalize('NFD')
+    .replace(/\p{Diacritic}/gu, '')
+    .toLowerCase()
+    .replace(/\s+/g, ' ')
+    .trim()}`
+
 // Bank statements (P14 block 2, D95): the PDF is opened with a saved document number (D94), read by a template
 // or the AI (only its text), saved row by row and reconciled with the card expenses of its payment month
 @Injectable()
@@ -274,8 +284,18 @@ export class StatementsService {
       operation: AiOperation.STATEMENT,
     })
     if (output?.movements.length) {
+      const fromAiRows = fromAi(output, parsed.cardHint ?? detectCardHint(output.cardName ?? '')).rows
+      // The template can read dated, itemized fees even when the statement layout forces the other rows through AI.
+      // Keep those charges deterministically in case the model omits interest or insurance from its movements.
+      const seen = new Set(fromAiRows.map(rowKey))
+      const itemizedCharges = parsed.rows.filter(
+        (row) => ITEMIZED_CARD_CHARGE.test(row.description) && !seen.has(rowKey(row)),
+      )
       return {
-        parsed: fromAi(output, parsed.cardHint ?? detectCardHint(output.cardName ?? '')),
+        parsed: {
+          ...fromAi(output, parsed.cardHint ?? detectCardHint(output.cardName ?? '')),
+          rows: [...fromAiRows, ...itemizedCharges],
+        },
         source: StatementSource.AI,
       }
     }

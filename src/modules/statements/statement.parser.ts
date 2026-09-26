@@ -52,7 +52,7 @@ const amountOf = (text: string) => toCents(Number(text.replace(/,/g, '')))
 
 // Lines that are totals, balances or payments, never a purchase
 const NOT_A_MOVEMENT =
-  /total|saldo|pago minimo|pago del mes|linea de credito|limite|interes|tasa|tea|tcea|su pago|pago recibido|pago realizado|gracias por su pago|abono/
+  /total|saldo|pago minimo|pago del mes|linea de credito|limite|tasa|tea|tcea|su pago|pago recibido|pago realizado|gracias por su pago|abono/
 
 function dateFrom(text: string, fallbackYear: number | null): { iso: string; rest: string } | null {
   let match = new RegExp(`^${DAY_MONTH}\\b`).exec(text)

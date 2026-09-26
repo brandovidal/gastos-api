@@ -46,6 +46,22 @@ describe('statement.parser', () => {
     ])
   })
 
+  it('should include itemized insurance and interest charges as statement movements', () => {
+    const parsed = parseStatementLines([
+      'Fecha de cierre 09/09/2026',
+      'Total a pagar S/ 573.71',
+      '09/09/2026 09/09/2026 Seguro Desgravamen 13.90',
+      '09/09/2026 09/09/2026 Interes Compensatorio 545.99',
+      '09/09/2026 09/09/2026 Interes Moratorio 13.82',
+    ])
+
+    expect(parsed.rows.map(({ description, amount }) => ({ description, amount }))).toEqual([
+      { description: 'Seguro Desgravamen', amount: 13.9 },
+      { description: 'Interes Compensatorio', amount: 545.99 },
+      { description: 'Interes Moratorio', amount: 13.82 },
+    ])
+  })
+
   it('should not trust a template whose purchases do not add up to the total', () => {
     const parsed = parseStatementLines(['Total a pagar 500.00', 'Fecha de cierre 10/09/2026', '01/09 CINE 20.00'])
     expect(templateAddsUp(parsed)).toBe(false)
