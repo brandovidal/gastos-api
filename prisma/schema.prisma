@@ -45,20 +45,22 @@ model Person {
 
 // Every way of paying. A credit card is a payment method of type credit_card with its billing days.
 model PaymentMethod {
-  id              String   @id @default(cuid())
-  name            String   @unique
-  type            String // PaymentMethodType
-  code            String?  @unique // short code of credit cards (CMR, OH, IO, AMEX)
-  bank            String? // debit cards require it (D107)
-  aliases         String   @default("[]") // JSON array of lowercase aliases used by the AI
-  isActive        Boolean  @default(true)
-  showInBot       Boolean  @default(true) // offered as a quick reply button in the bot
-  isPrimary       Boolean  @default(false) // the card of screenshots that do not show which one (D47): IO
-  billingCloseDay Int? // credit cards only
-  paymentDueDay   Int? // credit cards only
-  color           String?
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
+  id                   String   @id @default(cuid())
+  name                 String   @unique
+  type                 String // PaymentMethodType
+  code                 String?  @unique // short code of credit cards (CMR, OH, IO, AMEX)
+  bank                 String? // debit cards require it (D107)
+  aliases              String   @default("[]") // JSON array of lowercase aliases used by the AI
+  isActive             Boolean  @default(true)
+  showInBot            Boolean  @default(true) // offered as a quick reply button in the bot
+  isPrimary            Boolean  @default(false) // the card of screenshots that do not show which one (D47): IO
+  billingCloseDay      Int? // credit cards only
+  paymentDueDay        Int? // credit cards only
+  supportsAmortization Boolean  @default(false) // special debt payment available with this credit card (D114)
+  supportsCashback     Boolean  @default(false) // statement cashback available with this credit card (D114)
+  color                String?
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
 
   expenseDrafts ExpenseDraft[]
 

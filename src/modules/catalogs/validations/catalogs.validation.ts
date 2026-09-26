@@ -30,6 +30,8 @@ export const paymentMethodSchema = z.object({
   // credit cards: the closing day decides the billing month (D22)
   billingCloseDay: day.nullable().optional(),
   paymentDueDay: day.nullable().optional(),
+  supportsAmortization: z.boolean().optional(),
+  supportsCashback: z.boolean().optional(),
   bank: z.string().trim().min(1).max(40).nullable().optional(),
   color: z.string().trim().max(20).nullable().optional(),
 })
@@ -89,6 +91,8 @@ export const paymentMethodResponseSchema = z.object({
   showInBot: z.boolean(),
   billingCloseDay: z.number().int().nullable(),
   paymentDueDay: z.number().int().nullable(),
+  supportsAmortization: z.boolean(),
+  supportsCashback: z.boolean(),
   bank: z.string().nullable(),
   color: z.string().nullable(),
 })
