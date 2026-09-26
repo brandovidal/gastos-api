@@ -23,12 +23,15 @@ async function main() {
     .filter((name) => !KEEP.has(name))
 
   const counts = await Promise.all(
-    tables.map(async (name) => [name, Number((await db.execute(`SELECT COUNT(*) AS n FROM "${name}"`)).rows[0].n)] as const),
+    tables.map(
+      async (name) => [name, Number((await db.execute(`SELECT COUNT(*) AS n FROM "${name}"`)).rows[0].n)] as const,
+    ),
   )
   // migrate() turns foreign keys off outside its transaction, so the order of the deletes does not matter
   await db.migrate(tables.map((name) => ({ sql: `DELETE FROM "${name}"`, args: [] })))
   const { rows: broken } = await db.execute('PRAGMA foreign_key_check')
-  if (broken.length) throw new Error(`${broken.length} broken foreign key(s) left: ${JSON.stringify(broken.slice(0, 5))}`)
+  if (broken.length)
+    throw new Error(`${broken.length} broken foreign key(s) left: ${JSON.stringify(broken.slice(0, 5))}`)
 
   console.log(`Database: ${url.split('?')[0]}`)
   counts

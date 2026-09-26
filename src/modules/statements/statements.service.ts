@@ -358,8 +358,17 @@ export class StatementsService {
     }
   }
 
-  private notify(view: Awaited<ReturnType<StatementsService['get']>>) {
+  private async notify(view: Awaited<ReturnType<StatementsService['get']>>) {
     const count = (result: StatementRowResult) => view.rows.filter((row) => row.result === result).length
+    // What each other person of the card has on it (P30, D116): their purchases, to collect once saved
+    const names = new Map((await this.personDBRepository.findActive()).map((person) => [person.id, person.name]))
+    const byPerson = new Map<string, number>()
+    view.rows
+      .filter((row) => row.result !== StatementRowResult.IGNORED && row.personId && row.personId !== view.personId)
+      .forEach((row) => byPerson.set(row.personId!, toCents((byPerson.get(row.personId!) ?? 0) + row.amount)))
+    const collect = byPerson.size
+      ? ` A cobrar: ${[...byPerson].map(([id, amount]) => `${names.get(id) ?? '—'} S/ ${amount.toFixed(2)}`).join(', ')}.`
+      : ''
     const month = `${MONTH_NAMES[view.paymentMonth - 1]} ${view.paymentYear}`
     const total =
       view.difference == null
@@ -370,7 +379,7 @@ export class StatementsService {
     return this.notificationsService.notify({
       kind: NotificationKind.STATEMENT,
       title: `📄 Estado de cuenta ${view.cardName} · ${month}`,
-      body: `${count(StatementRowResult.MATCHED)} ya registrados, ${count(StatementRowResult.NEW)} nuevos y ${view.missing.length} solo en Kogane.${total} Revísalo en Estados de cuenta.`,
+      body: `${count(StatementRowResult.MATCHED)} ya registrados, ${count(StatementRowResult.NEW)} nuevos y ${view.missing.length} solo en Kogane.${total}${collect} Revísalo en Estados de cuenta.`,
       amount: view.totalDue,
       refType: NotificationRefType.STATEMENT,
       refId: view.id,

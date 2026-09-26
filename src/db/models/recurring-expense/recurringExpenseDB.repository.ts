@@ -8,6 +8,7 @@ import { RecurringTargetType } from '@/commons/constants/expense.constant'
 export interface GeneratedRowDbDto {
   targetType: RecurringTargetType
   data: Record<string, unknown>
+  debts?: Record<string, unknown>[] // the cobros of a shared template (D73, P30), created with the row
 }
 
 export type RecurringWithCard = RecurringExpense & {
@@ -39,7 +40,7 @@ export class RecurringExpenseDBRepository {
   async generate(
     recurringId: string,
     monthStart: Date,
-    { targetType, data }: GeneratedRowDbDto,
+    { targetType, data, debts = [] }: GeneratedRowDbDto,
   ): Promise<string | null> {
     return this.prisma.$transaction(async (tx) => {
       const { count } = await tx.recurringExpense.updateMany({
@@ -54,6 +55,7 @@ export class RecurringExpenseDBRepository {
           : targetType === RecurringTargetType.SUBSCRIPTION
             ? await tx.subscription.create({ data: data as never, select: { id: true } })
             : await tx.creditCardExpense.create({ data: data as never, select: { id: true } })
+      if (debts.length) await tx.debt.createMany({ data: debts as never })
       return created.id
     })
   }

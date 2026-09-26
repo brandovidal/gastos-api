@@ -70,6 +70,36 @@ describe('ExpensesService', () => {
 
   // P7: the body is validated per table, and a PEN amount is also its amount in soles
   describe('create and update', () => {
+    beforeEach(() => {
+      mockExpenseRecordDB.findMany.mockResolvedValue([])
+      mockExpenseRecordDB.create.mockImplementation(async (_resource, data) => ({ id: 'new', ...data }))
+      mockExpenseRecordDB.update.mockImplementation(async (_resource, id, data) => ({ id, ...data }))
+    })
+
+    it('should not turn a dollar expense into soles when an edit does not send the currency', async () => {
+      await service.update(ExpenseResource.CREDIT_CARD, 'cc-1', { paymentStatus: 'paid' })
+
+      expect(mockExpenseRecordDB.update.mock.calls[0][2]).toEqual({ paymentStatus: 'paid' })
+    })
+
+    it('should keep the split of a recurring template as JSON and answer it as an object (P30)', async () => {
+      const sharedWith = { shares: [{ personId: 'brenda', ratio: 0.5 }] }
+      const created = await service.create(ExpenseResource.RECURRING, {
+        description: 'Netflix',
+        amount: 52.9,
+        currency: 'PEN',
+        personId: 'person-1',
+        targetType: 'subscription',
+        dayOfMonth: 5,
+        sharedWith,
+      })
+
+      expect(mockExpenseRecordDB.create.mock.calls[0][1].sharedWith).toBe(JSON.stringify(sharedWith))
+      expect(created).toEqual(expect.objectContaining({ sharedWith }))
+      await service.update(ExpenseResource.RECURRING, 'rec-1', { sharedWith: null })
+      expect(mockExpenseRecordDB.update.mock.calls[0][2]).toEqual({ sharedWith: null })
+    })
+
     const daily = {
       description: 'Almuerzo',
       amount: 25,
@@ -127,8 +157,10 @@ describe('ExpensesService', () => {
       expect(mockExpenseRecordDB.update.mock.calls[0][2]).not.toHaveProperty('paymentStatus')
     })
 
-    it('should reject a body that does not fit the table', () => {
-      expect(() => service.create(ExpenseResource.DAILY, { ...daily, amount: -5 })).toThrow(ZodValidationException)
+    it('should reject a body that does not fit the table', async () => {
+      await expect(service.create(ExpenseResource.DAILY, { ...daily, amount: -5 })).rejects.toThrow(
+        ZodValidationException,
+      )
       expect(mockExpenseRecordDB.create).not.toHaveBeenCalled()
     })
 

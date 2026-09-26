@@ -10,6 +10,7 @@ export enum NotificationKind {
   ANOMALY = 'anomaly', // a platform got more expensive, a duplicated charge, a platform not charged
   RECURRING = 'recurring', // the expenses of the month were created from Recurrentes
   STATEMENT = 'statement', // a bank statement was read and reconciled (P14, D95)
+  COLLECT = 'collect', // cobros of the month per person (day 1) and the late ones (day 5), P30
 }
 
 // What a notification is about: what ✅ Pagado acts on and where the web link goes
@@ -34,6 +35,7 @@ export const DEFAULT_NOTIFICATION_SETTINGS: Record<NotificationKind, { telegram:
   [NotificationKind.ANOMALY]: { telegram: true, web: true },
   [NotificationKind.RECURRING]: { telegram: true, web: true },
   [NotificationKind.STATEMENT]: { telegram: true, web: true },
+  [NotificationKind.COLLECT]: { telegram: true, web: true },
 }
 
 // Scheduled jobs (D87): BullMQ job schedulers in America/Lima
@@ -44,6 +46,8 @@ export enum NotificationJob {
   WEEKLY = 'weekly',
   UPCOMING_REFRESH = 'upcoming-refresh',
   FILES_CLEANUP = 'files-cleanup',
+  COLLECT_MONTH = 'collect-month', // day 1: what each person owes this month (P30)
+  COLLECT_LATE = 'collect-late', // day 5: what is still owed from earlier months
 }
 
 export const NOTIFICATION_JOB_PATTERNS: Record<NotificationJob, string> = {
@@ -53,6 +57,8 @@ export const NOTIFICATION_JOB_PATTERNS: Record<NotificationJob, string> = {
   [NotificationJob.WEEKLY]: '0 20 * * 0',
   [NotificationJob.UPCOMING_REFRESH]: '5 * * * *',
   [NotificationJob.FILES_CLEANUP]: '30 */6 * * *',
+  [NotificationJob.COLLECT_MONTH]: '0 9 1 * *',
+  [NotificationJob.COLLECT_LATE]: '0 9 5 * *',
 }
 
 export const SCHEDULE_QUEUE = 'ntf-schedule'

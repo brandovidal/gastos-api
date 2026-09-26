@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common'
 import { ZodValidationException } from 'nestjs-zod'
 
 import { Currency, PaymentStatus } from '@/commons/constants/expense.constant'
+import { JsonHelper } from '@/commons/helpers/json.helper'
 import { ExpenseRecordDBRepository, ExpenseResource } from '@/db/models/expense-record/expenseRecordDB.repository'
 import { StoredFilesService } from '@/modules/stored-files/stored-files.service'
 
@@ -25,29 +26,49 @@ export class ExpensesService {
     private readonly storedFilesService: StoredFilesService,
   ) {}
 
-  findMany(resource: ExpenseResource, query: ExpenseListQueryDto) {
-    return this.expenseRecordDBRepository.findMany(resource, query)
+  async findMany(resource: ExpenseResource, query: ExpenseListQueryDto) {
+    return (await this.expenseRecordDBRepository.findMany(resource, query)).map((row) => this.toView(resource, row))
   }
 
-  findById(resource: ExpenseResource, id: string) {
-    return this.expenseRecordDBRepository.findById(resource, id)
+  async findById(resource: ExpenseResource, id: string) {
+    return this.toView(resource, await this.expenseRecordDBRepository.findById(resource, id))
   }
 
-  create(resource: ExpenseResource, body: unknown) {
+  async create(resource: ExpenseResource, body: unknown) {
     const data = this.parse(resource, body, false)
     // Every new row starts "No iniciado"; exp_credit_card_expenses still defaults to pending in the database
     if (RESOURCES_WITH_STATUS.includes(resource) && data.paymentStatus === undefined) {
       data.paymentStatus = PaymentStatus.NOT_STARTED
     }
-    return this.expenseRecordDBRepository.create(resource, this.withAmountInPen(resource, data))
+    return this.toView(
+      resource,
+      await this.expenseRecordDBRepository.create(resource, this.toColumns(this.withAmountInPen(resource, data))),
+    )
   }
 
-  update(resource: ExpenseResource, id: string, body: unknown) {
-    return this.expenseRecordDBRepository.update(
+  async update(resource: ExpenseResource, id: string, body: unknown) {
+    return this.toView(
       resource,
-      id,
-      this.withAmountInPen(resource, this.parse(resource, body, true)),
+      await this.expenseRecordDBRepository.update(
+        resource,
+        id,
+        this.toColumns(this.withAmountInPen(resource, this.parse(resource, body, true))),
+      ),
     )
+  }
+
+  // The split of a template is a JSON column (SQLite): written as text, answered as an object
+  private toColumns(data: Record<string, unknown>) {
+    return data.sharedWith === undefined
+      ? data
+      : { ...data, sharedWith: data.sharedWith ? JsonHelper.stringify(data.sharedWith) : null }
+  }
+
+  private toView(resource: ExpenseResource, row: unknown) {
+    if (resource !== ExpenseResource.RECURRING || !row) return row
+    const record = row as Record<string, unknown>
+    const shared = JsonHelper.parseObject<{ shares?: unknown[] }>(record.sharedWith as string | null)
+    return { ...record, sharedWith: shared.shares?.length ? shared : null }
   }
 
   async delete(resource: ExpenseResource, id: string): Promise<void> {
@@ -64,7 +85,11 @@ export class ExpensesService {
     const schema = partial ? EXPENSE_SCHEMAS[resource].partial() : EXPENSE_SCHEMAS[resource]
     const parsed = schema.safeParse(body)
     if (!parsed.success) throw new ZodValidationException(parsed.error)
-    return parsed.data as Record<string, unknown>
+    const data = parsed.data as Record<string, unknown>
+    // Zod keeps the defaults of .partial() (currency: PEN): an edit only carries the fields it sent, or changing the
+    // status of a dollar expense would turn it into soles
+    if (!partial || !body || typeof body !== 'object') return data
+    return Object.fromEntries(Object.entries(data).filter(([key]) => key in body))
   }
 
   // Recurring templates have no amountInPen: only the rows they generate do

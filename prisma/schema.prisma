@@ -488,6 +488,7 @@ model RecurringExpense {
   kind            String         @default("platform") // SubscriptionKind of the rows it generates (D107)
   period          String         @default("monthly") // SubscriptionPeriod
   supplyNumber    String?
+  sharedWith      String? // JSON { shares: [{ personId, ratio?, amount? }] }: each month also their cobro (D73, P30)
   expenseType     String         @default("essential")
   personId        String
   person          Person         @relation(fields: [personId], references: [id])

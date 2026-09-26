@@ -1,15 +1,19 @@
 import { Injectable, Logger } from '@nestjs/common'
 
 import { PaymentMethodType } from '@/commons/constants/catalog.constant'
+import { DebtDirection } from '@/commons/constants/debt.constant'
 import { Currency, PaymentStatus, RecurringTargetType } from '@/commons/constants/expense.constant'
 import { creditCardPaymentPeriod } from '@/commons/helpers/payment-period.helper'
+import { JsonHelper } from '@/commons/helpers/json.helper'
 import { isDue } from '@/commons/helpers/recurring.helper'
 import {
   GeneratedRowDbDto,
   RecurringExpenseDBRepository,
   RecurringWithCard,
 } from '@/db/models/recurring-expense/recurringExpenseDB.repository'
+import { SharedExpense } from '@/db/models/expense-draft/expenseDraftDB.dto'
 import { dayOf } from '@/modules/calendar/calendar.helper'
+import { sharesOf } from '@/modules/conversation/shared-expense.parser'
 
 export interface GeneratedRecurring {
   recurringId: string
@@ -85,7 +89,41 @@ export class RecurringExpensesService {
     return result
   }
 
+  // A shared template (D73): the row keeps what others owe and each of them gets their cobro of that month (P30)
   private rowOf(
+    item: RecurringWithCard,
+    date: string,
+    month: number,
+    year: number,
+    defaultCategoryId: string | null,
+  ): GeneratedRowDbDto | { reason: 'missing_card' | 'missing_category' } {
+    const row = this.baseRowOf(item, date, month, year, defaultCategoryId)
+    const shared = JsonHelper.parseObject<SharedExpense>(item.sharedWith)
+    if ('reason' in row || !shared.shares?.length) return row
+
+    const { parts, othersShare } = sharesOf(item.amount, shared)
+    const data = row.data as { paymentMonth: number; paymentYear: number; installment?: string | null }
+    return {
+      ...row,
+      data: { ...row.data, othersShare },
+      debts: parts
+        .filter((part) => part.amount > 0)
+        .map((part) => ({
+          direction: DebtDirection.OWED_TO_ME,
+          description: `${item.description} (compartido)`,
+          amount: part.amount,
+          currency: item.currency,
+          amountInPen: item.currency === Currency.PEN ? part.amount : null,
+          personId: part.personId,
+          paymentMethodId: item.paymentMethodId,
+          paymentMonth: data.paymentMonth,
+          paymentYear: data.paymentYear,
+          notes: 'Cobro del recurrente compartido',
+        })),
+    }
+  }
+
+  private baseRowOf(
     item: RecurringWithCard,
     date: string,
     month: number,

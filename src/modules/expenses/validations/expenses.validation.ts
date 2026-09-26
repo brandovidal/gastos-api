@@ -39,6 +39,22 @@ const expense = {
 
 const paymentPeriod = { paymentMonth: month, paymentYear: year }
 
+// A template shared with people (Netflix a medias, D73): every month its row keeps othersShare and each one a cobro
+const sharedWith = z
+  .object({
+    shares: z.array(
+      z
+        .object({
+          personId: id,
+          ratio: z.number().gt(0).max(1).optional(),
+          amount: z.number().positive().optional(),
+        })
+        .refine((share) => (share.ratio == null) !== (share.amount == null), { message: 'Either ratio or amount' }),
+    ),
+  })
+  .nullable()
+  .optional()
+
 // N.º de suministro of a service (Bitel, Enel): P25 marks it paid from the bank email
 const supplyNumber = z.string().trim().max(40).nullable().optional()
 
@@ -88,6 +104,7 @@ export const EXPENSE_SCHEMAS = {
     kind: z.enum(SubscriptionKind).optional(),
     period: z.enum(SubscriptionPeriod).optional(),
     supplyNumber,
+    sharedWith,
     expenseType: z.enum(ExpenseType).optional(),
     categoryId: id.nullable().optional(),
     paymentMethodId: id.nullable().optional(),
@@ -178,6 +195,14 @@ export const EXPENSE_RESPONSE_SCHEMAS = {
     kind: z.enum(SubscriptionKind),
     period: z.enum(SubscriptionPeriod),
     supplyNumber: z.string().nullable(),
+    sharedWith: z
+      .object({
+        shares: z.array(
+          z.object({ personId: z.string(), ratio: z.number().optional(), amount: z.number().optional() }),
+        ),
+      })
+      .nullable()
+      .describe('Shared with people: each month their cobro is created with the row (D73, P30)'),
     paymentMethodId: z.string().nullable(),
     dayOfMonth: z.number().int(),
     isActive: z.boolean(),

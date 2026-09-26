@@ -2,7 +2,7 @@ import { Injectable, Logger } from '@nestjs/common'
 
 import { APP_TIME_ZONE } from '@/commons/constants/app.constant'
 import { CalendarEventKind, CalendarEventStatus } from '@/commons/constants/calendar.constant'
-import { toCents } from '@/commons/constants/debt.constant'
+import { DebtDirection, toCents } from '@/commons/constants/debt.constant'
 import { Currency } from '@/commons/constants/expense.constant'
 import { ANOMALY_LOOKBACK_DAYS, NotificationJob } from '@/commons/constants/notification.constant'
 import { DateHelper } from '@/commons/helpers/date.helper'
@@ -20,6 +20,8 @@ import { StoredFilesService } from '@/modules/stored-files/stored-files.service'
 
 import {
   budgetNotice,
+  collectLateNotice,
+  collectMonthNotice,
   dailyCloseNotice,
   dueNotice,
   duplicateNotice,
@@ -96,7 +98,33 @@ export class NotificationJobsService {
         const deleted = await this.storedFilesService.deleteExpired()
         return { job, notifications: 0, details: { deleted } }
       }
+      case NotificationJob.COLLECT_MONTH:
+        return this.collect(job, today, false)
+      case NotificationJob.COLLECT_LATE:
+        return this.collect(job, today, true)
     }
+  }
+
+  // Cobros (P30): day 1, what each person owes this month; day 5, what they still owe from earlier months. One notice
+  // per person, so each can be forwarded as it is
+  private async collect(job: NotificationJob, today: string, late: boolean): Promise<JobResult> {
+    const { paymentMonth: month, paymentYear: year } = periodOf(today)
+    const previous = addMonths({ paymentMonth: month, paymentYear: year }, -1)
+    const debts = (
+      await this.debtsService.list({
+        direction: DebtDirection.OWED_TO_ME,
+        ...(late ? { month: previous.paymentMonth, year: previous.paymentYear, until: true } : { month, year }),
+      })
+    ).filter((debt) => debt.balance > 0)
+
+    const byPerson = new Map<string, typeof debts>()
+    debts.forEach((debt) => byPerson.set(debt.personId, [...(byPerson.get(debt.personId) ?? []), debt]))
+    let created = 0
+    for (const owed of byPerson.values()) {
+      const notice = late ? collectLateNotice : collectMonthNotice
+      created += await this.notify(notice(owed[0].person, owed, month, year))
+    }
+    return { job, notifications: created, details: { people: byPerson.size } }
   }
 
   // Day 1, 06:00 (D88): the pending rows of the month, and one notice that lists them

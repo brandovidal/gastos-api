@@ -41,6 +41,7 @@ export const NOTIFICATION_KIND_LABELS: Record<NotificationKind, string> = {
   [NotificationKind.ANOMALY]: 'Cargos raros',
   [NotificationKind.RECURRING]: 'Gastos recurrentes del mes',
   [NotificationKind.STATEMENT]: 'Estados de cuenta conciliados',
+  [NotificationKind.COLLECT]: 'Cobros del mes y atrasados',
 }
 
 const EVENT_EMOJI: Record<CalendarEventKind, string> = {
@@ -150,6 +151,66 @@ export function recurringNotice({ month, year, created }: RecurringGeneration): 
 }
 
 // 21:00: what was registered today (your part) and what is still due today
+// Cobros (P30): the installments of one person with a balance, in soles and other currencies apart
+export interface CollectDebt {
+  description: string
+  installment: string | null
+  paymentMonth: number
+  paymentYear: number
+  balance: number
+  currency: string
+}
+
+const collectLines = (debts: CollectDebt[], withMonth: boolean) =>
+  debts.map(
+    (debt) =>
+      `• ${debt.description}${debt.installment ? ` (cuota ${debt.installment})` : ''}${withMonth ? `, ${monthLabel(debt.paymentMonth, debt.paymentYear)}` : ''}: ${money(debt.balance, debt.currency)}`,
+  )
+const penTotal = (debts: CollectDebt[]) =>
+  toCents(debts.filter((debt) => debt.currency === 'PEN').reduce((sum, debt) => sum + debt.balance, 0))
+
+// Day 1, 09:00: what one person owes this month, ready to send them (the message of /cobrar)
+export function collectMonthNotice(
+  person: { id: string; name: string },
+  debts: CollectDebt[],
+  month: number,
+  year: number,
+): NotificationDraft {
+  const total = penTotal(debts)
+  return {
+    kind: NotificationKind.COLLECT,
+    title: `🤝 Cobrar a ${person.name}: ${pen(total)} de ${monthLabel(month, year)}`,
+    body: [
+      `Hola ${person.name} 👋, te paso lo de ${monthLabel(month, year)}:`,
+      ...collectLines(debts, false),
+      `Total: ${pen(total)}`,
+    ].join('\n'),
+    amount: total,
+    refType: NotificationRefType.DEBT,
+    refId: person.id,
+    dedupeKey: `collect:${person.id}:${year}-${String(month).padStart(2, '0')}`,
+  }
+}
+
+// Day 5, 09:00: what one person still owes from earlier months
+export function collectLateNotice(
+  person: { id: string; name: string },
+  debts: CollectDebt[],
+  month: number,
+  year: number,
+): NotificationDraft {
+  const total = penTotal(debts)
+  return {
+    kind: NotificationKind.COLLECT,
+    title: `⏰ ${person.name} tiene ${pen(total)} atrasados`,
+    body: [`Cuotas vencidas sin cobrar:`, ...collectLines(debts, true), `Total: ${pen(total)}`].join('\n'),
+    amount: total,
+    refType: NotificationRefType.DEBT,
+    refId: person.id,
+    dedupeKey: `collect-late:${person.id}:${year}-${String(month).padStart(2, '0')}`,
+  }
+}
+
 export function dailyCloseNotice(today: string, spent: (ChargeRow & { own: number })[], dueToday: CalendarEvent[]) {
   const total = toCents(spent.reduce((sum, row) => sum + row.own, 0))
   const top = [...spent].sort((a, b) => b.own - a.own).slice(0, 3)
@@ -310,6 +371,7 @@ export function notificationButtons(notification: Notification): BotButton[][] {
   rows.push([opButton('🔕 Silenciar', notification.id, NotificationOp.MUTE)])
   if (notification.kind === NotificationKind.WEEKLY)
     rows.push(...commandButtons(BotCommand.CALENDAR, BotCommand.BUDGET))
+  if (notification.kind === NotificationKind.COLLECT) rows.push(...commandButtons(BotCommand.DEBTS))
   return rows
 }
 
