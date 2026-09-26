@@ -15,7 +15,7 @@ export interface CardExpenseForMatch {
 }
 
 export interface ReconciledRow extends ParsedStatementRow {
-  result: StatementRowResult.MATCHED | StatementRowResult.NEW
+  result: StatementRowResult.MATCHED | StatementRowResult.NEW | StatementRowResult.IGNORED
   expenseId: string | null
 }
 
@@ -42,6 +42,7 @@ function score(row: ParsedStatementRow, expense: CardExpenseForMatch): number | 
 export function reconcileStatement(rows: ParsedStatementRow[], expenses: CardExpenseForMatch[]): Reconciliation {
   const free = new Set(expenses.map((expense) => expense.id))
   const reconciled = rows.map((row): ReconciledRow => {
+    if (row.locked) return { ...row, result: StatementRowResult.IGNORED, expenseId: null }
     const best = expenses
       .filter((expense) => free.has(expense.id))
       .map((expense) => ({ expense, score: score(row, expense) }))

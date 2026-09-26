@@ -20,7 +20,7 @@ import { StoredFilesService } from '@/modules/stored-files/stored-files.service'
 import { MONTH_NAMES } from '@/modules/conversation/conversation.messages'
 
 import { readPdfLines } from './statement-pdf.reader'
-import { detectCardHint, maskForAi, ParsedStatement, parseStatementLines, templateAddsUp } from './statement.parser'
+import { detectCardHint, lockCancelledStatementRows, maskForAi, ParsedStatement, parseStatementLines, templateAddsUp } from './statement.parser'
 import { fromAi, STATEMENT_INSTRUCTIONS, statementAiJsonSchema, statementAiSchema } from './statement.prompt'
 import { assignRowPeople, inferHolder, matchCard, rowHolderHints } from './statement.identity'
 import { CardExpenseForMatch, reconcileStatement } from './statement.reconcile'
@@ -97,11 +97,15 @@ export class StatementsService {
     const matchCandidates = [...currentExpenses, ...previousExpenses]
     const { rows } = reconcileStatement(parsed.rows, matchCandidates)
     // Whose each purchase is: its section (CMR), its TIT/ADIC mark (Sip) or the titular (D116)
-    const rowPeople = assignRowPeople(rows, rowHolderHints(lines, rows), {
+    const inferredPeople = assignRowPeople(rows, rowHolderHints(lines, rows), {
       titularId: assignedPersonId,
       holders,
       people,
     })
+    const expensePeople = new Map(matchCandidates.map((expense) => [expense.id, expense.personId ?? null]))
+    const rowPeople = rows.map((row, index) =>
+      row.expenseId ? expensePeople.get(row.expenseId) ?? inferredPeople[index] : inferredPeople[index],
+    )
 
     const fileId = await this.keepFile(data)
     const statement = await this.statementDBRepository.create({
@@ -112,6 +116,9 @@ export class StatementsService {
       dueDate: day(parsed.dueDate),
       totalDue: parsed.totalDue,
       minimumDue: parsed.minimumDue,
+      previousBalance: parsed.previousBalance,
+      previousPayments: parsed.previousPayments,
+      monthlyPayment: parsed.monthlyPayment,
       currency: parsed.currency,
       source,
       fileId,
@@ -122,6 +129,7 @@ export class StatementsService {
         amount: row.amount,
         currency: row.currency,
         installment: row.installment,
+        locked: row.locked ?? false,
         result: row.result,
         expenseId: row.expenseId,
         personId: rowPeople[index],
@@ -186,8 +194,8 @@ export class StatementsService {
     // name from another month or card, or ignored), but never twice
     const rows = statement.rows.filter((row) =>
       rowIds?.length
-        ? rowIds.includes(row.id) && row.result !== StatementRowResult.CREATED
-        : row.result === StatementRowResult.NEW,
+        ? rowIds.includes(row.id) && row.result !== StatementRowResult.CREATED && !row.locked
+        : row.result === StatementRowResult.NEW && !row.locked,
     )
     await this.statementDBRepository.createExpenses(
       id,
@@ -280,6 +288,12 @@ export class StatementsService {
       personId?: string | null
     },
   ) {
+    if (result === StatementRowResult.NEW) {
+      const statement = await this.statementDBRepository.findById(id)
+      if (statement.rows.find((row) => row.id === rowId)?.locked) {
+        throw new StatementUnreadableException({ reason: 'cancelled statement row cannot be restored' })
+      }
+    }
     if (personId && !(await this.personDBRepository.findActive()).some((person) => person.id === personId)) {
       throw new StatementUnreadableException({ reason: 'selected person not found' })
     }
@@ -310,15 +324,27 @@ export class StatementsService {
       operation: AiOperation.STATEMENT,
     })
     if (output?.movements.length) {
-      const fromAiRows = fromAi(output, parsed.cardHint ?? detectCardHint(output.cardName ?? '')).rows
+      const aiParsed = fromAi(output, parsed.cardHint ?? detectCardHint(output.cardName ?? ''))
+      const fromAiRows = aiParsed.rows
       const seen = new Set(fromAiRows.map(rowKey))
       const itemizedCharges = parsed.rows.filter(
         (row) => ITEMIZED_CARD_CHARGE.test(row.description) && !seen.has(rowKey(row)),
       )
+      const parsedBalanceRows = parsed.rows.filter((row) => row.description.startsWith('Saldo mes anterior neto'))
+      const parsedAnulations = parsed.rows.filter((row) => row.locked)
+      const mergedRows = [...fromAiRows, ...itemizedCharges, ...parsedBalanceRows, ...parsedAnulations]
+      const uniqueRows = [...new Map(mergedRows.map((row) => [rowKey(row), row])).values()]
+      const previousBalance = parsed.previousBalance ?? aiParsed.previousBalance
+      const previousPayments = parsed.previousPayments ?? aiParsed.previousPayments
+      const monthlyPayment = parsed.monthlyPayment ?? aiParsed.monthlyPayment
       return {
         parsed: {
-          ...fromAi(output, parsed.cardHint ?? detectCardHint(output.cardName ?? '')),
-          rows: [...fromAiRows, ...itemizedCharges],
+          ...aiParsed,
+          previousBalance,
+          previousPayments,
+          monthlyPayment,
+          totalDue: parsed.totalDue ?? monthlyPayment ?? aiParsed.totalDue,
+          rows: lockCancelledStatementRows(uniqueRows),
         },
         source: StatementSource.AI,
       }

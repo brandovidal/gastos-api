@@ -65,6 +65,9 @@ const statementFields = {
   dueDate: dateTimeSchema.nullable(),
   totalDue: z.number().nullable(),
   minimumDue: z.number().nullable(),
+  previousBalance: z.number().nullable(),
+  previousPayments: z.number().nullable(),
+  monthlyPayment: z.number().nullable(),
   currency: z.string(),
   source: z.enum(StatementSource),
   fileId: z.string().nullable(),
@@ -82,6 +85,7 @@ export const statementRowResponseSchema = z.object({
   amount: z.number(),
   currency: z.string(),
   installment: z.string().nullable(),
+  locked: z.boolean(),
   result: z.enum(StatementRowResult),
   expenseId: z.string().nullable(),
   personId: z

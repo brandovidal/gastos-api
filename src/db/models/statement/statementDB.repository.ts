@@ -16,6 +16,9 @@ export interface CreateStatementDbDto {
   dueDate: Date | null
   totalDue: number | null
   minimumDue: number | null
+  previousBalance: number | null
+  previousPayments: number | null
+  monthlyPayment: number | null
   currency: string
   source: string
   fileId: string | null
@@ -26,6 +29,7 @@ export interface CreateStatementDbDto {
     amount: number
     currency: string
     installment: string | null
+    locked: boolean
     result: string
     expenseId: string | null
   }[]
@@ -122,6 +126,7 @@ export class StatementDBRepository {
         statementId,
         id: { in: rowIds },
         result: { in: [StatementRowResult.NEW, StatementRowResult.IGNORED] },
+        locked: false,
       },
       data: { personId },
     })

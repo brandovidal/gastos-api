@@ -576,6 +576,9 @@ model Statement {
   dueDate         DateTime? // last day to pay
   totalDue        Float? // total to pay of the statement
   minimumDue      Float?
+  previousBalance Float? @map("previous_balance")
+  previousPayments Float? @map("previous_payments")
+  monthlyPayment  Float? @map("monthly_payment")
   minimumAllocations String? // JSON personId -> planned contribution to the minimum payment
   currency        String    @default("PEN")
   source          String // StatementSource: how it was read (template, ai)
@@ -601,6 +604,7 @@ model StatementRow {
   currency    String    @default("PEN")
   installment String? // "n/m"
   result      String // StatementRowResult: matched, new, created, ignored
+  locked      Boolean   @default(false)
   expenseId   String? // the card expense it matched or created
   personId    String? // who made the purchase; null = the statement's person (a card can be used by several people)
   debtId      String? // the cobro created with the expense when the purchase is another person's (D116)

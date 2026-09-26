@@ -13,6 +13,7 @@ export interface ParsedStatementRow {
   amount: number
   currency: string
   installment: string | null
+  locked?: boolean // cancelled purchase/refund pair kept for reference, never importable
 }
 
 export interface ParsedStatement {
@@ -23,6 +24,9 @@ export interface ParsedStatement {
   dueDate: string | null
   totalDue: number | null
   minimumDue: number | null
+  previousBalance: number | null
+  previousPayments: number | null
+  monthlyPayment: number | null
   currency: string
   rows: ParsedStatementRow[]
 }
@@ -52,7 +56,25 @@ const amountOf = (text: string) => toCents(Number(text.replace(/,/g, '')))
 
 // Lines that are totals, balances or payments, never a purchase
 const NOT_A_MOVEMENT =
-  /total|saldo|pago minimo|pago del mes|linea de credito|limite|tasa|tea|tcea|su pago|pago recibido|pago realizado|gracias por su pago|abono/
+  /total|saldo|pago minimo|pago del mes|linea de credito|limite|tasa|tea|tcea|su pago|pago recibido|pago realizado|gracias por su pago|abono|pago-pago con ahorra mas/
+
+const paymentDescription = /\b(pago|abono|ahorra mas)\b/
+const cancellationDescription = /\b(anulacion|reversa|extorno)\b/i
+
+const merchantOf = (description: string) =>
+  normalizeText(description).replace(/\b(anulacion|reversa|extorno)\b/g, ' ').replace(/[^a-z0-9]+/g, ' ').trim()
+
+export function lockCancelledStatementRows(rows: ParsedStatementRow[]): ParsedStatementRow[] {
+  return rows.map((row) => {
+    if (row.amount < 0 && cancellationDescription.test(normalizeText(row.description))) return { ...row, locked: true }
+    if (row.amount <= 0) return row
+    const cancelled = rows.some((candidate) =>
+      candidate.amount === -row.amount && cancellationDescription.test(normalizeText(candidate.description)) &&
+      merchantOf(candidate.description) === merchantOf(row.description),
+    )
+    return cancelled ? { ...row, locked: true } : row
+  })
+}
 
 function dateFrom(text: string, fallbackYear: number | null): { iso: string; rest: string } | null {
   let match = new RegExp(`^${DAY_MONTH}\\b`).exec(text)
@@ -108,6 +130,9 @@ export function parseStatementLines(lines: string[]): ParsedStatement {
     dueDate: null,
     totalDue: null,
     minimumDue: null,
+    previousBalance: null,
+    previousPayments: null,
+    monthlyPayment: null,
     currency: /\bus\$|dolares/.test(joined) && !/s\//.test(joined) ? Currency.USD : Currency.PEN,
     rows: [],
   }
@@ -124,21 +149,39 @@ export function parseStatementLines(lines: string[]): ParsedStatement {
     if (parsed.minimumDue == null && /pago minimo/.test(line)) {
       parsed.minimumDue = lastAmount(line) ?? lastAmount(normalizedLines[index + 1] ?? '')
     }
+    if (parsed.previousBalance == null && /saldo mes anterior/.test(line)) {
+      parsed.previousBalance = lastAmount(line) ?? lastAmount(normalizedLines[index + 1] ?? '')
+    }
+    if (parsed.monthlyPayment == null && /pago del mes/.test(line)) {
+      parsed.monthlyPayment = lastAmount(line) ?? lastAmount(normalizedLines[index + 1] ?? '')
+    }
   })
+
+  const previousPayments = normalizedLines.reduce((total, line) => {
+    if (!paymentDescription.test(line) || /pago del mes|pago minimo|total/.test(line)) return total
+    const amount = lastAmount(line)
+    return amount == null ? total : toCents(total + amount)
+  }, 0)
+  parsed.previousPayments = parsed.previousBalance == null && !previousPayments ? null : previousPayments
+  parsed.totalDue ??= parsed.monthlyPayment
 
   const fallbackYear = Number((parsed.periodEnd ?? parsed.dueDate ?? '').slice(0, 4)) || null
   lines.forEach((original) => {
     const line = original.trim()
-    if (NOT_A_MOVEMENT.test(normalizeText(line))) return
+    const normalized = normalizeText(line)
+    if (NOT_A_MOVEMENT.test(normalized)) return
     const first = dateFrom(normalizeText(line), fallbackYear)
     if (!first) return
     // A second date (consumo and proceso) is skipped
     const second = dateFrom(first.rest, fallbackYear)
     const rest = (second ? second.rest : first.rest).trim()
-    const amountMatch = new RegExp(`(${AMOUNT})\\s*(-|cr)?$`).exec(rest)
-    if (!amountMatch || amountMatch[2]) return // credits (refunds, payments) are not purchases
-    const amount = amountOf(amountMatch[1])
-    if (amount <= 0) return
+    const cancellation = cancellationDescription.test(rest)
+    const separateCredit = /-\s*(${AMOUNT})\s*$/.exec(rest)
+    const amountMatch = separateCredit ?? new RegExp(`(${AMOUNT})\\s*(-|cr)?$`).exec(rest)
+    if (!amountMatch || (amountMatch[2] && !separateCredit)) return // other credits and payments are not purchases
+    const absoluteAmount = Math.abs(amountOf(amountMatch[1]))
+    if (absoluteAmount <= 0 || (separateCredit && !cancellation)) return
+    const amount = cancellation && separateCredit ? -absoluteAmount : absoluteAmount
 
     let description = rest
       .slice(0, amountMatch.index)
@@ -161,9 +204,25 @@ export function parseStatementLines(lines: string[]): ParsedStatement {
       amount,
       currency: parsed.currency,
       installment: installmentText,
+      ...(cancellation && separateCredit ? { locked: true } : {}),
     })
   })
 
+  if (parsed.previousBalance != null && parsed.previousPayments != null) {
+    const remainder = toCents(parsed.previousBalance - parsed.previousPayments)
+    if (remainder > 0) {
+      parsed.rows.push({
+        date: null,
+        description: `Saldo mes anterior neto (${parsed.previousBalance.toFixed(2)} - ${parsed.previousPayments.toFixed(2)})`,
+        amount: remainder,
+        currency: parsed.currency,
+        installment: null,
+      })
+    }
+  }
+
+  // A purchase and its cancellation remain visible together, but neither should become a new expense.
+  parsed.rows = lockCancelledStatementRows(parsed.rows)
   return parsed
 }
 
