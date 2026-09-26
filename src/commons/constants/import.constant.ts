@@ -3,7 +3,6 @@
 export enum ImportBatchStatus {
   PREVIEW = 'preview', // saved to review: nothing written in the expenses yet
   APPLIED = 'applied',
-  DISCARDED = 'discarded',
 }
 
 export enum ImportRowKind {

@@ -1,0 +1,11 @@
+{
+  "$schema": "https://unpkg.com/knip@6/schema.json",
+  // main.ts starts the app; the scripts are run by the Makefile with tsx
+  "entry": ["src/main.ts", "scripts/*.ts"],
+  // An export used only inside its own file is fine (the DTO schemas, the constants of a module)
+  "ignoreExportsUsedInFile": true,
+  "ignoreDependencies": [
+    "@prisma/client", // the generated client (src/generated) is built on it and prisma.config.ts loads it by name
+    "pino-pretty" // nestjs-pino loads it by name as the dev log transport
+  ]
+}

@@ -26,8 +26,6 @@ const channelSettings = z.object({ telegram: z.boolean(), web: z.boolean() })
 // Only the kinds that change; each one with the channels that change
 export const updateSettingsSchema = z.partialRecord(z.enum(NotificationKind), channelSettings.partial())
 
-export const jobParamSchema = z.enum(NotificationJob)
-
 // ==================== Responses (Swagger / kogane-app types) ====================
 
 export const notificationResponseSchema = z.object({

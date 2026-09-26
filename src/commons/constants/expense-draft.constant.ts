@@ -11,19 +11,6 @@ export enum ExpenseDraftInputType {
   MANUAL = 'manual', // filled in the web form (Nuevo gasto)
 }
 
-export enum ExpenseDraftDocumentType {
-  YAPE_RECEIPT = 'yape_receipt',
-  PLIN_RECEIPT = 'plin_receipt',
-  VOUCHER = 'voucher',
-  INVOICE = 'invoice',
-  BANK_STATEMENT = 'bank_statement',
-  BANKING_SCREENSHOT = 'banking_screenshot',
-  // Read by the local OCR templates (P21, D63): same values as RecognizedScreen
-  IO_PURCHASE_DETAIL = 'io_purchase_detail',
-  IO_CATEGORY_SUMMARY = 'io_category_summary',
-  BANK_MOVEMENT = 'bank_movement',
-}
-
 export enum ExpenseDraftStatus {
   DRAFT = 'draft',
   AWAITING_CONFIRMATION = 'awaiting_confirmation',

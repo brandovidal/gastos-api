@@ -1,10 +1,5 @@
 import { AiProvider } from '@/commons/constants/ai.constant'
 
-export interface AppConfig {
-  env: string
-  port: number
-}
-
 export interface AuthConfig {
   apiKey?: string
 }

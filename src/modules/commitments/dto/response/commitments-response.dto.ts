@@ -9,7 +9,6 @@ import {
   generatedInstallmentsResponseSchema,
 } from '../../validations/commitments.validation'
 
-export class CommitmentResponseDto extends responseDto(commitmentResponseSchema) {}
 export class CommitmentListResponseDto extends responseDto(z.array(commitmentResponseSchema)) {}
 export class CommitmentDetailResponseDto extends responseDto(commitmentDetailResponseSchema) {}
 export class ContributionResponseDto extends responseDto(contributionResponseSchema) {}

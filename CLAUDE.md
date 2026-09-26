@@ -27,7 +27,8 @@ make db-deploy / seed / studio [ENV=prod]
 make db-reset [CONFIRM=yes]   # dev only: empties every table (schema, migrations and R2 files stay), clears the ntf:* Redis lists and reseeds the catalogs; asks to type "dev"
 make telegram URL=https://…   # webhook + command menu
 make lint / format / build / test / test-integration
-make check              # lint + build + unit + integration (what CI runs)
+make check              # lint + build + knip + unit + integration (what CI runs)
+make knip               # unused files, exports and dependencies (P28); a kept one is justified in knip.jsonc
 make eval-replay        # golden set with the recorded answers (no AI calls)
 make eval-ai CONFIRM=yes [RECORD=1]   # golden set with the REAL AI (~30 calls): only when the user asks
 ```

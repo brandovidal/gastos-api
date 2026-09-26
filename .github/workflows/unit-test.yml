@@ -32,6 +32,10 @@ jobs:
       - name: Build
         run: pnpm build
 
+      # Unused files, exports and dependencies (P28, D121); what is kept on purpose is justified in knip.jsonc
+      - name: Unused code
+        run: pnpm exec knip --no-progress
+
       - name: Create test env
         # Tests never call R2 (D58): files go to a local folder
         run: cp .env.example .env.test && sed -i -e 's/^STORAGE_ENV=.*/STORAGE_ENV=test/' -e 's/^OCR_ENABLED=.*/OCR_ENABLED=false/' .env.test
