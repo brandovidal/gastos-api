@@ -239,6 +239,30 @@ export class StatementsService {
     return this.get(id)
   }
 
+  async update(
+    id: string,
+    {
+      personId,
+      minimumDue,
+      minimumAllocations,
+    }: { personId?: string; minimumDue?: number | null; minimumAllocations?: Record<string, number> | null },
+  ) {
+    if (personId) {
+      const people = await this.personDBRepository.findActive()
+      if (!people.some((person) => person.id === personId)) {
+        throw new StatementUnreadableException({ reason: 'selected person not found' })
+      }
+      await this.statementDBRepository.assignPerson(id, personId)
+    }
+    if (minimumDue !== undefined) {
+      await this.statementDBRepository.updateMinimumDue(id, minimumDue)
+    }
+    if (minimumAllocations !== undefined) {
+      await this.statementDBRepository.updateMinimumAllocations(id, minimumAllocations)
+    }
+    return this.get(id)
+  }
+
   async updateRow(
     id: string,
     rowId: string,

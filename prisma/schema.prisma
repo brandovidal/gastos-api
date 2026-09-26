@@ -576,6 +576,7 @@ model Statement {
   dueDate         DateTime? // last day to pay
   totalDue        Float? // total to pay of the statement
   minimumDue      Float?
+  minimumAllocations String? // JSON personId -> planned contribution to the minimum payment
   currency        String    @default("PEN")
   source          String // StatementSource: how it was read (template, ai)
   fileId          String?

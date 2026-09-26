@@ -303,7 +303,10 @@ describe('DebtsService', () => {
         totalDue: 900,
         rows: [{ description: 'INTERESES COMPENSATORIOS', amount: 14.3 }],
       })
-    mockStatements.findCardExpenses.mockResolvedValue([{ amount: 700 }, { amount: 300 }])
+    mockStatements.findCardExpenses.mockResolvedValue([
+      { id: 'e1', description: 'Televisor', amount: 700, personId: danery.id, person: { name: 'Danery' } },
+      { id: 'e2', description: 'Zapatillas', amount: 300, personId: bruce.id, person: { name: 'Bruce' } },
+    ])
 
     const check = await service.cardCheck({ paymentMethodId: 'cmr', month: 9, year: 2026 })
 

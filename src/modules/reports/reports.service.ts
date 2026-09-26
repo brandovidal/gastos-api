@@ -3,10 +3,11 @@ import ExcelJS from 'exceljs'
 import PDFDocument from 'pdfkit'
 
 import { APP_TIME_ZONE } from '@/commons/constants/app.constant'
-import { DebtDirection, DebtStatus, DebtTiming, OPEN_DEBT_STATUSES } from '@/commons/constants/debt.constant'
+import { DebtDirection, DebtStatus, DebtTiming } from '@/commons/constants/debt.constant'
 import { REPORT_MIME_TYPES, ReportFormat } from '@/commons/constants/report.constant'
 import { DateHelper } from '@/commons/helpers/date.helper'
 import { DebtsService, DebtView, PersonDebtSummary } from '@/modules/debts/debts.service'
+import { PaymentMethodDBRepository } from '@/db/models/payment-method/paymentMethodDB.repository'
 
 export interface ReportFile {
   filename: string
@@ -49,29 +50,122 @@ interface DebtReportData {
   today: string
   summary: PersonDebtSummary[]
   detail: DebtView[]
+  sourceSummary: { personId: string; person: string; source: string; direction: string; count: number; total: number }[]
 }
+
+interface DebtReportFilters {
+  direction?: DebtDirection
+  month?: number
+  year?: number
+  until?: boolean
+  person?: string
+  state?: DebtStatus | DebtTiming | 'open'
+  card?: string
+  origin?: 'shared' | 'loan'
+  q?: string
+}
+
+const fold = (text: string) =>
+  text
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+const isPlatformCharge = (debt: DebtView) =>
+  /\b(stream|streaming|plataforma|netflix|spotify|youtube|icloud|disney|hbo|max|prime video|apple tv|paramount|crunchyroll|deezer|tidal|mubi|google one|dropbox)\b/i.test(
+    `${debt.description} ${debt.notes ?? ''}`,
+  )
+const isShared = (debt: DebtView) => /\(compartido\)$/i.test(debt.description.trim())
 
 // Préstamos y deudas por persona (P17, D39): summary (me debe · le debo · neto) and the open installments
 @Injectable()
 export class ReportsService {
-  constructor(private readonly debtsService: DebtsService) {}
+  constructor(
+    private readonly debtsService: DebtsService,
+    private readonly paymentMethods: PaymentMethodDBRepository,
+  ) {}
 
   // Cobros / Deudas (D114): optionally one direction and one payment month, like the page on screen
-  async debts(
-    format: ReportFormat,
-    personId?: string,
-    { direction, month, year }: { direction?: DebtDirection; month?: number; year?: number } = {},
-  ): Promise<ReportFile> {
-    const [summary, detail] = await Promise.all([
-      this.debtsService.summary({ month, year }),
-      this.debtsService
-        .list({ personId, direction, month, year })
-        .then((debts) => debts.filter((debt) => OPEN_DEBT_STATUSES.includes(debt.status as DebtStatus))),
-    ])
+  async debts(format: ReportFormat, personId?: string, filters: DebtReportFilters = {}): Promise<ReportFile> {
+    const { direction, month, year, until, person, state, card, origin, q } = filters
+    const detail = (
+      await this.debtsService.list({
+        personId: personId ?? person,
+        direction,
+        month,
+        year,
+        until,
+        paymentMethodId: card,
+      })
+    ).filter((debt) => {
+      if (debt.balance <= 0) return false
+      if (q && ![debt.description, debt.notes ?? '', debt.person.name].some((text) => fold(text).includes(fold(q))))
+        return false
+      if (origin && isShared(debt) !== (origin === 'shared')) return false
+      if (state === 'late' || state === 'due' || state === 'upcoming') return debt.timing === state
+      if (state && state !== 'open' && debt.status !== state) return false
+      return true
+    })
+    const people = new Map<string, PersonDebtSummary>()
+    for (const debt of detail) {
+      const row = people.get(debt.personId) ?? {
+        personId: debt.personId,
+        name: debt.person.name,
+        owedToMe: 0,
+        iOwe: 0,
+        net: 0,
+        late: 0,
+        dueThisMonth: 0,
+      }
+      if (debt.direction === DebtDirection.OWED_TO_ME) {
+        row.owedToMe += debt.balance
+        if (debt.timing === DebtTiming.LATE) row.late += debt.balance
+        if (debt.timing === DebtTiming.DUE) row.dueThisMonth += debt.balance
+      } else {
+        row.iOwe += debt.balance
+      }
+      row.net = row.owedToMe - row.iOwe
+      people.set(debt.personId, row)
+    }
+    const summary = [...people.values()].sort((a, b) => Math.abs(b.net) - Math.abs(a.net))
+    const methods = await this.paymentMethods.findAll()
+    const methodNames = new Map(methods.map((method) => [method.id, method.name]))
+    const sourceGroups = new Map<string, DebtReportData['sourceSummary'][number]>()
+    for (const debt of detail) {
+      const text = `${debt.description} ${debt.notes ?? ''}`
+      const source = methodNames.get(debt.paymentMethodId ?? '')
+        ? /cmr|falabella/i.test(methodNames.get(debt.paymentMethodId!)!)
+          ? 'CMR (Falabella)'
+          : methodNames.get(debt.paymentMethodId!)!
+        : isPlatformCharge(debt)
+          ? 'Plataformas · Stream'
+          : /pr[eé]stamo/i.test(text)
+            ? 'Préstamo'
+            : debt.description
+      const key = `${debt.personId}:${source}:${debt.direction}`
+      const group = sourceGroups.get(key) ?? {
+        personId: debt.personId,
+        person: debt.person.name,
+        source,
+        direction: DIRECTION_LABELS[debt.direction] ?? debt.direction,
+        count: 0,
+        total: 0,
+      }
+      group.count += 1
+      group.total = Math.round((group.total + debt.balance) * 100) / 100
+      sourceGroups.set(key, group)
+    }
     const rows = personId ? summary.filter((row) => row.personId === personId) : summary
     const name = personId ? (rows[0]?.name ?? detail[0]?.person.name ?? 'persona') : 'todas'
     const today = DateHelper.todayIn(APP_TIME_ZONE)
-    const data: DebtReportData = { title: `Deudas · ${name}`, today, summary: rows, detail }
+    const selectedDetail = personId ? detail.filter((debt) => debt.personId === personId) : detail
+    const selectedSourceSummary = [...sourceGroups.values()].filter((group) => !personId || group.personId === personId)
+    const data: DebtReportData = {
+      title: `Deudas · ${name}`,
+      today,
+      summary: rows,
+      detail: selectedDetail,
+      sourceSummary: selectedSourceSummary,
+    }
 
     return {
       filename: `deudas-${slug(name)}-${today}.${format}`,
@@ -142,7 +236,7 @@ export class ReportsService {
     return Buffer.from(await workbook.xlsx.writeBuffer())
   }
 
-  private debtsPdf({ title, today, summary, detail }: DebtReportData): Promise<Buffer> {
+  private debtsPdf({ title, today, summary, detail, sourceSummary }: DebtReportData): Promise<Buffer> {
     const doc = new PDFDocument({ size: 'A4', margin: 40 })
     const chunks: Buffer[] = []
     doc.on('data', (chunk: Buffer) => chunks.push(chunk))
@@ -155,30 +249,65 @@ export class ReportsService {
     this.pdfTable(
       doc,
       ['Persona', 'Me debe', 'Le debo', 'Neto', 'Vencido'],
-      [170, 85, 85, 85, 85],
+      [160, 85, 85, 85, 85],
       summary.map((row) => [row.name, money(row.owedToMe), money(row.iOwe), money(row.net), money(row.late)]),
     )
 
-    doc.moveDown().font('Helvetica-Bold').fontSize(12).text('Detalle por cuota')
+    doc.moveDown().font('Helvetica-Bold').fontSize(12).text('Resumen por concepto')
     doc.moveDown(0.3)
     this.pdfTable(
       doc,
-      ['Persona', 'Tipo', 'Concepto', 'Cuota', 'Mes', 'Saldo', 'Estado'],
-      [80, 50, 150, 40, 55, 70, 70],
-      detail.map((debt) => [
-        debt.person.name,
-        DIRECTION_LABELS[debt.direction] ?? debt.direction,
-        debt.description,
-        debt.installment ?? '',
-        periodOf(debt),
-        money(debt.balance),
-        debt.timing === DebtTiming.LATE ? 'Vencida' : (STATUS_LABELS[debt.status] ?? debt.status),
-      ]),
+      ['Persona', 'Concepto', 'Tipo', 'Registros', 'Total'],
+      [115, 175, 75, 70, 75],
+      sourceSummary.map((row) => [row.person, row.source, row.direction, String(row.count), money(row.total)]),
     )
-    if (!detail.length) doc.font('Helvetica').fontSize(10).text('Sin deudas pendientes.')
+
+    this.pdfDetailSection(
+      doc,
+      'Detalle de cobros · Me deben',
+      detail.filter((debt) => debt.direction === DebtDirection.OWED_TO_ME),
+    )
+    this.pdfDetailSection(
+      doc,
+      'Detalle de deudas · Le debo',
+      detail.filter((debt) => debt.direction === DebtDirection.I_OWE),
+    )
 
     doc.end()
     return done
+  }
+
+  private pdfDetailSection(doc: PDFKit.PDFDocument, title: string, debts: DebtView[]) {
+    doc.addPage()
+    doc.font('Helvetica-Bold').fontSize(12).text(title)
+    doc.moveDown(0.3)
+    if (!debts.length) {
+      doc.font('Helvetica').fontSize(10).text('No hay registros para los filtros seleccionados.')
+      return
+    }
+    const byPerson = new Map<string, DebtView[]>()
+    for (const debt of debts) {
+      const items = byPerson.get(debt.person.name) ?? []
+      items.push(debt)
+      byPerson.set(debt.person.name, items)
+    }
+    for (const [person, items] of byPerson) {
+      doc.moveDown(0.4).font('Helvetica-Bold').fontSize(10).text(person)
+      this.pdfTable(
+        doc,
+        ['Concepto', 'Cuota', 'Mes', 'Monto', 'Abonado', 'Saldo', 'Estado'],
+        [135, 38, 58, 65, 59, 68, 67],
+        items.map((debt) => [
+          debt.description,
+          debt.installment ?? '',
+          periodOf(debt),
+          money(debt.amount),
+          money(debt.paidAmount),
+          money(debt.balance),
+          debt.timing === DebtTiming.LATE ? 'Vencida' : (STATUS_LABELS[debt.status] ?? debt.status),
+        ]),
+      )
+    }
   }
 
   // A plain table: bold header, one line per row, a new page (with the header again) when it does not fit

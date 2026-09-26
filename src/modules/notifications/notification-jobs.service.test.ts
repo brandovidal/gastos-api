@@ -25,7 +25,7 @@ const mockCalendarDB = { findSubscriptions: vi.fn() }
 const mockExpenseDB = { findChargesBetween: vi.fn(), findChargesCreatedSince: vi.fn() }
 const mockPersonDB = { findDefault: vi.fn() }
 const mockBudget = { byCategory: vi.fn(), month: vi.fn() }
-const mockDebts = { summary: vi.fn() }
+const mockDebts = { summary: vi.fn(), list: vi.fn() }
 const mockRecurring = { generate: vi.fn() }
 const mockStoredFiles = { deleteExpired: vi.fn() }
 
@@ -202,5 +202,57 @@ describe('NotificationJobsService', () => {
       details: { events: 1 },
     })
     expect((await service.run(NotificationJob.FILES_CLEANUP, NOW)).details).toEqual({ deleted: 2 })
+  })
+
+  describe('cobros (P30)', () => {
+    const debt = (overrides: Record<string, unknown>) => ({
+      personId: 'dany',
+      person: { id: 'dany', name: 'Danery' },
+      description: 'Zapatillas',
+      installment: '2/3',
+      paymentMonth: 10,
+      paymentYear: 2026,
+      balance: 100,
+      currency: 'PEN',
+      ...overrides,
+    })
+
+    it('should send on day 1 one notice per person with what they owe this month', async () => {
+      mockDebts.list.mockResolvedValue([
+        debt({}),
+        debt({ description: 'Cine', installment: null, balance: 30 }),
+        debt({ personId: 'dora', person: { id: 'dora', name: 'Dora' }, balance: 203.14 }),
+        debt({ description: 'Pagada', balance: 0 }),
+      ])
+
+      const result = await service.run(NotificationJob.COLLECT_MONTH, new Date('2026-10-01T14:00:00Z'))
+
+      expect(mockDebts.list).toHaveBeenCalledWith({ direction: 'owed_to_me', month: 10, year: 2026 })
+      expect(result).toEqual(expect.objectContaining({ notifications: 2, details: { people: 2 } }))
+      const [dany] = mockNotifications.notify.mock.calls.map(([input]) => input)
+      expect(dany).toEqual(
+        expect.objectContaining({
+          kind: NotificationKind.COLLECT,
+          amount: 130,
+          refId: 'dany',
+          dedupeKey: 'collect:dany:2026-10',
+        }),
+      )
+      expect(dany.body).toContain('Zapatillas (cuota 2/3): S/ 100.00')
+    })
+
+    it('should send on day 5 what is still owed from the months before', async () => {
+      mockDebts.list.mockResolvedValue([debt({ paymentMonth: 8 })])
+
+      await service.run(NotificationJob.COLLECT_LATE, new Date('2026-10-05T14:00:00Z'))
+
+      expect(mockDebts.list).toHaveBeenCalledWith({ direction: 'owed_to_me', month: 9, year: 2026, until: true })
+      expect(mockNotifications.notify).toHaveBeenCalledWith(
+        expect.objectContaining({
+          dedupeKey: 'collect-late:dany:2026-10',
+          title: '⏰ Danery tiene S/ 100.00 atrasados',
+        }),
+      )
+    })
   })
 })

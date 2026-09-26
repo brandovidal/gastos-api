@@ -60,6 +60,20 @@ export class DebtDBRepository {
     })
   }
 
+  findCardPayments(paymentMethodId: string, from: Date, to: Date) {
+    return this.prisma.debtPayment.findMany({
+      where: {
+        confirmedAt: { not: null },
+        paidAt: { gte: from, lt: to },
+        debt: { paymentMethodId },
+      },
+      select: {
+        amount: true,
+        debt: { select: { personId: true, person: { select: { name: true } } } },
+      },
+    })
+  }
+
   findByIds(ids: string[]): Promise<DebtWithPersonDbDto[]> {
     return this.prisma.debt.findMany({ where: { id: { in: ids } }, include: WITH_PERSON, orderBy: [...BY_PERIOD] })
   }

@@ -18,6 +18,7 @@ const recurring = (overrides: Record<string, unknown>) => ({
   kind: 'platform',
   period: SubscriptionPeriod.MONTHLY,
   supplyNumber: null,
+  sharedWith: null,
   expenseType: 'essential',
   personId: 'me',
   categoryId: 'home',
@@ -65,6 +66,35 @@ describe('RecurringExpensesService', () => {
       }),
     })
     expect(result.created).toEqual([expect.objectContaining({ id: 'row-rec', date: '2026-10-05' })])
+  })
+
+  it('should create each month the cobro of a template shared with people, and keep what they owe on the row (P30)', async () => {
+    mockRecurringDB.findActive.mockResolvedValue([
+      recurring({
+        id: 'netflix',
+        description: 'Netflix',
+        amount: 52.9,
+        targetType: RecurringTargetType.SUBSCRIPTION,
+        paymentMethodId: 'io',
+        sharedWith: JSON.stringify({ shares: [{ personId: 'brenda', ratio: 0.5 }] }),
+      }),
+    ])
+
+    await service.generate(10, 2026)
+
+    const generated = mockRecurringDB.generate.mock.calls[0][2]
+    expect(generated.data).toEqual(expect.objectContaining({ othersShare: 26.45 }))
+    expect(generated.debts).toEqual([
+      expect.objectContaining({
+        direction: 'owed_to_me',
+        description: 'Netflix (compartido)',
+        amount: 26.45,
+        personId: 'brenda',
+        paymentMethodId: 'io',
+        paymentMonth: 10,
+        paymentYear: 2026,
+      }),
+    ])
   })
 
   it('should give a service its kind, period and supply number (D107)', async () => {

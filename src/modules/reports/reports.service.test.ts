@@ -5,10 +5,12 @@ import { vi } from 'vitest'
 import { DebtDirection, DebtStatus, DebtTiming } from '@/commons/constants/debt.constant'
 import { ReportFormat } from '@/commons/constants/report.constant'
 import { DebtsService } from '@/modules/debts/debts.service'
+import { PaymentMethodDBRepository } from '@/db/models/payment-method/paymentMethodDB.repository'
 
 import { ReportsService } from './reports.service'
 
 const mockDebts = { summary: vi.fn(), list: vi.fn() }
+const mockPaymentMethods = { findAll: vi.fn().mockResolvedValue([]) }
 
 const debt = {
   id: 'debt-1',
@@ -32,7 +34,11 @@ describe('ReportsService', () => {
 
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
-      providers: [ReportsService, { provide: DebtsService, useValue: mockDebts }],
+      providers: [
+        ReportsService,
+        { provide: DebtsService, useValue: mockDebts },
+        { provide: PaymentMethodDBRepository, useValue: mockPaymentMethods },
+      ],
     }).compile()
     service = module.get(ReportsService)
 
@@ -88,7 +94,9 @@ describe('ReportsService', () => {
 
     await service.debts(ReportFormat.XLSX, undefined, { direction: DebtDirection.OWED_TO_ME, month: 9, year: 2026 })
 
-    expect(mockDebts.list).toHaveBeenCalledWith({ personId: undefined, direction: 'owed_to_me', month: 9, year: 2026 })
-    expect(mockDebts.summary).toHaveBeenCalledWith({ month: 9, year: 2026 })
+    expect(mockDebts.list).toHaveBeenCalledWith(
+      expect.objectContaining({ personId: undefined, direction: 'owed_to_me', month: 9, year: 2026 }),
+    )
+    expect(mockDebts.summary).not.toHaveBeenCalled()
   })
 })

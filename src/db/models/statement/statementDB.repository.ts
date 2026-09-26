@@ -82,7 +82,15 @@ export class StatementDBRepository {
   findCardExpenses(paymentMethodId: string, { paymentMonth, paymentYear }: PaymentPeriod) {
     return this.prisma.creditCardExpense.findMany({
       where: { paymentMethodId, paymentMonth, paymentYear, paymentStatus: { not: PaymentStatus.SKIPPED } },
-      select: { id: true, description: true, amount: true, processDate: true, installment: true, personId: true },
+      select: {
+        id: true,
+        description: true,
+        amount: true,
+        processDate: true,
+        installment: true,
+        personId: true,
+        person: { select: { name: true } },
+      },
     })
   }
 
@@ -123,6 +131,19 @@ export class StatementDBRepository {
   // Whose statement it is (P14): reassigned by hand when the PDF did not say or said someone else
   async assignPerson(id: string, personId: string) {
     await this.prisma.statement.update({ where: { id }, data: { personId } })
+    return this.findById(id)
+  }
+
+  async updateMinimumDue(id: string, minimumDue: number | null) {
+    await this.prisma.statement.update({ where: { id }, data: { minimumDue } })
+    return this.findById(id)
+  }
+
+  async updateMinimumAllocations(id: string, minimumAllocations: Record<string, number> | null) {
+    await this.prisma.statement.update({
+      where: { id },
+      data: { minimumAllocations: minimumAllocations === null ? null : JSON.stringify(minimumAllocations) },
+    })
     return this.findById(id)
   }
 

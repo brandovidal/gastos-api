@@ -11,7 +11,15 @@ export const uploadStatementSchema = z.object({
   savePassword: z.stringbool().optional(),
 })
 
-export const updateStatementSchema = z.object({ personId: z.string().min(1) })
+export const updateStatementSchema = z
+  .object({
+    personId: z.string().min(1).optional(),
+    minimumDue: z.number().nonnegative().nullable().optional(),
+    minimumAllocations: z.record(z.string(), z.number().nonnegative()).nullable().optional(),
+  })
+  .refine(
+    (value) => value.personId !== undefined || value.minimumDue !== undefined || value.minimumAllocations !== undefined,
+  )
 
 // Selección múltiple (D116): the person of several purchases at once; null goes back to the statement's
 export const assignRowsSchema = z.object({

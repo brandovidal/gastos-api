@@ -380,8 +380,15 @@ describe('StatementsService', () => {
       ])
       mockStatementDB.findCardExpenses.mockResolvedValue([])
 
+      mockStatementDB.findById.mockImplementation(async () => {
+        const created = await mockStatementDB.create.mock.results[0].value
+        return { ...created, rows: created.rows.map((item: object, index: number) => ({ id: `r${index}`, ...item })) }
+      })
+
       await service.upload({ data: Buffer.from('pdf'), paymentMethodId: 'cmr' })
 
+      // The notice of the statement says what the other people of the card have on it (P30)
+      expect(mockNotifications.notify.mock.calls[0][0].body).toContain('A cobrar: Danery S/ 80.00.')
       const { rows } = mockStatementDB.create.mock.calls[0][0]
       expect(rows.map((item: { description: string; personId: string }) => [item.description, item.personId])).toEqual([
         ['FALABELLA', 'me'],

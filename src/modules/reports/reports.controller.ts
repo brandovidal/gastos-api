@@ -24,10 +24,20 @@ export class ReportsController {
     ),
   })
   async debts(
-    @Query() { format, personId, direction, month, year }: DebtReportQueryDto,
+    @Query() { format, personId, direction, month, year, until, person, state, card, origin, q }: DebtReportQueryDto,
     @Res({ passthrough: true }) response: Response,
   ) {
-    const file = await this.reportsService.debts(format, personId, { direction, month, year })
+    const file = await this.reportsService.debts(format, personId, {
+      direction,
+      month,
+      year,
+      until,
+      person,
+      state,
+      card,
+      origin,
+      q,
+    })
     response.set({
       'Content-Type': file.mimeType,
       'Content-Disposition': `attachment; filename="${file.filename}"`,

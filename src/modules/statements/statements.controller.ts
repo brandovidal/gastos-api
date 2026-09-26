@@ -87,8 +87,8 @@ export class StatementsController {
   @ApiOperation({ summary: 'Assign the statement to another person' })
   @ApiOkResponse({ type: StatementResponseDto })
   @ResponseMessage('STATEMENT_UPDATED', 'Statement updated')
-  update(@Param('id') id: string, @Body() { personId }: UpdateStatementDto) {
-    return this.statementsService.assignPerson(id, personId)
+  update(@Param('id') id: string, @Body() body: UpdateStatementDto) {
+    return this.statementsService.update(id, body)
   }
 
   @Post(':id/rows/assign')

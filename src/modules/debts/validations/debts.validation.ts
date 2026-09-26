@@ -2,6 +2,7 @@ import { z } from 'zod'
 
 import { DebtDirection, DebtPaymentKind, DebtStatus, DebtTiming } from '@/commons/constants/debt.constant'
 import { Currency } from '@/commons/constants/expense.constant'
+import { StatementRowResult } from '@/commons/constants/statement.constant'
 import { dateTimeSchema } from '@/commons/helpers/api-response.helper'
 
 // YYYY-MM-DD from the web forms, stored as a date at 00:00 UTC
@@ -174,7 +175,15 @@ export const cardCheckResponseSchema = z.object({
   month: z.number().int(),
   year: z.number().int(),
   statementId: z.string().nullable().describe('The statement of that card and month, when uploaded'),
+  statementPersonId: z.string().nullable().describe('The person assigned as the statement holder'),
   statementTotal: z.number().nullable().describe('What the bank asks to pay'),
+  statementPeriodEnd: dateTimeSchema.nullable().describe('End of the card billing cycle'),
+  statementDueDate: dateTimeSchema.nullable().describe('Due date of the statement payment'),
+  minimumDue: z.number().nullable().describe('Minimum payment on the statement'),
+  minimumAllocations: z
+    .record(z.string(), z.number())
+    .nullable()
+    .describe('Saved proposed minimum payment contribution per person'),
   koganeTotal: z.number().describe('Card expenses registered for that month'),
   unexplained: z.number().nullable().describe('statementTotal − koganeTotal: interest, fees or charges not registered'),
   othersOwed: z.number().describe('What other people owe of that card and month'),
@@ -188,6 +197,31 @@ export const cardCheckResponseSchema = z.object({
       balance: z.number(),
     }),
   ),
+  periodPayments: z.array(z.object({
+    personId: z.string(),
+    name: z.string(),
+    amount: z.number(),
+  })),
+  expensesByPerson: z.array(
+    z.object({
+      personId: z.string(),
+      name: z.string(),
+      amount: z.number(),
+      expenses: z.array(z.object({ id: z.string(), description: z.string(), amount: z.number() })),
+    }),
+  ),
+  statementRows: z.array(z.object({
+    id: z.string(),
+    date: dateTimeSchema.nullable(),
+    description: z.string(),
+    label: z.string().nullable(),
+    amount: z.number(),
+    installment: z.string().nullable(),
+    result: z.enum(StatementRowResult),
+    personId: z.string().nullable(),
+    expenseId: z.string().nullable(),
+    debtId: z.string().nullable(),
+  })),
   possibleInterest: z
     .array(z.object({ description: z.string(), amount: z.number() }))
     .describe('Statement lines of that month or the next that read like interest or fees'),

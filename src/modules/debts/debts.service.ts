@@ -228,11 +228,14 @@ export class DebtsService {
   // Contraste con la tarjeta (D114): what others owe of a card and month vs the statement of that month
   async cardCheck({ paymentMethodId, month, year }: CardCheckQueryDto) {
     const period: PaymentPeriod = { paymentMonth: month, paymentYear: year }
-    const [debts, statement, next, expenses] = await Promise.all([
+    const currentMonth = DateHelper.startOfDayIn(APP_TIME_ZONE, new Date(Date.UTC(year, month - 1, 15, 12)))
+    const nextMonth = DateHelper.startOfDayIn(APP_TIME_ZONE, new Date(Date.UTC(year, month, 15, 12)))
+    const [debts, statement, next, expenses, cardPayments] = await Promise.all([
       this.debtDBRepository.findMany({ direction: DebtDirection.OWED_TO_ME, paymentMethodId, month, year }),
       this.statementDBRepository.findLatestForCard(paymentMethodId, period),
       this.statementDBRepository.findLatestForCard(paymentMethodId, addMonths(period, 1)),
       this.statementDBRepository.findCardExpenses(paymentMethodId, period),
+      this.debtDBRepository.findCardPayments(paymentMethodId, currentMonth, nextMonth),
     ])
 
     const byPerson = new Map<string, { personId: string; name: string; owed: number; paid: number; balance: number }>()
@@ -250,24 +253,92 @@ export class DebtsService {
       byPerson.set(debt.personId, row)
     }
     const people = [...byPerson.values()].sort((a, b) => b.balance - a.balance)
+    const paymentsByPerson = new Map<string, { personId: string; name: string; amount: number }>()
+    for (const payment of cardPayments) {
+      const row = paymentsByPerson.get(payment.debt.personId) ?? {
+        personId: payment.debt.personId,
+        name: payment.debt.person.name,
+        amount: 0,
+      }
+      row.amount = toCents(row.amount + payment.amount)
+      paymentsByPerson.set(payment.debt.personId, row)
+    }
+    const expensesByPerson = new Map<
+      string,
+      {
+        personId: string
+        name: string
+        amount: number
+        expenses: { id: string; description: string; amount: number }[]
+      }
+    >()
+    for (const expense of expenses) {
+      const row = expensesByPerson.get(expense.personId) ?? {
+        personId: expense.personId,
+        name: expense.person.name,
+        amount: 0,
+        expenses: [],
+      }
+      row.amount = toCents(row.amount + expense.amount)
+      row.expenses.push({ id: expense.id, description: expense.description, amount: expense.amount })
+      expensesByPerson.set(expense.personId, row)
+    }
     const koganeTotal = toCents(expenses.reduce((sum, expense) => sum + expense.amount, 0))
     const statementTotal = statement?.totalDue ?? null
+    const expensePersonIds = new Map(expenses.map((expense) => [expense.id, expense.personId]))
+    const statementRows = statement?.rows.map((row) => ({
+      id: row.id,
+      date: row.date,
+      description: row.description,
+      label: row.label,
+      amount: row.amount,
+      installment: row.installment,
+      result: row.result,
+      personId: (row.expenseId && expensePersonIds.get(row.expenseId)) || row.personId || statement.personId,
+      expenseId: row.expenseId,
+      debtId: row.debtId,
+    })) ?? []
 
     return {
       paymentMethodId,
       month,
       year,
       statementId: statement?.id ?? null,
+      statementPersonId: statement?.personId ?? null,
       statementTotal,
+      statementPeriodEnd: statement?.periodEnd ?? null,
+      statementDueDate: statement?.dueDate ?? null,
+      minimumDue: statement?.minimumDue ?? null,
+      minimumAllocations: statement?.minimumAllocations
+        ? this.parseMinimumAllocations(statement.minimumAllocations)
+        : null,
       koganeTotal,
       unexplained: statementTotal == null ? null : toCents(statementTotal - koganeTotal),
       othersOwed: toCents(people.reduce((sum, row) => sum + row.owed, 0)),
       othersPaid: toCents(people.reduce((sum, row) => sum + row.paid, 0)),
       people,
+      periodPayments: [...paymentsByPerson.values()].sort((a, b) => a.name.localeCompare(b.name, 'es')),
+      expensesByPerson: [...expensesByPerson.values()].sort((a, b) => a.name.localeCompare(b.name, 'es')),
+      statementRows,
       possibleInterest: [statement, next]
         .flatMap((candidate) => candidate?.rows ?? [])
         .filter((row) => INTEREST_LINE.test(fold(row.description)))
         .map((row) => ({ description: row.description, amount: row.amount })),
+    }
+  }
+
+  private parseMinimumAllocations(value: string): Record<string, number> | null {
+    try {
+      const parsed: unknown = JSON.parse(value)
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null
+      return Object.fromEntries(
+        Object.entries(parsed).filter(
+          (entry): entry is [string, number] =>
+            typeof entry[1] === 'number' && Number.isFinite(entry[1]) && entry[1] >= 0,
+        ),
+      )
+    } catch {
+      return null
     }
   }
 
