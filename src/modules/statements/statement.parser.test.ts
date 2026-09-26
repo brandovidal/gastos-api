@@ -49,16 +49,16 @@ describe('statement.parser', () => {
   it('should include itemized insurance and interest charges as statement movements', () => {
     const parsed = parseStatementLines([
       'Fecha de cierre 09/09/2026',
-      'Total a pagar S/ 573.71',
+      'Total a pagar S/ 561.71',
       '09/09/2026 09/09/2026 Seguro Desgravamen 13.90',
       '09/09/2026 09/09/2026 Interes Compensatorio 545.99',
-      '09/09/2026 09/09/2026 Interes Moratorio 13.82',
+      '09/09/2026 09/09/2026 Interes Moratorio 1.82',
     ])
 
     expect(parsed.rows.map(({ description, amount }) => ({ description, amount }))).toEqual([
       { description: 'Seguro Desgravamen', amount: 13.9 },
       { description: 'Interes Compensatorio', amount: 545.99 },
-      { description: 'Interes Moratorio', amount: 13.82 },
+      { description: 'Interes Moratorio', amount: 1.82 },
     ])
   })
 

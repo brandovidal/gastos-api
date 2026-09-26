@@ -267,8 +267,6 @@ export class StatementsService {
     return this.statementDBRepository.delete(id)
   }
 
-  // Template first; the AI reads the masked text (without the password that opened it) when the template does not
-  // add up to the total
   private async read(lines: string[], documentNumber: string | null) {
     const parsed = parseStatementLines(lines)
     if (templateAddsUp(parsed)) return { parsed, source: StatementSource.TEMPLATE }
@@ -285,8 +283,6 @@ export class StatementsService {
     })
     if (output?.movements.length) {
       const fromAiRows = fromAi(output, parsed.cardHint ?? detectCardHint(output.cardName ?? '')).rows
-      // The template can read dated, itemized fees even when the statement layout forces the other rows through AI.
-      // Keep those charges deterministically in case the model omits interest or insurance from its movements.
       const seen = new Set(fromAiRows.map(rowKey))
       const itemizedCharges = parsed.rows.filter(
         (row) => ITEMIZED_CARD_CHARGE.test(row.description) && !seen.has(rowKey(row)),
