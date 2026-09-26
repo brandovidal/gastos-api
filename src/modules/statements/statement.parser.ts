@@ -62,15 +62,20 @@ const paymentDescription = /\b(pago|abono|ahorra mas)\b/
 const cancellationDescription = /\b(anulacion|reversa|extorno)\b/i
 
 const merchantOf = (description: string) =>
-  normalizeText(description).replace(/\b(anulacion|reversa|extorno)\b/g, ' ').replace(/[^a-z0-9]+/g, ' ').trim()
+  normalizeText(description)
+    .replace(/\b(anulacion|reversa|extorno)\b/g, ' ')
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim()
 
 export function lockCancelledStatementRows(rows: ParsedStatementRow[]): ParsedStatementRow[] {
   return rows.map((row) => {
     if (row.amount < 0 && cancellationDescription.test(normalizeText(row.description))) return { ...row, locked: true }
     if (row.amount <= 0) return row
-    const cancelled = rows.some((candidate) =>
-      candidate.amount === -row.amount && cancellationDescription.test(normalizeText(candidate.description)) &&
-      merchantOf(candidate.description) === merchantOf(row.description),
+    const cancelled = rows.some(
+      (candidate) =>
+        candidate.amount === -row.amount &&
+        cancellationDescription.test(normalizeText(candidate.description)) &&
+        merchantOf(candidate.description) === merchantOf(row.description),
     )
     return cancelled ? { ...row, locked: true } : row
   })

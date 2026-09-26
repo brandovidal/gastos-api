@@ -20,7 +20,14 @@ import { StoredFilesService } from '@/modules/stored-files/stored-files.service'
 import { MONTH_NAMES } from '@/modules/conversation/conversation.messages'
 
 import { readPdfLines } from './statement-pdf.reader'
-import { detectCardHint, lockCancelledStatementRows, maskForAi, ParsedStatement, parseStatementLines, templateAddsUp } from './statement.parser'
+import {
+  detectCardHint,
+  lockCancelledStatementRows,
+  maskForAi,
+  ParsedStatement,
+  parseStatementLines,
+  templateAddsUp,
+} from './statement.parser'
 import { fromAi, STATEMENT_INSTRUCTIONS, statementAiJsonSchema, statementAiSchema } from './statement.prompt'
 import { assignRowPeople, inferHolder, matchCard, rowHolderHints } from './statement.identity'
 import { CardExpenseForMatch, reconcileStatement } from './statement.reconcile'
@@ -104,7 +111,7 @@ export class StatementsService {
     })
     const expensePeople = new Map(matchCandidates.map((expense) => [expense.id, expense.personId ?? null]))
     const rowPeople = rows.map((row, index) =>
-      row.expenseId ? expensePeople.get(row.expenseId) ?? inferredPeople[index] : inferredPeople[index],
+      row.expenseId ? (expensePeople.get(row.expenseId) ?? inferredPeople[index]) : inferredPeople[index],
     )
 
     const fileId = await this.keepFile(data)
